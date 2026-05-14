@@ -12,8 +12,7 @@
  */
 import { eq, and } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { companyConnectors } from "../../../packages/db/src/schema/company_connectors.js";
-import type { ConnectorType, ConnectorStatus } from "../../../packages/db/src/schema/company_connectors.js";
+import { companyConnectors, type ConnectorType, type ConnectorStatus } from "@paperclipai/db";
 import { notFound, conflict } from "../errors.js";
 import { encryptValue, decryptValue } from "../lib/encryption.js";
 
