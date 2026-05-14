@@ -3,7 +3,11 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useCompany } from "@/context/CompanyContext";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
-import { chatApi, type ChatMessage, type ChatSession } from "@/api/chat";
+import { chatApi, type ChatMessage, type ChatSession, type IssueCreatedData } from "@/api/chat";
+
+interface PlanningEvent {
+  text: string;
+}
 
 export default function CeoChat() {
   const { selectedCompanyId } = useCompany();
@@ -15,6 +19,8 @@ export default function CeoChat() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draftAssistant, setDraftAssistant] = useState("");
+  const [planningText, setPlanningText] = useState<string | null>(null);
+  const [createdIssue, setCreatedIssue] = useState<IssueCreatedData | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -23,7 +29,7 @@ export default function CeoChat() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [activeSession?.messages, draftAssistant]);
+  }, [activeSession?.messages, draftAssistant, planningText]);
 
   async function refreshSessions(companyId = selectedCompanyId) {
     if (!companyId) return;
@@ -84,6 +90,8 @@ export default function CeoChat() {
     setInput("");
     setSending(true);
     setDraftAssistant("");
+    setPlanningText(null);
+    setCreatedIssue(null);
     setError(null);
 
     const optimisticUser: ChatMessage = {
@@ -105,6 +113,8 @@ export default function CeoChat() {
           });
         },
         onChunk: (chunk) => setDraftAssistant((prev) => prev + chunk),
+        onPlanning: (data: PlanningEvent) => setPlanningText(data.text),
+        onIssueCreated: (data: IssueCreatedData) => setCreatedIssue(data),
         onAssistantMessage: (message) => {
           setActiveSession((prev) => prev ? { ...prev, messages: [...(prev.messages ?? []), message] } : prev);
           setDraftAssistant("");
@@ -183,9 +193,9 @@ export default function CeoChat() {
           <>
             <div className="flex-1 overflow-y-auto p-6">
               <div className="mx-auto flex max-w-4xl flex-col gap-4">
-                {visibleMessages.length === 0 && !draftAssistant ? (
+                {visibleMessages.length === 0 && !draftAssistant && !planningText ? (
                   <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-                    Try: “Create a task for the sales agent to review all stale leads and follow up.”
+                    Try: "Create a task for the sales agent to review all stale leads and follow up."
                   </div>
                 ) : null}
                 {visibleMessages.map((message) => (
@@ -195,6 +205,13 @@ export default function CeoChat() {
                     </div>
                   </div>
                 ))}
+                {planningText && (
+                  <div className="flex justify-start">
+                    <div className="max-w-[75%] whitespace-pre-wrap rounded-2xl bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-700">
+                      {planningText}
+                    </div>
+                  </div>
+                )}
                 {draftAssistant ? (
                   <div className="flex justify-start">
                     <div className="max-w-[75%] whitespace-pre-wrap rounded-2xl bg-muted px-4 py-3 text-sm leading-6">
@@ -202,6 +219,32 @@ export default function CeoChat() {
                     </div>
                   </div>
                 ) : null}
+                {createdIssue && (
+                  <div className="flex justify-start">
+                    <div className="max-w-[75%] rounded-2xl border border-green-200 bg-green-50 px-4 py-3 text-sm">
+                      <div className="mb-1 flex items-center gap-2 font-medium text-green-800">
+                        <span>✅</span> Issue created
+                      </div>
+                      <div className="text-gray-700">
+                        <span className="font-medium">{createdIssue.title}</span>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-2 text-xs text-gray-500">
+                        {createdIssue.issueIdentifier !== createdIssue.issueId && (
+                          <span className="rounded bg-gray-200 px-1.5 py-0.5">{createdIssue.issueIdentifier}</span>
+                        )}
+                        {createdIssue.assigneeAgentName && (
+                          <span className="rounded bg-blue-100 px-1.5 py-0.5 text-blue-700">Assigned to {createdIssue.assigneeAgentName}</span>
+                        )}
+                        <a
+                          href={`/issues/${createdIssue.issueId}`}
+                          className="text-blue-600 hover:underline"
+                        >
+                          View issue →
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <div ref={messagesEndRef} />
               </div>
             </div>

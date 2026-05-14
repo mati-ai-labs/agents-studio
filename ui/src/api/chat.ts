@@ -19,6 +19,14 @@ export interface ChatSession {
   messages?: ChatMessage[];
 }
 
+export interface IssueCreatedData {
+  issueId: string;
+  issueIdentifier: string;
+  title: string;
+  assigneeAgentId: string | null;
+  assigneeAgentName: string | null;
+}
+
 export async function listSessions(companyId: string): Promise<ChatSession[]> {
   return api.get<ChatSession[]>(`/companies/${companyId}/chat/sessions`);
 }
@@ -38,6 +46,8 @@ export async function deleteSession(sessionId: string): Promise<void> {
 type SendMessageCallbacks = {
   onUserMessage?: (message: ChatMessage) => void;
   onChunk?: (chunk: string) => void;
+  onPlanning?: (data: { text: string }) => void;
+  onIssueCreated?: (data: IssueCreatedData) => void;
   onAssistantMessage?: (message: ChatMessage) => void;
   onDone?: () => void;
   onError?: (error: string) => void;
@@ -100,6 +110,12 @@ export async function sendMessage(
           const msg = JSON.parse(evt.data) as ChatMessage;
           if (msg.role === "user") callbacks.onUserMessage?.(msg);
           if (msg.role === "assistant") callbacks.onAssistantMessage?.(msg);
+        } else if (evt.event === "planning") {
+          const parsed = JSON.parse(evt.data) as { text: string };
+          callbacks.onPlanning?.(parsed);
+        } else if (evt.event === "issue_created") {
+          const parsed = JSON.parse(evt.data) as IssueCreatedData;
+          callbacks.onIssueCreated?.(parsed);
         } else if (evt.event === "error") {
           const parsed = JSON.parse(evt.data) as { error?: string };
           callbacks.onError?.(parsed.error ?? "Unknown chat error");
