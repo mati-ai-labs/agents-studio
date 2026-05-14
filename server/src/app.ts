@@ -48,7 +48,7 @@ import { DEFAULT_LOCAL_PLUGIN_DIR, pluginLoader } from "./services/plugin-loader
 import { createPluginWorkerManager, type PluginWorkerManager } from "./services/plugin-worker-manager.js";
 import { createPluginJobScheduler } from "./services/plugin-job-scheduler.js";
 import { pluginJobStore } from "./services/plugin-job-store.js";
-import { createPluginToolDispatcher } from "./services/plugin-tool-dispatcher.js";
+import { createPluginToolDispatcher, type PluginToolDispatcher } from "./services/plugin-tool-dispatcher.js";
 import { createConnectorToolDispatcher } from "./services/connector-tool-dispatcher.js";
 import { createUnifiedToolDispatcher } from "./services/unified-tool-dispatcher.js";
 import { pluginLifecycleManager } from "./services/plugin-lifecycle.js";
@@ -238,7 +238,8 @@ export async function createApp(
     pluginDispatcher: pluginToolDispatcher,
     connectorDispatcher,
   });
-  const toolDispatcher = unifiedDispatcher;
+  // For plugin lifecycle + loader (which only need PluginToolDispatcher methods)
+  const toolDispatcher: PluginToolDispatcher = pluginToolDispatcher;
   const jobCoordinator = createPluginJobCoordinator({
     db,
     lifecycle,

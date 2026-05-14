@@ -12,6 +12,7 @@
  */
 import type { Db } from "@paperclipai/db";
 import type { ToolResult, ToolRunContext } from "@paperclipai/plugin-sdk";
+import { type AgentToolDescriptor as PluginAgentToolDescriptor } from "./plugin-tool-dispatcher.js";
 import type { PluginToolDispatcher } from "./plugin-tool-dispatcher.js";
 import type {
   ConnectorToolDispatcher,
@@ -23,14 +24,12 @@ import { logger } from "../middleware/logger.js";
 // Types
 // ---------------------------------------------------------------------------
 
-export interface AgentToolDescriptor {
+export interface UnifiedAgentToolDescriptor {
   name: string;
   displayName: string;
   description: string;
   parametersSchema: Record<string, unknown>;
-  /** "plugin" or "connector" */
   source: "plugin" | "connector";
-  /** For plugins, the pluginDbId; for connectors, the connectorType */
   ownerId: string;
 }
 
@@ -48,8 +47,8 @@ export interface ToolExecutionResult {
 export interface UnifiedToolDispatcher {
   initialize(): Promise<void>;
   teardown(): void;
-  listToolsForAgent(filter?: { pluginId?: string }): AgentToolDescriptor[];
-  getToolDescriptor(namespacedName: string): AgentToolDescriptor | null;
+  listToolsForAgent(filter?: { pluginId?: string }): UnifiedAgentToolDescriptor[];
+  getToolDescriptor(namespacedName: string): UnifiedAgentToolDescriptor | null;
   executeTool(
     namespacedName: string,
     parameters: unknown,
@@ -89,7 +88,7 @@ export function createUnifiedToolDispatcher(
 
   function toAgentDescriptor(
     tool: ConnectorToolDescriptor,
-  ): AgentToolDescriptor {
+  ): UnifiedAgentToolDescriptor {
     return {
       name: tool.name,
       displayName: tool.displayName,
@@ -117,12 +116,19 @@ export function createUnifiedToolDispatcher(
     pluginDispatcher.teardown();
   }
 
-  function listToolsForAgent(filter?: { pluginId?: string }): AgentToolDescriptor[] {
+  function listToolsForAgent(filter?: { pluginId?: string }): UnifiedAgentToolDescriptor[] {
     refreshConnectorCache();
 
     // Get plugin tools from plugin dispatcher (filter applies to plugin tools only)
-    const pluginDescriptors = pluginDispatcher.listToolsForAgent(filter) as AgentToolDescriptor[];
-    const normalizedPlugin = pluginDescriptors.map((t) => ({ ...t, source: "plugin" as const }));
+    const pluginDescriptors = pluginDispatcher.listToolsForAgent(filter);
+    const normalizedPlugin = pluginDescriptors.map((t) => ({
+      name: t.name,
+      displayName: t.displayName,
+      description: t.description,
+      parametersSchema: t.parametersSchema,
+      ownerId: t.pluginId,
+      source: "plugin" as const,
+    }));
 
     // Convert connector descriptors
     const connectorDescriptors = connectorToolsCache.map(toAgentDescriptor);
@@ -130,7 +136,7 @@ export function createUnifiedToolDispatcher(
     return [...normalizedPlugin, ...connectorDescriptors];
   }
 
-  function getToolDescriptor(namespacedName: string): AgentToolDescriptor | null {
+  function getToolDescriptor(namespacedName: string): UnifiedAgentToolDescriptor | null {
     // Check plugin tools
     const pluginTool = pluginDispatcher.getTool(namespacedName);
     if (pluginTool) {
@@ -198,5 +204,5 @@ export function createUnifiedToolDispatcher(
     return { plugins, connectors, total: plugins + connectors };
   }
 
-  return { initialize, teardown, listTools, getToolDescriptor, executeTool, toolCount };
+  return { initialize, teardown, listToolsForAgent, getToolDescriptor, executeTool, toolCount };
 }

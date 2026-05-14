@@ -205,7 +205,7 @@ function ConnectorCard({
               disabled={isConnecting}
             >
               {isConnecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
-              {status === "connecting" ? "Connecting..." : "Connect"}
+              Connect
             </Button>
           )}
           {canDisconnect && (

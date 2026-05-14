@@ -36,42 +36,37 @@ export interface InitiateOAuthResponse {
 }
 
 /** List all connectors for the current company. */
-async function list(): Promise<ConnectorRecord[]> {
-  const res = await api.get<ConnectorListResponse>("/api/connectors");
-  return res.data.connectors;
+function list(): Promise<ConnectorRecord[]> {
+   return api.get<ConnectorListResponse>("/api/connectors");
 }
 
 /** Get a single connector by type. */
-async function get(type: ConnectorType): Promise<ConnectorRecord> {
-  const res = await api.get<ConnectorRecord>(`/api/connectors/${type}`);
-  return res.data;
+function get(type: ConnectorType): Promise<ConnectorRecord> {
+  return api.get<ConnectorRecord>(`/api/connectors/${type}`);
 }
 
 /** Initiate OAuth flow for a connector type. Returns authorization URL. */
-async function initiateConnect(type: ConnectorType): Promise<InitiateOAuthResponse> {
-  const res = await api.post<InitiateOAuthResponse>(`/api/connectors/${type}/connect`);
-  return res.data;
+function initiateConnect(type: ConnectorType): Promise<InitiateOAuthResponse> {
+  return api.post<InitiateOAuthResponse>(`/api/connectors/${type}/connect`);
 }
 
 /** Disconnect (remove credentials) for a connector type. */
-async function disconnect(type: ConnectorType): Promise<void> {
+function disconnect(type: ConnectorType): Promise<void> {
   await api.delete(`/api/connectors/${type}`);
 }
 
 /** Enable MCP tools for a connector. */
-async function enable(type: ConnectorType): Promise<ConnectorRecord> {
-  const res = await api.post<{ success: boolean; connector: ConnectorRecord }>(
+function enable(type: ConnectorType): Promise<ConnectorRecord> {
+   return api.post<{ success: boolean; connector: ConnectorRecord }>(
     `/api/connectors/${type}/enable`,
   );
-  return res.data.connector;
 }
 
 /** Disable MCP tools for a connector. */
-async function disable(type: ConnectorType): Promise<ConnectorRecord> {
-  const res = await api.post<{ success: boolean; connector: ConnectorRecord }>(
+function disable(type: ConnectorType): Promise<ConnectorRecord> {
+   return api.post<{ success: boolean; connector: ConnectorRecord }>(
     `/api/connectors/${type}/disable`,
   );
-  return res.data.connector;
 }
 
 export const connectorsApi = {

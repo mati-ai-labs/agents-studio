@@ -187,12 +187,11 @@ export function createConnectorToolDispatcher(
 
     const toolResult: ToolResult = result.success
       ? {
-          content: [{ type: "text" as const, text: JSON.stringify(result.data ?? result) }],
-          isError: false,
+          content: JSON.stringify(result.data ?? result),
+          data: result.data,
         }
       : {
-          content: [{ type: "text" as const, text: result.error ?? "Unknown error" }],
-          isError: true,
+          error: result.error ?? "Unknown error",
         };
 
     return { connectorType: tool.connectorType, toolName: bareName, result: toolResult };
@@ -210,9 +209,6 @@ export function createConnectorToolDispatcher(
     isConnectorTool,
     executeTool,
     toolCount,
-    // Expose for unified dispatcher composition
-    _register: registerToolsForConnectorType,
-    _unregister: unregisterToolsForConnectorType,
   };
 }
 

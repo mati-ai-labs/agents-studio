@@ -619,6 +619,7 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
 // ---------------------------------------------------------------------------
 
 function buildConnectorToolExecuteParams(
+  client: PaperclipApiClient,
   toolName: string,
   input: Record<string, unknown>,
 ): { tool: string; parameters: Record<string, unknown>; runContext: Record<string, unknown> } {
@@ -654,7 +655,7 @@ function createConnectorToolDefs(client: PaperclipApiClient): ToolDefinition[] {
       toolDef.schema,
       async (input) => {
         // Call POST /plugins/tools/execute with the unified dispatcher's format
-        const { tool, parameters, runContext } = buildConnectorToolExecuteParams(toolDef.name, input as Record<string, unknown>);
+        const { tool, parameters, runContext } = buildConnectorToolExecuteParams(client, toolDef.name, input as Record<string, unknown>);
         return client.requestJson("POST", "/plugins/tools/execute", {
           body: { tool, parameters, runContext },
           includeRunId: true,

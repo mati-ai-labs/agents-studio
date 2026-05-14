@@ -199,9 +199,9 @@ async function notion_api(
   companyId: string,
   path: string,
   options: RequestInit = {},
-): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+): Promise<ConnectorToolResult> {
   const creds = await notion_get_credentials(db, companyId);
-  if (!creds) return { ok: false, error: "Notion not connected" };
+  if (!creds) return { success: false, error: "Notion not connected" };
 
   const resp = await fetch(`https://api.notion.com/v1${path}`, {
     ...options,
@@ -215,10 +215,10 @@ async function notion_api(
 
   if (!resp.ok) {
     const err = await resp.text();
-    return { ok: false, error: err };
+    return { success: false, error: err };
   }
   const data = await resp.json();
-  return { ok: true, data };
+  return { success: true, data };
 }
 
 export async function notion_search(db: Db, input: ConnectorToolInput): Promise<ConnectorToolResult> {
@@ -283,9 +283,9 @@ async function linear_graphql(
   companyId: string,
   query: string,
   variables?: Record<string, unknown>,
-): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+): Promise<ConnectorToolResult> {
   const creds = await linear_get_credentials(db, companyId);
-  if (!creds) return { ok: false, error: "Linear not connected" };
+  if (!creds) return { success: false, error: "Linear not connected" };
 
   const resp = await fetch("https://api.linear.app/graphql", {
     method: "POST",
@@ -298,11 +298,11 @@ async function linear_graphql(
 
   if (!resp.ok) {
     const err = await resp.text();
-    return { ok: false, error: err };
+    return { success: false, error: err };
   }
   const data = await resp.json() as { data?: unknown; errors?: unknown };
-  if (data.errors) return { ok: false, error: JSON.stringify(data.errors) };
-  return { ok: true, data: data.data };
+  if (data.errors) return { success: false, error: JSON.stringify(data.errors) };
+  return { success: true, data: data.data };
 }
 
 export async function linear_issues(db: Db, input: ConnectorToolInput): Promise<ConnectorToolResult> {
