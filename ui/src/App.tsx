@@ -45,6 +45,7 @@ import { ProfileSettings } from "./pages/ProfileSettings";
 import { PluginManager } from "./pages/PluginManager";
 import { PluginSettings } from "./pages/PluginSettings";
 import { AdapterManager } from "./pages/AdapterManager";
+import { Connectors } from "./pages/Connectors";
 import { PluginPage } from "./pages/PluginPage";
 import { OrgChart } from "./pages/OrgChart";
 import { NewAgent } from "./pages/NewAgent";
@@ -76,6 +77,7 @@ function boardRoutes() {
       <Route path="company/settings/secrets" element={<Secrets />} />
       <Route path="company/settings/connectors" element={<Connectors />} />
       <Route path="skills/*" element={<CompanySkills />} />
+      <Route path="connectors" element={<Connectors />} />
       <Route path="settings" element={<LegacySettingsRedirect />} />
       <Route path="settings/*" element={<LegacySettingsRedirect />} />
       <Route path="plugins/:pluginId" element={<PluginPage />} />
