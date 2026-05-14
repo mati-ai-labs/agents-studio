@@ -36,37 +36,42 @@ export interface InitiateOAuthResponse {
 }
 
 /** List all connectors for the current company. */
-function list(): Promise<ConnectorRecord[]> {
-   return api.get<ConnectorListResponse>("/api/connectors");
+async function list(): Promise<ConnectorRecord[]> {
+  const res = await api.get<ConnectorListResponse>("/api/connectors");
+  return res.connectors;
 }
 
 /** Get a single connector by type. */
-function get(type: ConnectorType): Promise<ConnectorRecord> {
+async function get(type: ConnectorType): Promise<ConnectorRecord> {
   return api.get<ConnectorRecord>(`/api/connectors/${type}`);
 }
 
 /** Initiate OAuth flow for a connector type. Returns authorization URL. */
-function initiateConnect(type: ConnectorType): Promise<InitiateOAuthResponse> {
-  return api.post<InitiateOAuthResponse>(`/api/connectors/${type}/connect`);
+async function initiateConnect(type: ConnectorType): Promise<InitiateOAuthResponse> {
+  return api.post<InitiateOAuthResponse>(`/api/connectors/${type}/connect`, {});
 }
 
 /** Disconnect (remove credentials) for a connector type. */
-function disconnect(type: ConnectorType): Promise<void> {
+async function disconnect(type: ConnectorType): Promise<void> {
   await api.delete(`/api/connectors/${type}`);
 }
 
 /** Enable MCP tools for a connector. */
-function enable(type: ConnectorType): Promise<ConnectorRecord> {
-   return api.post<{ success: boolean; connector: ConnectorRecord }>(
+async function enable(type: ConnectorType): Promise<ConnectorRecord> {
+  const res = await api.post<{ success: boolean; connector: ConnectorRecord }>(
     `/api/connectors/${type}/enable`,
+    {},
   );
+  return res.connector;
 }
 
 /** Disable MCP tools for a connector. */
-function disable(type: ConnectorType): Promise<ConnectorRecord> {
-   return api.post<{ success: boolean; connector: ConnectorRecord }>(
+async function disable(type: ConnectorType): Promise<ConnectorRecord> {
+  const res = await api.post<{ success: boolean; connector: ConnectorRecord }>(
     `/api/connectors/${type}/disable`,
+    {},
   );
+  return res.connector;
 }
 
 export const connectorsApi = {
