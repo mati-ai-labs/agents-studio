@@ -14,6 +14,10 @@ import {
 } from "@paperclipai/shared";
 import { PaperclipApiClient } from "./client.js";
 import { formatErrorResponse, formatTextResponse } from "./format.js";
+import {
+  CONNECTOR_MCP_TOOLS,
+  type ConnectorMcpTool,
+} from "./connector-tools.js";
 
 export interface ToolDefinition {
   name: string;
@@ -605,5 +609,57 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
         });
       },
     ),
+    // Connector tools — call POST /plugins/tools/execute with the connector tool name
+    ...createConnectorToolDefs(client),
   ];
+}
+
+// ---------------------------------------------------------------------------
+// Connector tool helpers — call connector tools via the unified tool dispatcher
+// ---------------------------------------------------------------------------
+
+function buildConnectorToolExecuteParams(
+  toolName: string,
+  input: Record<string, unknown>,
+): { tool: string; parameters: Record<string, unknown>; runContext: Record<string, unknown> } {
+  // Extract companyId from input, merge with defaults from client
+  const { companyId, ...rest } = input;
+  const resolvedCompanyId = (companyId as string | undefined) || client.defaults.companyId;
+
+  const parameters: Record<string, unknown> = { ...rest };
+  if (resolvedCompanyId) {
+    parameters.companyId = resolvedCompanyId;
+  }
+
+  return {
+    tool: toolName,
+    parameters,
+    runContext: {
+      agentId: client.defaults.agentId ?? "",
+      runId: client.defaults.runId ?? "",
+      companyId: resolvedCompanyId ?? "",
+      projectId: "",
+    },
+  };
+}
+
+function createConnectorToolDefs(client: PaperclipApiClient): ToolDefinition[] {
+  return CONNECTOR_MCP_TOOLS.map((toolDef: ConnectorMcpTool) => {
+    // Build a descriptive name: "google_gmail_send" -> "googleWorkspaceGmailSend"
+    const camelName = toolDef.name.replace(/^[a-z]|-([a-z])/g, (_, c) => c ? c.toUpperCase() : '');
+
+    return makeTool(
+      `${toolDef.connectorType.replace(/_([a-z])/g, (_, c) => c.toUpperCase())}_${toolDef.name.split('_').slice(1).join('_')}`,
+      toolDef.description,
+      toolDef.schema,
+      async (input) => {
+        // Call POST /plugins/tools/execute with the unified dispatcher's format
+        const { tool, parameters, runContext } = buildConnectorToolExecuteParams(toolDef.name, input as Record<string, unknown>);
+        return client.requestJson("POST", "/plugins/tools/execute", {
+          body: { tool, parameters, runContext },
+          includeRunId: true,
+        });
+      },
+    );
+  });
 }

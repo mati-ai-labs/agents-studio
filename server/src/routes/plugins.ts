@@ -55,6 +55,7 @@ import type { PluginJobStore } from "../services/plugin-job-store.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
 import type { PluginStreamBus } from "../services/plugin-stream-bus.js";
 import type { PluginToolDispatcher } from "../services/plugin-tool-dispatcher.js";
+import type { UnifiedToolDispatcher } from "../services/unified-tool-dispatcher.js";
 import type { ToolRunContext } from "@paperclipai/plugin-sdk";
 import { JsonRpcCallError, PLUGIN_RPC_ERROR_CODES } from "@paperclipai/plugin-sdk";
 import {
@@ -255,7 +256,7 @@ export interface PluginRouteWebhookDeps {
  */
 export interface PluginRouteToolDeps {
   /** The tool dispatcher for listing and executing plugin tools. */
-  toolDispatcher: PluginToolDispatcher;
+  toolDispatcher: PluginToolDispatcher | UnifiedToolDispatcher;
 }
 
 /**
@@ -799,8 +800,8 @@ export function pluginRoutes(
     }
 
     // Verify the tool exists
-    const registeredTool = toolDeps.toolDispatcher.getTool(tool);
-    if (!registeredTool) {
+    const toolDescriptor = toolDeps.toolDispatcher.getToolDescriptor(tool);
+    if (!toolDescriptor) {
       res.status(404).json({ error: `Tool "${tool}" not found` });
       return;
     }

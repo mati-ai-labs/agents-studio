@@ -58,9 +58,27 @@ async function disconnect(type: ConnectorType): Promise<void> {
   await api.delete(`/api/connectors/${type}`);
 }
 
+/** Enable MCP tools for a connector. */
+async function enable(type: ConnectorType): Promise<ConnectorRecord> {
+  const res = await api.post<{ success: boolean; connector: ConnectorRecord }>(
+    `/api/connectors/${type}/enable`,
+  );
+  return res.data.connector;
+}
+
+/** Disable MCP tools for a connector. */
+async function disable(type: ConnectorType): Promise<ConnectorRecord> {
+  const res = await api.post<{ success: boolean; connector: ConnectorRecord }>(
+    `/api/connectors/${type}/disable`,
+  );
+  return res.data.connector;
+}
+
 export const connectorsApi = {
   list,
   get,
   initiateConnect,
   disconnect,
+  enable,
+  disable,
 };

@@ -49,6 +49,8 @@ import { createPluginWorkerManager, type PluginWorkerManager } from "./services/
 import { createPluginJobScheduler } from "./services/plugin-job-scheduler.js";
 import { pluginJobStore } from "./services/plugin-job-store.js";
 import { createPluginToolDispatcher } from "./services/plugin-tool-dispatcher.js";
+import { createConnectorToolDispatcher } from "./services/connector-tool-dispatcher.js";
+import { createUnifiedToolDispatcher } from "./services/unified-tool-dispatcher.js";
 import { pluginLifecycleManager } from "./services/plugin-lifecycle.js";
 import { createPluginJobCoordinator } from "./services/plugin-job-coordinator.js";
 import { buildHostServices, flushPluginLogBuffer } from "./services/plugin-host-services.js";
@@ -225,11 +227,18 @@ export async function createApp(
     jobStore,
     workerManager,
   });
-  const toolDispatcher = createPluginToolDispatcher({
+  const pluginToolDispatcher = createPluginToolDispatcher({
     workerManager,
     lifecycleManager: lifecycle,
     db,
   });
+  const connectorDispatcher = createConnectorToolDispatcher({ db });
+  const unifiedDispatcher = createUnifiedToolDispatcher({
+    db,
+    pluginDispatcher: pluginToolDispatcher,
+    connectorDispatcher,
+  });
+  const toolDispatcher = unifiedDispatcher;
   const jobCoordinator = createPluginJobCoordinator({
     db,
     lifecycle,
