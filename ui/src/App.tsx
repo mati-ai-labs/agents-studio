@@ -76,7 +76,7 @@ function boardRoutes() {
       <Route path="company/import" element={<CompanyImport />} />
       <Route path="company/settings/secrets" element={<Secrets />} />
       <Route path="company/settings/connectors" element={<Connectors />} />
-      <Route path="ceo" element={<CeoChat />} />
+      <Route path="chat" element={<CeoChat />} />
       <Route path="skills/*" element={<CompanySkills />} />
       <Route path="connectors" element={<Connectors />} />
       <Route path="settings" element={<LegacySettingsRedirect />} />
@@ -290,6 +290,7 @@ export function App() {
             <Route path="plugins/:pluginId" element={<PluginSettings />} />
             <Route path="adapters" element={<AdapterManager />} />
           </Route>
+          <Route path="chat" element={<UnprefixedBoardRedirect />} />
           <Route path="companies" element={<UnprefixedBoardRedirect />} />
           <Route path="issues" element={<UnprefixedBoardRedirect />} />
           <Route path="issues/:issueId" element={<UnprefixedBoardRedirect />} />

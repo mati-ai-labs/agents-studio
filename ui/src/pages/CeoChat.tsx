@@ -4,6 +4,7 @@ import { Card } from "@/components/ui/card";
 import { useCompany } from "@/context/CompanyContext";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { chatApi, type ChatMessage, type ChatSession, type IssueCreatedData } from "@/api/chat";
+import { useParams } from "@/lib/router";
 
 interface PlanningEvent {
   text: string;
@@ -11,6 +12,7 @@ interface PlanningEvent {
 
 export default function CeoChat() {
   const { selectedCompanyId } = useCompany();
+  const { companyPrefix } = useParams<{ companyPrefix: string }>();
   const { setBreadcrumbs } = useBreadcrumbs();
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSession, setActiveSession] = useState<ChatSession | null>(null);
@@ -24,7 +26,7 @@ export default function CeoChat() {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    setBreadcrumbs([{ label: "CEO Chat", href: "/ceo" }]);
+    setBreadcrumbs([{ label: "CEO Chat", href: `/${companyPrefix}/chat` }]);
   }, [setBreadcrumbs]);
 
   useEffect(() => {
@@ -236,7 +238,7 @@ export default function CeoChat() {
                           <span className="rounded bg-blue-100 px-1.5 py-0.5 text-blue-700">Assigned to {createdIssue.assigneeAgentName}</span>
                         )}
                         <a
-                          href={`/issues/${createdIssue.issueId}`}
+                          href={companyPrefix ? `/${companyPrefix}/issues/${createdIssue.issueId}` : `/issues/${createdIssue.issueId}`}
                           className="text-blue-600 hover:underline"
                         >
                           View issue →
