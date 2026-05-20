@@ -55,6 +55,7 @@ import type { PluginJobStore } from "../services/plugin-job-store.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
 import type { PluginStreamBus } from "../services/plugin-stream-bus.js";
 import type { PluginToolDispatcher } from "../services/plugin-tool-dispatcher.js";
+import type { UnifiedToolDispatcher } from "../services/unified-tool-dispatcher.js";
 import type { ToolRunContext } from "@paperclipai/plugin-sdk";
 import { JsonRpcCallError, PLUGIN_RPC_ERROR_CODES } from "@paperclipai/plugin-sdk";
 import {
@@ -255,7 +256,7 @@ export interface PluginRouteWebhookDeps {
  */
 export interface PluginRouteToolDeps {
   /** The tool dispatcher for listing and executing plugin tools. */
-  toolDispatcher: PluginToolDispatcher;
+  toolDispatcher: PluginToolDispatcher | UnifiedToolDispatcher;
 }
 
 /**
@@ -798,19 +799,20 @@ export function pluginRoutes(
       return;
     }
 
-    // Verify the tool exists
-    const registeredTool = toolDeps.toolDispatcher.getTool(tool);
-    if (!registeredTool) {
-      res.status(404).json({ error: `Tool "${tool}" not found` });
-      return;
-    }
-
     try {
-      const result = await toolDeps.toolDispatcher.executeTool(
-        tool,
-        parameters ?? {},
-        runContext,
-      );
+      let result: unknown;
+      if ("getToolDescriptor" in toolDeps.toolDispatcher) {
+        // UnifiedToolDispatcher
+        result = await toolDeps.toolDispatcher.executeTool(tool, parameters ?? {}, runContext);
+      } else {
+        // PluginToolDispatcher — verify tool exists then execute
+        const registeredTool = toolDeps.toolDispatcher.getTool(tool);
+        if (!registeredTool) {
+          res.status(404).json({ error: `Tool "${tool}" not found` });
+          return;
+        }
+        result = await toolDeps.toolDispatcher.executeTool(tool, parameters ?? {}, runContext);
+      }
       res.json(result);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

@@ -12,6 +12,7 @@ import {
   Repeat,
   GitBranch,
   Settings,
+  Bot,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { NavLink } from "@/lib/router";
@@ -108,6 +109,10 @@ export function Sidebar() {
         </SidebarSection>
 
         <SidebarProjects />
+
+        <SidebarSection label="ORCHESTRATOR">
+          <SidebarNavItem to="/chat" label="Chat" icon={Bot} />
+        </SidebarSection>
 
         <SidebarAgents />
 

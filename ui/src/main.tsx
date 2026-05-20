@@ -24,7 +24,16 @@ initPluginBridge(React, ReactDOM);
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js");
+    if (import.meta.env.PROD) {
+      void navigator.serviceWorker.register("/sw.js");
+      return;
+    }
+    // Prevent stale dev-time SW interception from breaking local API requests.
+    void navigator.serviceWorker.getRegistrations().then((registrations) => {
+      for (const registration of registrations) {
+        void registration.unregister();
+      }
+    });
   });
 }
 

@@ -41,13 +41,17 @@ import { accessRoutes } from "./routes/access.js";
 import { pluginRoutes } from "./routes/plugins.js";
 import { adapterRoutes } from "./routes/adapters.js";
 import { pluginUiStaticRoutes } from "./routes/plugin-ui-static.js";
+import { connectorsRoutes } from "./routes/connectors.js";
+import { chatRoutes } from "./routes/chat.js";
 import { applyUiBranding } from "./ui-branding.js";
 import { logger } from "./middleware/logger.js";
 import { DEFAULT_LOCAL_PLUGIN_DIR, pluginLoader } from "./services/plugin-loader.js";
 import { createPluginWorkerManager, type PluginWorkerManager } from "./services/plugin-worker-manager.js";
 import { createPluginJobScheduler } from "./services/plugin-job-scheduler.js";
 import { pluginJobStore } from "./services/plugin-job-store.js";
-import { createPluginToolDispatcher } from "./services/plugin-tool-dispatcher.js";
+import { createPluginToolDispatcher, type PluginToolDispatcher } from "./services/plugin-tool-dispatcher.js";
+import { createConnectorToolDispatcher } from "./services/connector-tool-dispatcher.js";
+import { createUnifiedToolDispatcher } from "./services/unified-tool-dispatcher.js";
 import { pluginLifecycleManager } from "./services/plugin-lifecycle.js";
 import { createPluginJobCoordinator } from "./services/plugin-job-coordinator.js";
 import { buildHostServices, flushPluginLogBuffer } from "./services/plugin-host-services.js";
@@ -224,11 +228,19 @@ export async function createApp(
     jobStore,
     workerManager,
   });
-  const toolDispatcher = createPluginToolDispatcher({
+  const pluginToolDispatcher = createPluginToolDispatcher({
     workerManager,
     lifecycleManager: lifecycle,
     db,
   });
+  const connectorDispatcher = createConnectorToolDispatcher({ db });
+  const unifiedDispatcher = createUnifiedToolDispatcher({
+    db,
+    pluginDispatcher: pluginToolDispatcher,
+    connectorDispatcher,
+  });
+  // For plugin lifecycle + loader (which only need PluginToolDispatcher methods)
+  const toolDispatcher: PluginToolDispatcher = pluginToolDispatcher;
   const jobCoordinator = createPluginJobCoordinator({
     db,
     lifecycle,
@@ -285,6 +297,11 @@ export async function createApp(
     ),
   );
   api.use(adapterRoutes());
+  api.use(
+    "/connectors",
+    connectorsRoutes(db),
+  );
+  api.use(chatRoutes(db));
   api.use(
     accessRoutes(db, {
       deploymentMode: opts.deploymentMode,
