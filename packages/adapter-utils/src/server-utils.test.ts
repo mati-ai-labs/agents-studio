@@ -462,6 +462,37 @@ describe("renderPaperclipWakePrompt", () => {
     expect(prompt).toContain("named unblock owner/action");
   });
 
+  it("renders chat-only wake payloads as actionable chat scope", () => {
+    const prompt = renderPaperclipWakePrompt({
+      reason: "ceo_chat",
+      taskSource: "ceo_chat",
+      chat: {
+        sessionId: "chat-session-1",
+        message: "Please prepare a 3-step launch checklist for tomorrow.",
+        messageTruncated: false,
+      },
+      commentWindow: {
+        requestedCount: 0,
+        includedCount: 0,
+        missingCount: 0,
+      },
+      comments: [],
+      fallbackFetchNeeded: false,
+    });
+
+    expect(prompt).toContain("scoped to the CEO chat wake below");
+    expect(prompt).toContain("CEO chat user message:");
+    expect(prompt).toContain("Please prepare a 3-step launch checklist for tomorrow.");
+    expect(prompt).toContain("Respond to this message directly in this heartbeat");
+    expect(prompt).toContain("- chat session: chat-session-1");
+    expect(prompt).toContain("Treat the chat message below as your primary assignment");
+    expect(prompt).toContain("Do NOT run inbox/assignment discovery before replying.");
+    expect(prompt).toContain("Do NOT respond with \"no assignments\" / \"clean exit\" style summaries.");
+    expect(prompt).toContain("Operate as orchestrator-first");
+    expect(prompt).toContain("if the request is specialist work (for example market research)");
+    expect(prompt).toContain("issue identifier/title, assignee agent, and next expected update");
+  });
+
   it("renders planning-mode directives for assignment and comment wakes", () => {
     const assignmentPrompt = renderPaperclipWakePrompt({
       reason: "issue_assigned",

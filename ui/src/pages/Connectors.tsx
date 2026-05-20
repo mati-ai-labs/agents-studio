@@ -241,6 +241,7 @@ export function Connectors() {
   const [connectingType, setConnectingType] = useState<ConnectorType | null>(null);
   const [disconnectingType, setDisconnectingType] = useState<ConnectorType | null>(null);
   const [disconnectDialogType, setDisconnectDialogType] = useState<ConnectorType | null>(null);
+  const companyId = selectedCompany?.id ?? null;
 
   // Show toast for OAuth callback results
   const connected = searchParams.get("connected");
@@ -281,13 +282,18 @@ export function Connectors() {
       { label: "Settings", href: "/instance/settings/heartbeats" },
       { label: "Connectors" },
     ]);
-    fetchConnectors();
-  }, [selectedCompany?.name]);
+    void fetchConnectors();
+  }, [selectedCompany?.name, companyId]);
 
   async function fetchConnectors() {
+    if (!companyId) {
+      setConnectors([]);
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
     try {
-      const res = await fetch("/api/connectors", { credentials: "include" });
+      const res = await fetch(`/api/connectors?companyId=${encodeURIComponent(companyId)}`, { credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json() as { connectors: ConnectorRecord[] };
       setConnectors(data.connectors);
@@ -299,9 +305,10 @@ export function Connectors() {
   }
 
   async function handleConnect(type: ConnectorType) {
+    if (!companyId) return;
     setConnectingType(type);
     try {
-      const res = await fetch(`/api/connectors/${type}/connect`, {
+      const res = await fetch(`/api/connectors/${type}/connect?companyId=${encodeURIComponent(companyId)}`, {
         method: "POST",
         credentials: "include",
       });
@@ -323,10 +330,11 @@ export function Connectors() {
   }
 
   async function handleDisconnect(type: ConnectorType) {
+    if (!companyId) return;
     setDisconnectDialogType(null);
     setDisconnectingType(type);
     try {
-      const res = await fetch(`/api/connectors/${type}`, {
+      const res = await fetch(`/api/connectors/${type}?companyId=${encodeURIComponent(companyId)}`, {
         method: "DELETE",
         credentials: "include",
       });

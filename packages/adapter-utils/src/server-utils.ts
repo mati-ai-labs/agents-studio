@@ -381,6 +381,11 @@ type PaperclipWakeTreeHoldSummary = {
 
 type PaperclipWakePayload = {
   reason: string | null;
+  chat: {
+    sessionId: string | null;
+    message: string | null;
+    messageTruncated: boolean;
+  } | null;
   issue: PaperclipWakeIssue | null;
   checkedOutByHarness: boolean;
   dependencyBlockedInteraction: boolean;
@@ -404,6 +409,19 @@ type PaperclipWakePayload = {
   truncated: boolean;
   fallbackFetchNeeded: boolean;
 };
+
+function normalizePaperclipWakeChat(value: unknown) {
+  const chat = parseObject(value);
+  const sessionId = asString(chat.sessionId, "").trim() || null;
+  const message = asString(chat.message, "").trim() || null;
+  const messageTruncated = asBoolean(chat.messageTruncated, false);
+  if (!sessionId && !message) return null;
+  return {
+    sessionId,
+    message,
+    messageTruncated,
+  };
+}
 
 function normalizePaperclipWakeIssue(value: unknown): PaperclipWakeIssue | null {
   const issue = parseObject(value);
@@ -555,6 +573,7 @@ function normalizePaperclipWakeExecutionStage(value: unknown): PaperclipWakeExec
 
 export function normalizePaperclipWakePayload(value: unknown): PaperclipWakePayload | null {
   const payload = parseObject(value);
+  const chat = normalizePaperclipWakeChat(payload.chat);
   const comments = Array.isArray(payload.comments)
     ? payload.comments
         .map((entry) => normalizePaperclipWakeComment(entry))
@@ -586,12 +605,25 @@ export function normalizePaperclipWakePayload(value: unknown): PaperclipWakePayl
     : [];
 
   const activeTreeHold = normalizePaperclipWakeTreeHoldSummary(payload.activeTreeHold);
-  if (comments.length === 0 && commentIds.length === 0 && childIssueSummaries.length === 0 && unresolvedBlockerIssueIds.length === 0 && unresolvedBlockerSummaries.length === 0 && !activeTreeHold && !executionStage && !continuationSummary && !livenessContinuation && !normalizePaperclipWakeIssue(payload.issue)) {
+  if (
+    comments.length === 0 &&
+    commentIds.length === 0 &&
+    childIssueSummaries.length === 0 &&
+    unresolvedBlockerIssueIds.length === 0 &&
+    unresolvedBlockerSummaries.length === 0 &&
+    !activeTreeHold &&
+    !executionStage &&
+    !continuationSummary &&
+    !livenessContinuation &&
+    !chat &&
+    !normalizePaperclipWakeIssue(payload.issue)
+  ) {
     return null;
   }
 
   return {
     reason: asString(payload.reason, "").trim() || null,
+    chat,
     issue: normalizePaperclipWakeIssue(payload.issue),
     checkedOutByHarness: asBoolean(payload.checkedOutByHarness, false),
     dependencyBlockedInteraction: asBoolean(payload.dependencyBlockedInteraction, false),
@@ -640,6 +672,24 @@ export function renderPaperclipWakePrompt(
   if (!normalized) return "";
   const resumedSession = options.resumedSession === true;
   const executionStage = normalized.executionStage;
+  const hasIssueScope = Boolean(normalized.issue);
+  const hasChatScope = Boolean(normalized.chat?.message);
+  const scopeLine = hasIssueScope
+    ? "This heartbeat is scoped to the issue below. Do not switch to another issue until you have handled this wake."
+    : hasChatScope
+      ? "This heartbeat is scoped to the CEO chat wake below. Handle the user message directly before generic heartbeat work."
+      : "This heartbeat is scoped to the wake payload below.";
+  const chatModeDirective = hasChatScope
+    ? [
+      "CEO chat mode:",
+      "- Treat the chat message below as your primary assignment for this wake.",
+      "- Do NOT run inbox/assignment discovery before replying.",
+      "- Do NOT respond with \"no assignments\" / \"clean exit\" style summaries.",
+      "- Always return a direct assistant response to the chat message, even for simple greetings/check-ins.",
+      "- Operate as orchestrator-first: if the request is specialist work (for example market research), create or update a delegated issue and assign it to the most appropriate specialist agent instead of executing the full specialist workflow yourself.",
+      "- In your response, explicitly state what you delegated (issue identifier/title, assignee agent, and next expected update).",
+    ]
+    : [];
   const principalLabel = (principal: PaperclipWakeExecutionPrincipal | null) => {
     if (!principal || !principal.type) return "unknown";
     if (principal.type === "agent") return principal.agentId ? `agent ${principal.agentId}` : "agent";
@@ -651,7 +701,7 @@ export function renderPaperclipWakePrompt(
         "## Paperclip Resume Delta",
         "",
         "You are resuming an existing Paperclip session.",
-        "This heartbeat is scoped to the issue below. Do not switch to another issue until you have handled this wake.",
+        scopeLine,
         "Focus on the new wake delta below and continue the current task without restating the full heartbeat boilerplate.",
         "Fetch the API thread only when `fallbackFetchNeeded` is true or you need broader history than this batch.",
         "",
@@ -667,7 +717,7 @@ export function renderPaperclipWakePrompt(
         "## Paperclip Wake Payload",
         "",
         "Treat this wake payload as the highest-priority change for the current heartbeat.",
-        "This heartbeat is scoped to the issue below. Do not switch to another issue until you have handled this wake.",
+        scopeLine,
         "Before generic repo exploration or boilerplate heartbeat updates, acknowledge the latest comment and explain how it changes your next action.",
         "Use this inline wake data first before refetching the issue thread.",
         "Only fetch the API thread when `fallbackFetchNeeded` is true or you need broader history than this batch.",
@@ -675,11 +725,31 @@ export function renderPaperclipWakePrompt(
         "Execution contract: take concrete action in this heartbeat when the issue is actionable; do not stop at a plan unless planning was requested. Leave durable progress and then give the issue a clear final disposition before ending the heartbeat: `done`, `in_review` with a real reviewer/approval/interaction path, `blocked` with first-class blockers or a named unblock owner/action, delegated follow-up issues with blockers, or `in_progress` only when a live continuation path exists. Use child issues for long or parallel delegated work instead of polling. Comments, documents, screenshots, work products, and `Remaining` bullets are evidence, not valid liveness paths by themselves.",
         "",
         `- reason: ${normalized.reason ?? "unknown"}`,
-        `- issue: ${normalized.issue?.identifier ?? normalized.issue?.id ?? "unknown"}${normalized.issue?.title ? ` ${normalized.issue.title}` : ""}`,
-        `- pending comments: ${normalized.includedCount}/${normalized.requestedCount}`,
-        `- latest comment id: ${normalized.latestCommentId ?? "unknown"}`,
-        `- fallback fetch needed: ${normalized.fallbackFetchNeeded ? "yes" : "no"}`,
       ];
+  if (normalized.issue) {
+    lines.push(`- issue: ${normalized.issue.identifier ?? normalized.issue.id ?? "unknown"}${normalized.issue.title ? ` ${normalized.issue.title}` : ""}`);
+  }
+  if (normalized.chat) {
+    lines.push(`- chat session: ${normalized.chat.sessionId ?? "unknown"}`);
+  }
+  lines.push(
+    `- pending comments: ${normalized.includedCount}/${normalized.requestedCount}`,
+    `- latest comment id: ${normalized.latestCommentId ?? "unknown"}`,
+    `- fallback fetch needed: ${normalized.fallbackFetchNeeded ? "yes" : "no"}`,
+  );
+
+  if (normalized.chat?.message) {
+    lines.push(
+      "",
+      ...chatModeDirective,
+      "",
+      "CEO chat user message:",
+      normalized.chat.message,
+      normalized.chat.messageTruncated ? "[chat message truncated]" : "",
+      "",
+      "Respond to this message directly in this heartbeat before ending the run.",
+    );
+  }
 
   if (normalized.issue?.status) {
     lines.push(`- issue status: ${normalized.issue.status}`);

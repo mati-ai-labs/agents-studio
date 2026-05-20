@@ -1,65 +1,23 @@
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
-import { chatSessions, chatMessages, issues as issueRows } from "@paperclipai/db";
-import { and, desc, eq } from "drizzle-orm";
-import { agentService, issueService } from "../services/index.js";
+import { chatSessions, chatMessages, heartbeatRuns } from "@paperclipai/db";
+import { and, desc, eq, gte } from "drizzle-orm";
+import { agentService, heartbeatService, subscribeCompanyLiveEvents } from "../services/index.js";
 import { assertCompanyAccess } from "./authz.js";
 import { logger } from "../middleware/logger.js";
-
-function buildIssueTitle(content: string): string {
-  const firstLine = content.split("\n")[0].trim();
-  if (firstLine.length <= 100) return firstLine;
-  return firstLine.slice(0, 97) + "...";
-}
-
-function buildIssueDescription(content: string, agentName: string | null): string {
-  return `## Request from CEO Chat\n\n${content}\n\n_Assigned via CEO Chat${agentName ? ` to ${agentName}` : ""}._`;
-}
-
-async function resolveTargetAgent(
-  agentsSvc: ReturnType<typeof agentService>,
-  companyId: string,
-  content: string,
-): Promise<{ agentId: string | null; agentName: string | null; matchedBy: string }> {
-  const agents = await agentsSvc.list(companyId);
-
-  // Check for explicit agent mentions via "for <name>" or "to <name>" patterns
-  const explicitMatch = agents.find((agent) => {
-    const name = agent.name?.toLowerCase() ?? "";
-    const patterns = [
-      new RegExp(`\\bfor\\s+${name}\\b`, "i"),
-      new RegExp(`\\bto\\s+${name}\\b`, "i"),
-      new RegExp(`\\bask\\s+${name}\\b`, "i"),
-      new RegExp(`\\bassign\\s+${name}\\b`, "i"),
-    ];
-    return name.length > 0 && (patterns.some((re) => re.test(content)) || content.toLowerCase().includes(name));
-  });
-
-  if (explicitMatch) {
-    return { agentId: explicitMatch.id, agentName: explicitMatch.name ?? null, matchedBy: "explicit_name" };
-  }
-
-  // Fall back to CEO agent
-  const ceo = agents.find((a) => a.role === "ceo");
-  if (ceo) {
-    return { agentId: ceo.id, agentName: ceo.name ?? null, matchedBy: "fallback_ceo" };
-  }
-
-  // Last resort: first active agent
-  const firstAgent = agents.find((a) => a.status !== "paused");
-  return { agentId: firstAgent?.id ?? null, agentName: firstAgent?.name ?? null, matchedBy: "fallback_first" };
-}
+import { buildHeartbeatRunIssueComment } from "../services/heartbeat-run-summary.js";
 
 export function chatRoutes(db: Db) {
   const router = Router();
   const agentsSvc = agentService(db);
-  const issuesSvc = issueService(db);
+  const heartbeat = heartbeatService(db);
 
   // ── helpers ────────────────────────────────────────────────────────────────
 
   async function resolveCeoAgent(companyId: string) {
     const agents = await agentsSvc.list(companyId);
-    return agents.find((a) => a.role === "ceo") ?? null;
+    const ceos = agents.filter((a) => a.role === "ceo");
+    return ceos.find((a) => a.status !== "paused") ?? ceos[0] ?? null;
   }
 
   async function buildChatSession(session: typeof chatSessions.$inferSelect) {
@@ -71,8 +29,73 @@ export function chatRoutes(db: Db) {
     return { ...session, messages };
   }
 
+  async function readRunReply(
+    runId: string,
+    timeoutMs = 8_000,
+  ) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const [run] = await db
+        .select({ resultJson: heartbeatRuns.resultJson })
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, runId))
+        .limit(1);
+
+      const reply = buildHeartbeatRunIssueComment(
+        (run?.resultJson ?? null) as Record<string, unknown> | null,
+      );
+      if (reply) {
+        return reply;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    return null;
+  }
+
+  async function readSessionRunReplySince(
+    companyId: string,
+    sessionId: string,
+    agentId: string,
+    since: Date,
+    timeoutMs = 90_000,
+  ) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const runs = await db
+        .select({
+          id: heartbeatRuns.id,
+          resultJson: heartbeatRuns.resultJson,
+          contextSnapshot: heartbeatRuns.contextSnapshot,
+          status: heartbeatRuns.status,
+        })
+        .from(heartbeatRuns)
+        .where(
+          and(
+            eq(heartbeatRuns.companyId, companyId),
+            eq(heartbeatRuns.agentId, agentId),
+            gte(heartbeatRuns.createdAt, since),
+          ),
+        )
+        .orderBy(desc(heartbeatRuns.createdAt))
+        .limit(10);
+
+      for (const run of runs) {
+        if (!["succeeded", "failed", "cancelled", "timed_out"].includes(run.status)) continue;
+        const context = (run.contextSnapshot ?? {}) as Record<string, unknown>;
+        if (context.taskSource !== "ceo_chat") continue;
+        if (context.chatSessionId !== sessionId) continue;
+        const reply = buildHeartbeatRunIssueComment(
+          (run.resultJson ?? null) as Record<string, unknown> | null,
+        );
+        if (reply) return reply;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    return null;
+  }
+
   // ── POST /api/chat/sessions ─────────────────────────────────────────────
-  // Create a new chat session for the company.
 
   router.post("/companies/:companyId/chat/sessions", async (req, res) => {
     const companyId = req.params.companyId as string;
@@ -92,7 +115,6 @@ export function chatRoutes(db: Db) {
   });
 
   // ── GET /api/chat/sessions ──────────────────────────────────────────────
-  // List all chat sessions for the company.
 
   router.get("/companies/:companyId/chat/sessions", async (req, res) => {
     const companyId = req.params.companyId as string;
@@ -108,7 +130,6 @@ export function chatRoutes(db: Db) {
   });
 
   // ── GET /api/chat/sessions/:id ───────────────────────────────────────────
-  // Get a single session with all messages.
 
   router.get("/chat/sessions/:id", async (req, res) => {
     const id = req.params.id as string;
@@ -129,7 +150,6 @@ export function chatRoutes(db: Db) {
   });
 
   // ── DELETE /api/chat/sessions/:id ────────────────────────────────────────
-  // Delete a session and all its messages (cascade).
 
   router.delete("/chat/sessions/:id", async (req, res) => {
     const id = req.params.id as string;
@@ -150,7 +170,9 @@ export function chatRoutes(db: Db) {
   });
 
   // ── POST /api/chat/sessions/:id/messages ─────────────────────────────────
-  // Send a message and stream back the CEO agent response via SSE.
+  // Direct chat to CEO.
+  // - Session-scoped run identity via taskKey (no hidden issue dependency)
+  // - Agent memory remains session-native through adapter runtime session reuse
 
   router.post("/chat/sessions/:id/messages", async (req, res) => {
     const sessionId = req.params.id as string;
@@ -184,7 +206,6 @@ export function chatRoutes(db: Db) {
       .values({ sessionId, role: "user", content })
       .returning();
 
-    // Update session updatedAt
     await db
       .update(chatSessions)
       .set({ updatedAt: new Date() })
@@ -199,107 +220,202 @@ export function chatRoutes(db: Db) {
     });
     res.flushHeaders();
 
-    // Send initial ping to establish connection
     res.write(": connected\n\n");
-
-    // Emit user message event
     res.write(`event: message\ndata: ${JSON.stringify(userMsg)}\n\n`);
 
     // Find the CEO agent
     const ceoAgent = await resolveCeoAgent(session.companyId);
 
     if (!ceoAgent) {
-      const noCeo = "No CEO agent found in this company. Please configure a CEO agent first.";
-
+      const noCeo = "No CEO agent found. Please configure a CEO agent first.";
       const [asstMsg] = await db
         .insert(chatMessages)
         .values({ sessionId, role: "assistant", content: noCeo })
         .returning();
-
       res.write(`event: message\ndata: ${JSON.stringify(asstMsg)}\n\n`);
       res.write("event: done\ndata: {}\n\n");
       res.end();
       return;
     }
 
-    // Resolve target agent and create issue with real orchestration
-    const targetAgent = await resolveTargetAgent(agentsSvc, session.companyId, content);
+    // Note: We do NOT pass chat history to CEO. Claude Code manages its own memory
+    // via MEMORY.md files in its workspace. Passing raw history would fight against
+    // Claude Code's native memory architecture.
 
-    let createdIssue: typeof issueRows.$inferSelect | null = null;
-    let errorMessage: string | null = null;
+    const requestStartedAt = new Date();
+    let responseFinished = false;
+    let ceoRunId: string | null = null;
+    let queuedWithoutRunId = false;
+    let completionTimer: NodeJS.Timeout | null = null;
 
-    res.write(`event: planning\ndata: ${JSON.stringify({ text: "Analyzing request..." })}\n\n`);
+    const sendStatus = (status: string, message: string, extra?: Record<string, unknown>) => {
+      if (responseFinished || !res.writable) return;
+      res.write(`event: status\ndata: ${JSON.stringify({ status, message, ...(extra ?? {}) })}\n\n`);
+    };
+
+    const finishWithAssistant = async (content: string) => {
+      if (responseFinished || !res.writable) return;
+      responseFinished = true;
+      if (completionTimer) clearTimeout(completionTimer);
+      const [asstMsg] = await db
+        .insert(chatMessages)
+        .values({ sessionId, role: "assistant", content })
+        .returning();
+      res.write(`event: message\ndata: ${JSON.stringify(asstMsg)}\n\n`);
+      res.write("event: done\ndata: {}\n\n");
+      res.end();
+    };
+    completionTimer = setTimeout(() => {
+      if (responseFinished) return;
+      void finishWithAssistant(
+        "Still queued/running. Request remains active; send another message to check latest status.",
+      );
+    }, 180_000);
+
+    const unsubscribe = subscribeCompanyLiveEvents(session.companyId, (event) => {
+      if (responseFinished || !res.writable) return;
+
+      if (event.type === "heartbeat.run.queued") {
+        const payload = event.payload as Record<string, unknown>;
+        const runId = payload.runId as string | undefined;
+        if (!runId) return;
+        if (ceoRunId === runId) {
+          sendStatus("queued", "Request queued for CEO execution.", { runId });
+          return;
+        }
+        if (!queuedWithoutRunId) return;
+        void (async () => {
+          try {
+            const [run] = await db
+              .select({
+                id: heartbeatRuns.id,
+                agentId: heartbeatRuns.agentId,
+                contextSnapshot: heartbeatRuns.contextSnapshot,
+              })
+              .from(heartbeatRuns)
+              .where(eq(heartbeatRuns.id, runId))
+              .limit(1);
+
+            const context = (run?.contextSnapshot ?? {}) as Record<string, unknown>;
+            const chatSessionId = typeof context.chatSessionId === "string" ? context.chatSessionId : null;
+            if (!run || run.agentId !== ceoAgent.id || chatSessionId !== sessionId) return;
+            if (context.taskSource !== "ceo_chat") return;
+
+            ceoRunId = run.id;
+            queuedWithoutRunId = false;
+            sendStatus("queued", "Queued and waiting for CEO execution slot.", { runId: run.id });
+          } catch (err) {
+            logger.warn({ err, runId }, "Failed to resolve queued CEO chat run");
+          }
+        })();
+      }
+
+      if (event.type === "heartbeat.run.status") {
+        const payload = event.payload as Record<string, unknown>;
+        const runId = payload.runId as string | undefined;
+        if (runId !== ceoRunId) return;
+
+        const status = payload.status as string | undefined;
+        if (status === "running") {
+          sendStatus("running", "CEO is working on your request.", { runId });
+          return;
+        }
+        if (status && ["succeeded", "failed", "cancelled", "timed_out"].includes(status)) {
+          if (responseFinished) return;
+          void (async () => {
+            try {
+              sendStatus("completed", `CEO run ${status}.`, { runId, status });
+              if (ceoRunId) {
+                const reply = await readRunReply(ceoRunId);
+                if (reply) {
+                  await finishWithAssistant(reply);
+                  return;
+                }
+              }
+              const fallbackReply = await readSessionRunReplySince(
+                session.companyId,
+                sessionId,
+                ceoAgent.id,
+                requestStartedAt,
+                8_000,
+              );
+              if (fallbackReply) {
+                await finishWithAssistant(fallbackReply);
+                return;
+              }
+              await finishWithAssistant("Run completed without a structured assistant summary.");
+            } catch (err) {
+              logger.warn({ err, ceoRunId }, "Failed to hydrate CEO chat reply from run result");
+              if (!responseFinished) {
+                await finishWithAssistant("Failed to collect CEO reply from run output.");
+              }
+            }
+          })();
+        }
+      }
+    });
+
+    req.on("close", () => {
+      if (completionTimer) clearTimeout(completionTimer);
+      responseFinished = true;
+      unsubscribe();
+    });
 
     try {
-      res.write(`event: planning\ndata: ${JSON.stringify({ text: `Assigning to ${targetAgent.agentName ?? "agent"} (matched by: ${targetAgent.matchedBy})...` })}\n\n`);
-
-      const issueTitle = buildIssueTitle(content);
-      const issueDescription = buildIssueDescription(content, targetAgent.agentName);
-
-      res.write(`event: planning\ndata: ${JSON.stringify({ text: "Creating issue..." })}\n\n`);
-
-      const issue = await issuesSvc.create(session.companyId, {
-        title: issueTitle,
-        description: issueDescription,
-        assigneeAgentId: targetAgent.agentId,
-        status: "backlog",
-        priority: "medium",
-        originKind: "ceo_chat",
-        createdByAgentId: ceoAgent.id,
+      const wakeResult = await heartbeat.wakeup(ceoAgent.id, {
+        source: "on_demand",
+        triggerDetail: "manual",
+        reason: "ceo_chat",
+        contextSnapshot: {
+          taskKey: `ceo-chat-${sessionId}`,
+          taskSource: "ceo_chat",
+          chatMessage: content,
+          chatSessionId: sessionId,
+        },
+        payload: {
+          chatMessage: content,
+          chatSessionId: sessionId,
+        },
       });
 
-      createdIssue = issue;
-
-      res.write(`event: issue_created\ndata: ${JSON.stringify({
-        issueId: issue.id,
-        issueIdentifier: issue.identifier ?? issue.id,
-        title: issue.title,
-        assigneeAgentId: targetAgent.agentId,
-        assigneeAgentName: targetAgent.agentName,
-      })}\n\n`);
-    } catch (err) {
-      logger.error({ err, sessionId }, "CEO chat failed to create issue");
-      errorMessage = err instanceof Error ? err.message : "Failed to create issue";
-    }
-
-    // Build the final assistant response
-    let assistantContent = "";
-
-    if (errorMessage) {
-      assistantContent = `Got it -- I understood the request but ran into an issue: ${errorMessage}.\n\nPlease try again or contact your administrator.`;
-    } else if (createdIssue) {
-      const identifier = createdIssue.identifier ?? createdIssue.id.slice(0, 8);
-      assistantContent = `**Task created**\n\n`;
-      assistantContent += `**Issue:** ${createdIssue.title}\n`;
-      assistantContent += `**ID:** ${identifier}\n`;
-      if (targetAgent.agentName) {
-        assistantContent += `**Assigned to:** ${targetAgent.agentName}\n`;
+      if (!wakeResult) {
+        queuedWithoutRunId = true;
+        sendStatus("queued", "CEO is busy; request queued and waiting.");
+        void (async () => {
+          const reply = await readSessionRunReplySince(
+            session.companyId,
+            sessionId,
+            ceoAgent.id,
+            requestStartedAt,
+            180_000,
+          );
+          if (!reply || responseFinished) return;
+          await finishWithAssistant(reply);
+        })();
+        return;
       }
-      assistantContent += `\n_Track progress in the Issues board._`;
-    } else {
-      assistantContent = `I understood the request but was unable to create a task. Please try again.`;
+
+      ceoRunId = (wakeResult as { id: string }).id;
+      sendStatus("queued", "Request accepted and queued for execution.", { runId: ceoRunId });
+    } catch (err) {
+      logger.error({ err, sessionId }, "CEO chat invoke failed");
+      unsubscribe();
+      const errorMsg = `Failed to reach CEO: ${err instanceof Error ? err.message : String(err)}`;
+      const [asstMsg] = await db
+        .insert(chatMessages)
+        .values({ sessionId, role: "assistant", content: errorMsg })
+        .returning();
+      res.write(`event: message\ndata: ${JSON.stringify(asstMsg)}\n\n`);
+      res.write("event: done\ndata: {}\n\n");
+      res.end();
+      return;
     }
-
-    // Stream the final response
-    res.write(`event: chunk\ndata: ${JSON.stringify({ content: assistantContent })}\n\n`);
-
-    // Persist the assistant message with metadata if we created an issue
-    const metadata = createdIssue ? JSON.stringify({ issueId: createdIssue.id, assigneeAgentId: targetAgent.agentId }) : null;
-    const [asstMsg] = await db
-      .insert(chatMessages)
-      .values({ sessionId, role: "assistant", content: assistantContent, metadata })
-      .returning();
-
-    res.write(`event: message\ndata: ${JSON.stringify(asstMsg)}\n\n`);
-    res.write("event: done\ndata: {}\n\n");
-    res.end();
   });
 
   // ── DELETE /api/chat/sessions/:id/messages/:messageId ──────────────────
 
   router.delete("/chat/sessions/:id/messages/:messageId", async (req, res) => {
     const { id: sessionId, messageId } = req.params as { id: string; messageId: string };
-
     const [session] = await db
       .select()
       .from(chatSessions)
@@ -315,7 +431,7 @@ export function chatRoutes(db: Db) {
 
     const [deleted] = await db
       .delete(chatMessages)
-      .where(and(eq(chatMessages.id, messageId), eq(chatMessages.sessionId, sessionId)))
+      .where(and(eq(chatMessages.sessionId, sessionId), eq(chatMessages.id, messageId)))
       .returning();
 
     if (!deleted) {

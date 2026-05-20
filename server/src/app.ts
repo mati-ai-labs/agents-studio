@@ -298,6 +298,7 @@ export async function createApp(
   );
   api.use(adapterRoutes());
   api.use(
+    "/connectors",
     connectorsRoutes(db),
   );
   api.use(chatRoutes(db));

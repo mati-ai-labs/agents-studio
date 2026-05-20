@@ -1904,6 +1904,13 @@ async function buildPaperclipWakePayload(input: {
     | null;
 }) {
   const executionStage = parseObject(input.contextSnapshot.executionStage);
+  const taskSource = readNonEmptyString(input.contextSnapshot.taskSource);
+  const chatSessionId = readNonEmptyString(input.contextSnapshot.chatSessionId);
+  const fullChatMessage = readNonEmptyString(input.contextSnapshot.chatMessage);
+  const chatMessage = fullChatMessage
+    ? (fullChatMessage.length > 4_000 ? fullChatMessage.slice(0, 4_000) : fullChatMessage)
+    : null;
+  const chatMessageTruncated = Boolean(fullChatMessage && chatMessage && fullChatMessage.length > chatMessage.length);
   const commentIds = extractWakeCommentIds(input.contextSnapshot);
   const issueId = readNonEmptyString(input.contextSnapshot.issueId);
   const continuationSummary = input.continuationSummary ?? null;
@@ -1923,7 +1930,12 @@ async function buildPaperclipWakePayload(input: {
           .where(and(eq(issues.id, issueId), eq(issues.companyId, input.companyId)))
           .then((rows) => rows[0] ?? null)
       : null);
-  if (commentIds.length === 0 && Object.keys(executionStage).length === 0 && !issueSummary) return null;
+  if (
+    commentIds.length === 0 &&
+    Object.keys(executionStage).length === 0 &&
+    !issueSummary &&
+    !chatMessage
+  ) return null;
 
   const commentRows =
     commentIds.length === 0
@@ -1997,6 +2009,15 @@ async function buildPaperclipWakePayload(input: {
 
   return {
     reason: readNonEmptyString(input.contextSnapshot.wakeReason),
+    taskSource,
+    chat:
+      taskSource === "ceo_chat" || chatSessionId || chatMessage
+        ? {
+            sessionId: chatSessionId,
+            message: chatMessage,
+            messageTruncated: chatMessageTruncated,
+          }
+        : null,
     issue: issueSummary
       ? {
           id: issueSummary.id,

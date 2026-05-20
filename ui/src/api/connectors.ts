@@ -35,40 +35,46 @@ export interface InitiateOAuthResponse {
   state: string;
 }
 
+function withCompanyId(path: string, companyId?: string): string {
+  if (!companyId) return path;
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}companyId=${encodeURIComponent(companyId)}`;
+}
+
 /** List all connectors for the current company. */
-async function list(): Promise<ConnectorRecord[]> {
-  const res = await api.get<ConnectorListResponse>("/api/connectors");
+async function list(companyId?: string): Promise<ConnectorRecord[]> {
+  const res = await api.get<ConnectorListResponse>(withCompanyId("/api/connectors", companyId));
   return res.connectors;
 }
 
 /** Get a single connector by type. */
-async function get(type: ConnectorType): Promise<ConnectorRecord> {
-  return api.get<ConnectorRecord>(`/api/connectors/${type}`);
+async function get(type: ConnectorType, companyId?: string): Promise<ConnectorRecord> {
+  return api.get<ConnectorRecord>(withCompanyId(`/api/connectors/${type}`, companyId));
 }
 
 /** Initiate OAuth flow for a connector type. Returns authorization URL. */
-async function initiateConnect(type: ConnectorType): Promise<InitiateOAuthResponse> {
-  return api.post<InitiateOAuthResponse>(`/api/connectors/${type}/connect`, {});
+async function initiateConnect(type: ConnectorType, companyId?: string): Promise<InitiateOAuthResponse> {
+  return api.post<InitiateOAuthResponse>(withCompanyId(`/api/connectors/${type}/connect`, companyId), {});
 }
 
 /** Disconnect (remove credentials) for a connector type. */
-async function disconnect(type: ConnectorType): Promise<void> {
-  await api.delete(`/api/connectors/${type}`);
+async function disconnect(type: ConnectorType, companyId?: string): Promise<void> {
+  await api.delete(withCompanyId(`/api/connectors/${type}`, companyId));
 }
 
 /** Enable MCP tools for a connector. */
-async function enable(type: ConnectorType): Promise<ConnectorRecord> {
+async function enable(type: ConnectorType, companyId?: string): Promise<ConnectorRecord> {
   const res = await api.post<{ success: boolean; connector: ConnectorRecord }>(
-    `/api/connectors/${type}/enable`,
+    withCompanyId(`/api/connectors/${type}/enable`, companyId),
     {},
   );
   return res.connector;
 }
 
 /** Disable MCP tools for a connector. */
-async function disable(type: ConnectorType): Promise<ConnectorRecord> {
+async function disable(type: ConnectorType, companyId?: string): Promise<ConnectorRecord> {
   const res = await api.post<{ success: boolean; connector: ConnectorRecord }>(
-    `/api/connectors/${type}/disable`,
+    withCompanyId(`/api/connectors/${type}/disable`, companyId),
     {},
   );
   return res.connector;

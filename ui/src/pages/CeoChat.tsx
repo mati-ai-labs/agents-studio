@@ -21,6 +21,7 @@ export default function CeoChat() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draftAssistant, setDraftAssistant] = useState("");
+  const [runStatusText, setRunStatusText] = useState<string | null>(null);
   const [planningText, setPlanningText] = useState<string | null>(null);
   const [createdIssue, setCreatedIssue] = useState<IssueCreatedData | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -92,6 +93,7 @@ export default function CeoChat() {
     setInput("");
     setSending(true);
     setDraftAssistant("");
+    setRunStatusText(null);
     setPlanningText(null);
     setCreatedIssue(null);
     setError(null);
@@ -117,11 +119,14 @@ export default function CeoChat() {
         onChunk: (chunk) => setDraftAssistant((prev) => prev + chunk),
         onPlanning: (data: PlanningEvent) => setPlanningText(data.text),
         onIssueCreated: (data: IssueCreatedData) => setCreatedIssue(data),
+        onStatus: (data) => setRunStatusText(data.message || data.status),
         onAssistantMessage: (message) => {
           setActiveSession((prev) => prev ? { ...prev, messages: [...(prev.messages ?? []), message] } : prev);
           setDraftAssistant("");
+          setRunStatusText(null);
         },
         onError: (msg) => setError(msg),
+        onDone: () => setRunStatusText(null),
       });
       await refreshSessions();
     } catch (err) {
@@ -214,6 +219,13 @@ export default function CeoChat() {
                     </div>
                   </div>
                 )}
+                {runStatusText ? (
+                  <div className="flex justify-start">
+                    <div className="max-w-[75%] rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
+                      {runStatusText}
+                    </div>
+                  </div>
+                ) : null}
                 {draftAssistant ? (
                   <div className="flex justify-start">
                     <div className="max-w-[75%] whitespace-pre-wrap rounded-2xl bg-muted px-4 py-3 text-sm leading-6">

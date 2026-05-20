@@ -82,7 +82,6 @@ export function Sidebar() {
             <span className="truncate">New Issue</span>
           </button>
           <SidebarNavItem to="/dashboard" label="Dashboard" icon={LayoutDashboard} liveCount={liveRunCount} />
-          <SidebarNavItem to="/ceo" label="CEO Chat" icon={Bot} />
           <SidebarNavItem
             to="/inbox"
             label="Inbox"
@@ -110,6 +109,10 @@ export function Sidebar() {
         </SidebarSection>
 
         <SidebarProjects />
+
+        <SidebarSection label="ORCHESTRATOR">
+          <SidebarNavItem to="/chat" label="Chat" icon={Bot} />
+        </SidebarSection>
 
         <SidebarAgents />
 

@@ -27,11 +27,12 @@ export function connectorsRoutes(db: Db): Router {
 import { Router, urlencoded } from "express";
 import type { Request, Response } from "express";
 import crypto from "node:crypto";
-import type { Db } from "@paperclipai/db";
+import { companies, type Db } from "@paperclipai/db";
 import { connectorRegistryService } from "../services/connector-registry.js";
 import {
   assertAuthenticated,
   assertBoard,
+  assertCompanyAccess,
 } from "./authz.js";
 import { badRequest } from "../errors.js";
 import { logger } from "../middleware/logger.js";
@@ -41,6 +42,14 @@ import { logger } from "../middleware/logger.js";
 // ---------------------------------------------------------------------------
 
 type ConnectorType = "google_workspace" | "notion" | "linear";
+const GOOGLE_CONNECTOR_TYPE: ConnectorType = "google_workspace";
+const GOOGLE_OAUTH_SCOPES = [
+  "openid",
+  "email",
+  "profile",
+  "https://www.googleapis.com/auth/calendar.readonly",
+  "https://www.googleapis.com/auth/drive.readonly",
+] as const;
 
 interface ConnectorOAuthConfig {
   clientId: string;
@@ -63,6 +72,14 @@ interface GoogleTokenResponse extends TokenResponse {
   id_token?: string;
 }
 
+function isMissingConnectorsTableError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const err = error as { code?: string; message?: string; cause?: { code?: string; message?: string } };
+  if (err.code === "42P01" || err.cause?.code === "42P01") return true;
+  const text = `${err.message ?? ""} ${err.cause?.message ?? ""}`.toLowerCase();
+  return text.includes("company_connectors") && text.includes("does not exist");
+}
+
 // ---------------------------------------------------------------------------
 // OAuth Configurations
 // ---------------------------------------------------------------------------
@@ -75,14 +92,7 @@ function getGoogleOAuthConfig(getBaseUrl: () => string): ConnectorOAuthConfig {
     redirectUri: `${baseUrl}/api/connectors/google_workspace/callback`,
     authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
     tokenUrl: "https://oauth2.googleapis.com/token",
-    scopes: [
-      "https://www.googleapis.com/auth/gmail.readonly",
-      "https://www.googleapis.com/auth/gmail.send",
-      "https://www.googleapis.com/auth/calendar.readonly",
-      "https://www.googleapis.com/auth/calendar.events",
-      "https://www.googleapis.com/auth/drive.readonly",
-      "https://www.googleapis.com/auth/drive.file",
-    ],
+    scopes: [...GOOGLE_OAUTH_SCOPES],
   };
 }
 
@@ -124,6 +134,7 @@ function getOAuthConfig(type: ConnectorType, getBaseUrl: () => string): Connecto
 // ---------------------------------------------------------------------------
 
 function buildAuthorizationUrl(
+  type: ConnectorType,
   config: ConnectorOAuthConfig,
   state: string,
   codeChallenge: string,
@@ -137,6 +148,12 @@ function buildAuthorizationUrl(
     code_challenge: codeChallenge,
     code_challenge_method: "S256",
   });
+  if (type === GOOGLE_CONNECTOR_TYPE) {
+    // Match Google OAuth redirect semantics used by the standalone connector flow.
+    params.set("access_type", "offline");
+    params.set("prompt", "consent");
+    params.set("include_granted_scopes", "false");
+  }
   return `${config.authorizationUrl}?${params.toString()}`;
 }
 
@@ -148,19 +165,64 @@ interface OAuthState {
   companyId: string;
   type: ConnectorType;
   verifier: string;
+  returnPath: string;
 }
 
 // Simple in-memory store keyed by state token
 const oauthStateStore = new Map<string, OAuthState>();
+const DEFAULT_CONNECTORS_RETURN_PATH = "/company/settings/connectors";
 
-function createOAuthState(companyId: string, type: ConnectorType): { state: string; oauthState: OAuthState } {
+function normalizeReturnPath(input: string | null | undefined): string {
+  const raw = (input ?? "").trim();
+  if (!raw.startsWith("/")) return DEFAULT_CONNECTORS_RETURN_PATH;
+  if (raw.startsWith("//")) return DEFAULT_CONNECTORS_RETURN_PATH;
+  if (raw.startsWith("/connectors")) return raw;
+  if (raw.includes("/company/settings/connectors")) return raw;
+  return DEFAULT_CONNECTORS_RETURN_PATH;
+}
+
+function extractReturnPathFromReferrer(req: Request): string | null {
+  const referer = req.header("referer")?.trim();
+  if (!referer) return null;
+  try {
+    const parsed = new URL(referer);
+    return `${parsed.pathname}${parsed.search || ""}`;
+  } catch {
+    return null;
+  }
+}
+
+function resolveReturnPath(req: Request): string {
+  const returnToQuery = req.query.returnTo;
+  const returnTo = typeof returnToQuery === "string" ? returnToQuery : null;
+  return normalizeReturnPath(returnTo ?? extractReturnPathFromReferrer(req));
+}
+
+function appendQueryParam(path: string, key: string, value: string): string {
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+}
+
+function createOAuthState(
+  companyId: string,
+  type: ConnectorType,
+  returnPath: string,
+): { state: string; oauthState: OAuthState } {
   const state = crypto.randomBytes(32).toString("base64url");
   const verifier = crypto.randomBytes(64).toString("base64url");
-  const oauthState: OAuthState = { companyId, type, verifier };
+  const oauthState: OAuthState = { companyId, type, verifier, returnPath };
   oauthStateStore.set(state, oauthState);
   // Auto-expire after 10 minutes
   setTimeout(() => oauthStateStore.delete(state), 10 * 60 * 1000);
   return { state, oauthState };
+}
+
+function clearOAuthStatesForCompanyAndType(companyId: string, type: ConnectorType): void {
+  for (const [state, entry] of oauthStateStore.entries()) {
+    if (entry.companyId === companyId && entry.type === type) {
+      oauthStateStore.delete(state);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -225,9 +287,49 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
   const registry = connectorRegistryService(db);
   const router = Router();
 
+  async function resolveCompanyId(req: Request): Promise<string> {
+    const companyIdQuery = req.query.companyId;
+    const requestedCompanyId =
+      typeof companyIdQuery === "string" && companyIdQuery.trim().length > 0
+        ? companyIdQuery.trim()
+        : null;
+
+    if (requestedCompanyId) {
+      assertCompanyAccess(req, requestedCompanyId);
+      return requestedCompanyId;
+    }
+
+    if (req.actor.type !== "board") {
+      throw badRequest("Board access required");
+    }
+
+    if (req.actor.source !== "local_implicit") {
+      const companyIds = req.actor.companyIds ?? [];
+      if (companyIds.length === 1) {
+        assertCompanyAccess(req, companyIds[0]);
+        return companyIds[0];
+      }
+      if (companyIds.length > 1) {
+        throw badRequest("companyId query parameter is required when multiple companies are accessible");
+      }
+      throw badRequest("No accessible company for current actor");
+    }
+
+    const fallbackCompany = await db
+      .select({ id: companies.id })
+      .from(companies)
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (!fallbackCompany) {
+      throw badRequest("No company found. Create a company first.");
+    }
+    assertCompanyAccess(req, fallbackCompany.id);
+    return fallbackCompany.id;
+  }
+
   async function handleOAuthCallback(req: Request, res: Response): Promise<void> {
+    let callbackReturnPath = DEFAULT_CONNECTORS_RETURN_PATH;
     try {
-      const baseUrl = getBaseUrl();
       const callbackParams = {
         ...(req.query as Record<string, string>),
         ...((req.body ?? {}) as Record<string, string>),
@@ -236,27 +338,28 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
 
       if (oauthError) {
         logger.warn({ oauthError }, "OAuth error from provider");
-        res.redirect(`${baseUrl}/connectors?error=${encodeURIComponent(oauthError)}`);
+        res.redirect(appendQueryParam(callbackReturnPath, "error", oauthError));
         return;
       }
 
       if (!state || !code) {
-        res.redirect(`${baseUrl}/connectors?error=missing_params`);
+        res.redirect(appendQueryParam(callbackReturnPath, "error", "missing_params"));
         return;
       }
 
       const oauthState = oauthStateStore.get(state);
       if (!oauthState) {
-        res.redirect(`${baseUrl}/connectors?error=invalid_state`);
+        res.redirect(appendQueryParam(callbackReturnPath, "error", "invalid_state"));
         return;
       }
       oauthStateStore.delete(state);
 
-      const { companyId, type: connectorType, verifier } = oauthState;
+      const { companyId, type: connectorType, verifier, returnPath } = oauthState;
+      callbackReturnPath = returnPath;
       const config = getOAuthConfig(connectorType as ConnectorType, getBaseUrl);
 
       if (!config) {
-        res.redirect(`${baseUrl}/connectors?error=unknown_type`);
+        res.redirect(appendQueryParam(returnPath, "error", "unknown_type"));
         return;
       }
 
@@ -289,19 +392,21 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
       });
 
       logger.info({ companyId, type: connectorType }, "Connector connected successfully");
-      res.redirect(`${baseUrl}/connectors?connected=${connectorType}`);
+      res.redirect(appendQueryParam(returnPath, "connected", connectorType));
     } catch (err) {
       logger.error({ err }, "OAuth callback failed");
-      res.redirect(`${getBaseUrl()}/connectors?error=callback_failed`);
+      res.redirect(appendQueryParam(callbackReturnPath, "error", "callback_failed"));
     }
   }
 
   // -------------------------------------------------------------------------
   // GET /api/connectors — list all connectors for the authenticated company
   // -------------------------------------------------------------------------
-  router.get("/", assertAuthenticated, assertBoard, async (req: Request, res: Response) => {
+  router.get("/", async (req: Request, res: Response) => {
+    assertAuthenticated(req);
+    assertBoard(req);
     try {
-      const companyId = (req as any).board.companyId as string;
+      const companyId = await resolveCompanyId(req);
       const connectors = await registry.listByCompany(companyId);
       // Strip credentialsEncrypted from list response (security)
       const safe = connectors.map((c) => ({
@@ -319,6 +424,11 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
       }));
       res.json({ connectors: safe });
     } catch (err) {
+      if (isMissingConnectorsTableError(err)) {
+        logger.warn({ err }, "Connector table missing; returning empty connector list");
+        res.json({ connectors: [] });
+        return;
+      }
       logger.error({ err }, "Failed to list connectors");
       res.status(500).json({ error: "Internal error" });
     }
@@ -327,9 +437,11 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
   // -------------------------------------------------------------------------
   // GET /api/connectors/:type — get connector status
   // -------------------------------------------------------------------------
-  router.get("/:type", assertAuthenticated, assertBoard, async (req: Request, res: Response) => {
+  router.get("/:type", async (req: Request, res: Response) => {
+    assertAuthenticated(req);
+    assertBoard(req);
     try {
-      const companyId = (req as any).board.companyId as string;
+      const companyId = await resolveCompanyId(req);
       const type = req.params.type as ConnectorType;
       if (!["google_workspace", "notion", "linear"].includes(type)) {
         res.status(400).json({ error: "Invalid connector type" });
@@ -353,6 +465,11 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
         updatedAt: connector.updatedAt,
       });
     } catch (err) {
+      if (isMissingConnectorsTableError(err)) {
+        logger.warn({ err }, "Connector table missing; connector state unavailable");
+        res.status(503).json({ error: "Connectors storage is not initialized on this instance" });
+        return;
+      }
       logger.error({ err }, "Failed to get connector");
       res.status(500).json({ error: "Internal error" });
     }
@@ -361,9 +478,11 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
   // -------------------------------------------------------------------------
   // POST /api/connectors/:type/connect — initiate OAuth
   // -------------------------------------------------------------------------
-  router.post("/:type/connect", assertAuthenticated, assertBoard, async (req: Request, res: Response) => {
+  router.post("/:type/connect", async (req: Request, res: Response) => {
+    assertAuthenticated(req);
+    assertBoard(req);
     try {
-      const companyId = (req as any).board.companyId as string;
+      const companyId = await resolveCompanyId(req);
       const type = req.params.type as ConnectorType;
       if (!["google_workspace", "notion", "linear"].includes(type)) {
         res.status(400).json({ error: "Invalid connector type" });
@@ -379,14 +498,32 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
       // Mark connector as "connecting" immediately
       await registry.upsert({ companyId, type, status: "connecting" });
 
-      const { state, oauthState } = createOAuthState(companyId, type);
+      clearOAuthStatesForCompanyAndType(companyId, type);
+      const returnPath = resolveReturnPath(req);
+      const { state, oauthState } = createOAuthState(companyId, type, returnPath);
       const verifier = oauthState.verifier;
       const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
-      const authUrl = buildAuthorizationUrl(config, state, challenge);
+      const authUrl = buildAuthorizationUrl(type, config, state, challenge);
 
       logger.info({ companyId, type, state }, "Initiating OAuth flow");
+      if (type === GOOGLE_CONNECTOR_TYPE) {
+        res.json({
+          authorizationUrl: authUrl,
+          authUrl,
+          state,
+          provider: "gworkspace",
+          scopes: [...GOOGLE_OAUTH_SCOPES],
+          next_step: "redirect",
+        });
+        return;
+      }
       res.json({ authorizationUrl: authUrl, state });
     } catch (err) {
+      if (isMissingConnectorsTableError(err)) {
+        logger.warn({ err }, "Connector table missing; cannot initiate OAuth");
+        res.status(503).json({ error: "Connectors storage is not initialized on this instance" });
+        return;
+      }
       logger.error({ err }, "Failed to initiate OAuth");
       res.status(500).json({ error: "Internal error" });
     }
@@ -405,9 +542,11 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
   // -------------------------------------------------------------------------
   // DELETE /api/connectors/:type — disconnect
   // -------------------------------------------------------------------------
-  router.delete("/:type", assertAuthenticated, assertBoard, async (req: Request, res: Response) => {
+  router.delete("/:type", async (req: Request, res: Response) => {
+    assertAuthenticated(req);
+    assertBoard(req);
     try {
-      const companyId = (req as any).board.companyId as string;
+      const companyId = await resolveCompanyId(req);
       const type = req.params.type as ConnectorType;
       if (!["google_workspace", "notion", "linear"].includes(type)) {
         res.status(400).json({ error: "Invalid connector type" });
@@ -423,6 +562,11 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
       logger.info({ companyId, type }, "Connector disconnected");
       res.json({ success: true });
     } catch (err) {
+      if (isMissingConnectorsTableError(err)) {
+        logger.warn({ err }, "Connector table missing; cannot disconnect connector");
+        res.status(503).json({ error: "Connectors storage is not initialized on this instance" });
+        return;
+      }
       logger.error({ err }, "Failed to disconnect connector");
       res.status(500).json({ error: "Internal error" });
     }
@@ -431,9 +575,11 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
   // -------------------------------------------------------------------------
   // POST /api/connectors/:type/enable — enable MCP tools for a connector
   // -------------------------------------------------------------------------
-  router.post("/:type/enable", assertAuthenticated, assertBoard, async (req: Request, res: Response) => {
+  router.post("/:type/enable", async (req: Request, res: Response) => {
+    assertAuthenticated(req);
+    assertBoard(req);
     try {
-      const companyId = (req as any).board.companyId as string;
+      const companyId = await resolveCompanyId(req);
       const type = req.params.type as ConnectorType;
       if (!["google_workspace", "notion", "linear"].includes(type)) {
         res.status(400).json({ error: "Invalid connector type" });
@@ -454,6 +600,11 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
       logger.info({ companyId, type }, "Connector MCP enabled");
       res.json({ success: true, connector });
     } catch (err) {
+      if (isMissingConnectorsTableError(err)) {
+        logger.warn({ err }, "Connector table missing; cannot enable connector MCP");
+        res.status(503).json({ error: "Connectors storage is not initialized on this instance" });
+        return;
+      }
       logger.error({ err }, "Failed to enable connector MCP");
       res.status(500).json({ error: "Internal error" });
     }
@@ -462,9 +613,11 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
   // -------------------------------------------------------------------------
   // POST /api/connectors/:type/disable — disable MCP tools for a connector
   // -------------------------------------------------------------------------
-  router.post("/:type/disable", assertAuthenticated, assertBoard, async (req: Request, res: Response) => {
+  router.post("/:type/disable", async (req: Request, res: Response) => {
+    assertAuthenticated(req);
+    assertBoard(req);
     try {
-      const companyId = (req as any).board.companyId as string;
+      const companyId = await resolveCompanyId(req);
       const type = req.params.type as ConnectorType;
       if (!["google_workspace", "notion", "linear"].includes(type)) {
         res.status(400).json({ error: "Invalid connector type" });
@@ -485,6 +638,11 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
       logger.info({ companyId, type }, "Connector MCP disabled");
       res.json({ success: true, connector });
     } catch (err) {
+      if (isMissingConnectorsTableError(err)) {
+        logger.warn({ err }, "Connector table missing; cannot disable connector MCP");
+        res.status(503).json({ error: "Connectors storage is not initialized on this instance" });
+        return;
+      }
       logger.error({ err }, "Failed to disable connector MCP");
       res.status(500).json({ error: "Internal error" });
     }
