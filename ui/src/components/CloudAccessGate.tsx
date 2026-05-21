@@ -98,7 +98,7 @@ export function CloudAccessGate() {
 
   if (isAuthenticatedMode && !sessionQuery.data) {
     const next = encodeURIComponent(`${location.pathname}${location.search}`);
-    return <Navigate to={`/auth?next=${next}`} replace />;
+    return <Navigate to={`/login?next=${next}`} replace />;
   }
 
   if (
