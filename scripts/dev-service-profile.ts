@@ -10,7 +10,24 @@ export function createDevServiceIdentity(input: {
   forwardedArgs: string[];
   networkProfile: string;
   port: number;
+  deploymentFingerprint?: {
+    deploymentMode?: string | null;
+    deploymentExposure?: string | null;
+    authBaseUrlMode?: string | null;
+    bind?: string | null;
+    bindHost?: string | null;
+  };
 }) {
+  const deploymentFingerprint = input.deploymentFingerprint
+    ? {
+        deploymentMode: input.deploymentFingerprint.deploymentMode?.trim() || null,
+        deploymentExposure: input.deploymentFingerprint.deploymentExposure?.trim() || null,
+        authBaseUrlMode: input.deploymentFingerprint.authBaseUrlMode?.trim() || null,
+        bind: input.deploymentFingerprint.bind?.trim() || null,
+        bindHost: input.deploymentFingerprint.bindHost?.trim() || null,
+      }
+    : null;
+
   const envFingerprint = createHash("sha256")
     .update(
       JSON.stringify({
@@ -18,6 +35,7 @@ export function createDevServiceIdentity(input: {
         forwardedArgs: input.forwardedArgs,
         networkProfile: input.networkProfile,
         port: input.port,
+        deploymentFingerprint,
       }),
     )
     .digest("hex");

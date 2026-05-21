@@ -171,12 +171,28 @@ if (tailscaleAuth || bindMode) {
     );
   }
 } else {
-  delete env.PAPERCLIP_BIND;
-  delete env.PAPERCLIP_BIND_HOST;
-  delete env.PAPERCLIP_DEPLOYMENT_MODE;
-  delete env.PAPERCLIP_DEPLOYMENT_EXPOSURE;
-  delete env.PAPERCLIP_AUTH_BASE_URL_MODE;
-  console.log("[paperclip] dev mode: local_trusted (default)");
+  const explicitMode = env.PAPERCLIP_DEPLOYMENT_MODE?.trim() || null;
+  const explicitExposure = env.PAPERCLIP_DEPLOYMENT_EXPOSURE?.trim() || null;
+  const explicitAuthBaseUrlMode = env.PAPERCLIP_AUTH_BASE_URL_MODE?.trim() || null;
+  const explicitBind = env.PAPERCLIP_BIND?.trim() || null;
+  const explicitBindHost = env.PAPERCLIP_BIND_HOST?.trim() || null;
+  const hasExplicitOverride = Boolean(
+    explicitMode || explicitExposure || explicitAuthBaseUrlMode || explicitBind || explicitBindHost,
+  );
+
+  if (hasExplicitOverride) {
+    console.log(
+      `[paperclip] dev mode: honoring explicit env overrides (${[
+        explicitMode ? `mode=${explicitMode}` : null,
+        explicitExposure ? `exposure=${explicitExposure}` : null,
+        explicitAuthBaseUrlMode ? `authBaseUrlMode=${explicitAuthBaseUrlMode}` : null,
+        explicitBind ? `bind=${explicitBind}` : null,
+        explicitBindHost ? `bindHost=${explicitBindHost}` : null,
+      ].filter(Boolean).join(", ")})`,
+    );
+  } else {
+    console.log("[paperclip] dev mode: local_trusted (default)");
+  }
 }
 
 const serverPort = Number.parseInt(env.PORT ?? process.env.PORT ?? "3100", 10) || 3100;
@@ -185,6 +201,13 @@ const devService = createDevServiceIdentity({
   forwardedArgs,
   networkProfile: tailscaleAuth ? `legacy:${bindMode ?? "lan"}` : (bindMode ?? "default"),
   port: serverPort,
+  deploymentFingerprint: {
+    deploymentMode: env.PAPERCLIP_DEPLOYMENT_MODE ?? null,
+    deploymentExposure: env.PAPERCLIP_DEPLOYMENT_EXPOSURE ?? null,
+    authBaseUrlMode: env.PAPERCLIP_AUTH_BASE_URL_MODE ?? null,
+    bind: env.PAPERCLIP_BIND ?? null,
+    bindHost: env.PAPERCLIP_BIND_HOST ?? null,
+  },
 });
 
 const existingRunner = await findAdoptableLocalService({

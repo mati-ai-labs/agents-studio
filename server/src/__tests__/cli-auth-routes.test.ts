@@ -140,6 +140,34 @@ describe.sequential("cli auth routes", () => {
     expect(skillRes.status, skillRes.text || JSON.stringify(skillRes.body)).toBe(401);
   });
 
+  it.sequential("lists and serves the minimax-web-search skill for authenticated board actors", async () => {
+    const actor = {
+      type: "board",
+      source: "session",
+      userId: "user-1",
+      companyIds: ["company-1"],
+      memberships: [{ companyId: "company-1", membershipRole: "owner", status: "active" }],
+      isInstanceAdmin: false,
+    };
+    const app = await createApp(actor);
+
+    const indexRes = await request(app).get("/api/skills/index");
+    expect(indexRes.status, JSON.stringify(indexRes.body)).toBe(200);
+    expect(indexRes.body.skills).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "minimax-web-search",
+          path: "/api/skills/minimax-web-search",
+        }),
+      ]),
+    );
+
+    const skillRes = await request(app).get("/api/skills/minimax-web-search");
+    expect(skillRes.status, skillRes.text || JSON.stringify(skillRes.body)).toBe(200);
+    expect(skillRes.headers["content-type"]).toContain("text/markdown");
+    expect(skillRes.text).toContain("# MiniMax Web Search Skill");
+  });
+
   it.sequential("serves the invite-scoped paperclip skill anonymously for active invites", async () => {
     const invite = {
       id: "invite-1",

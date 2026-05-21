@@ -22,8 +22,8 @@ const LIGHT_THEME_COLOR = "#ffffff";
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
 function resolveThemeFromDocument(): Theme {
-  if (typeof document === "undefined") return "dark";
-  return document.documentElement.classList.contains("dark") ? "dark" : "light";
+  if (typeof document === "undefined") return "light";
+  return document.documentElement.classList.contains("light") ? "light" : "dark";
 }
 
 function applyTheme(theme: Theme) {
