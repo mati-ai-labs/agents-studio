@@ -771,10 +771,20 @@ a.paperclip-mention-chip[data-mention-kind="agent"]::before {
   background-color: #ffffff0f;
 }
 
-.paperclip-markdown {
-  color: var(--foreground);
-  font-size: 0.9375rem;
-  line-height: 1.6;
+/* CEO Chat user message bubble — force light text on dark bg.
+   .paperclip-markdown sets explicit color: var(--foreground) which is dark;
+   override all typography so messages are readable on bg-slate-900. */
+.ceo-chat-user-msg .paperclip-markdown,
+.ceo-chat-user-msg .paperclip-markdown :where(h1, h2, h3, h4),
+.ceo-chat-user-msg .paperclip-markdown :where(strong, b),
+.ceo-chat-user-msg .paperclip-markdown blockquote {
+  color: oklch(0.985 0 0);
+}
+.ceo-chat-user-msg .paperclip-markdown a {
+  color: oklch(0.72 0.15 250);
+}
+.ceo-chat-user-msg .paperclip-markdown li::marker {
+  color: oklch(0.7 0 0);
 }
 
 .paperclip-markdown > :first-child {

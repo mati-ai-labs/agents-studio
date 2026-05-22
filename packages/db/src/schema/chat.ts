@@ -8,6 +8,7 @@ export const chatSessions = pgTable(
     companyId: uuid("company_id").notNull().references(() => companies.id),
     title: text("title").default("New Chat"),
     status: text("status").notNull().default("active"),
+    metadata: text("metadata"), // JSON string for LangGraph orchestrator context
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
