@@ -98,7 +98,10 @@ export async function sendMessage(
 
   while (true) {
     const { value, done } = await reader.read();
-    if (done) break;
+    if (done) {
+      pending += decoder.decode();
+      break;
+    }
     pending += decoder.decode(value, { stream: true });
     const parts = pending.split(/\n\n/);
     pending = parts.pop() ?? "";
@@ -131,6 +134,38 @@ export async function sendMessage(
         } else if (evt.event === "done") {
           callbacks.onDone?.();
         }
+      }
+    }
+  }
+
+  if (pending.trim().length > 0) {
+    for (const evt of parseSseBuffer(`${pending}\n\n`)) {
+      if (evt.event === "chunk") {
+        const parsed = JSON.parse(evt.data) as { content?: string };
+        callbacks.onChunk?.(parsed.content ?? "");
+      } else if (evt.event === "message") {
+        const msg = JSON.parse(evt.data) as ChatMessage;
+        if (msg.role === "user") callbacks.onUserMessage?.(msg);
+        if (msg.role === "assistant") callbacks.onAssistantMessage?.(msg);
+      } else if (evt.event === "planning") {
+        const parsed = JSON.parse(evt.data) as { text: string };
+        callbacks.onPlanning?.(parsed);
+      } else if (evt.event === "issue_created") {
+        const parsed = JSON.parse(evt.data) as IssueCreatedData;
+        callbacks.onIssueCreated?.(parsed);
+      } else if (evt.event === "status") {
+        const parsed = JSON.parse(evt.data) as { status?: string; message?: string; runId?: string; error?: string };
+        callbacks.onStatus?.({
+          status: parsed.status ?? "unknown",
+          message: parsed.message ?? "",
+          ...(parsed.runId ? { runId: parsed.runId } : {}),
+          ...(parsed.error ? { error: parsed.error } : {}),
+        });
+      } else if (evt.event === "error") {
+        const parsed = JSON.parse(evt.data) as { error?: string };
+        callbacks.onError?.(parsed.error ?? "Unknown chat error");
+      } else if (evt.event === "done") {
+        callbacks.onDone?.();
       }
     }
   }

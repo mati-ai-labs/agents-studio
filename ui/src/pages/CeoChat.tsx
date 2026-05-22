@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { MarkdownBody } from "@/components/MarkdownBody";
 import { useCompany } from "@/context/CompanyContext";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { chatApi, type ChatMessage, type ChatSession, type IssueCreatedData } from "@/api/chat";
@@ -8,6 +9,19 @@ import { useParams } from "@/lib/router";
 
 interface PlanningEvent {
   text: string;
+}
+
+function ThinkingIndicator() {
+  return (
+    <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-600 shadow-sm">
+      <div className="flex items-center gap-1.5" aria-label="LangGraph is thinking" role="status">
+        <span className="h-2 w-2 animate-pulse rounded-full bg-slate-400" />
+        <span className="h-2 w-2 animate-pulse rounded-full bg-slate-400 [animation-delay:150ms]" />
+        <span className="h-2 w-2 animate-pulse rounded-full bg-slate-400 [animation-delay:300ms]" />
+      </div>
+      <span>LangGraph is thinking...</span>
+    </div>
+  );
 }
 
 export default function CeoChat() {
@@ -19,6 +33,7 @@ export default function CeoChat() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [responding, setResponding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draftAssistant, setDraftAssistant] = useState("");
   const [runStatusText, setRunStatusText] = useState<string | null>(null);
@@ -28,7 +43,7 @@ export default function CeoChat() {
 
   useEffect(() => {
     setBreadcrumbs([{ label: "CEO Chat", href: `/${companyPrefix}/chat` }]);
-  }, [setBreadcrumbs]);
+  }, [companyPrefix, setBreadcrumbs]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -56,6 +71,7 @@ export default function CeoChat() {
       const session = await chatApi.createSession(selectedCompanyId);
       setSessions((prev) => [session, ...prev]);
       setActiveSession({ ...session, messages: [] });
+      setResponding(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create chat");
     } finally {
@@ -68,6 +84,7 @@ export default function CeoChat() {
     setError(null);
     try {
       setActiveSession(await chatApi.getSession(sessionId));
+      setResponding(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to open chat");
     } finally {
@@ -92,6 +109,7 @@ export default function CeoChat() {
     const content = input.trim();
     setInput("");
     setSending(true);
+    setResponding(true);
     setDraftAssistant("");
     setRunStatusText(null);
     setPlanningText(null);
@@ -124,13 +142,21 @@ export default function CeoChat() {
           setActiveSession((prev) => prev ? { ...prev, messages: [...(prev.messages ?? []), message] } : prev);
           setDraftAssistant("");
           setRunStatusText(null);
+          setResponding(false);
         },
-        onError: (msg) => setError(msg),
-        onDone: () => setRunStatusText(null),
+        onError: (msg) => {
+          setError(msg);
+          setResponding(false);
+        },
+        onDone: () => {
+          setRunStatusText(null);
+          setResponding(false);
+        },
       });
       await refreshSessions();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to send message");
+      setResponding(false);
     } finally {
       setSending(false);
     }
@@ -139,12 +165,12 @@ export default function CeoChat() {
   const visibleMessages = useMemo(() => activeSession?.messages ?? [], [activeSession]);
 
   return (
-    <div className="flex h-full min-h-[calc(100vh-64px)] overflow-hidden bg-background">
-      <aside className="flex w-72 shrink-0 flex-col border-r bg-muted/20">
-        <div className="flex items-center justify-between border-b p-4">
+    <div className="flex h-full min-h-[calc(100vh-64px)] overflow-hidden bg-gradient-to-b from-slate-50 via-background to-teal-50/30">
+      <aside className="flex w-72 shrink-0 flex-col border-r border-slate-200/70 bg-white/70 backdrop-blur">
+        <div className="flex items-center justify-between border-b border-slate-200/70 p-4">
           <div>
             <h1 className="text-sm font-semibold">CEO Chat</h1>
-            <p className="text-xs text-muted-foreground">Delegate work to the company brain</p>
+            <p className="text-xs text-muted-foreground">Company orchestration console</p>
           </div>
           <Button size="sm" onClick={createNewChat} disabled={!selectedCompanyId || loading}>New</Button>
         </div>
@@ -155,7 +181,7 @@ export default function CeoChat() {
             <button
               key={session.id}
               onClick={() => openSession(session.id)}
-              className={`group mb-1 flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm hover:bg-muted ${activeSession?.id === session.id ? "bg-muted" : ""}`}
+              className={`group mb-1.5 flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left text-sm transition-colors ${activeSession?.id === session.id ? "border-teal-200 bg-teal-50/70" : "border-transparent hover:border-slate-200 hover:bg-slate-100/80"}`}
             >
               <span className="min-w-0">
                 <span className="block truncate font-medium">{session.title || "New Chat"}</span>
@@ -168,7 +194,7 @@ export default function CeoChat() {
                   event.stopPropagation();
                   removeSession(session.id);
                 }}
-                className="ml-2 hidden rounded px-2 py-1 text-muted-foreground hover:bg-background hover:text-foreground group-hover:inline-block"
+                className="ml-2 hidden rounded-md px-2 py-1 text-muted-foreground hover:bg-white hover:text-foreground group-hover:inline-block"
               >
                 ×
               </span>
@@ -178,9 +204,9 @@ export default function CeoChat() {
       </aside>
 
       <main className="flex min-w-0 flex-1 flex-col">
-        <div className="border-b p-4">
+        <div className="border-b border-slate-200/70 bg-white/70 p-4 backdrop-blur">
           <h2 className="text-base font-semibold">Talk to the CEO Agent</h2>
-          <p className="text-sm text-muted-foreground">Ask it to create tasks, assign agents, coordinate execution, and report status.</p>
+          <p className="text-sm text-muted-foreground">Create tasks, assign owners, and track execution from one thread.</p>
         </div>
 
         {error ? <div className="m-4 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</div> : null}
@@ -200,15 +226,15 @@ export default function CeoChat() {
           <>
             <div className="flex-1 overflow-y-auto p-6">
               <div className="mx-auto flex max-w-4xl flex-col gap-4">
-                {visibleMessages.length === 0 && !draftAssistant && !planningText ? (
-                  <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+                {visibleMessages.length === 0 && !draftAssistant && !planningText && !responding ? (
+                  <div className="rounded-xl border border-dashed border-slate-300 bg-white/70 p-8 text-center text-sm text-muted-foreground">
                     Try: "Create a task for the sales agent to review all stale leads and follow up."
                   </div>
                 ) : null}
                 {visibleMessages.map((message) => (
                   <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-                    <div className={`max-w-[75%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-6 ${message.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
-                      {message.content}
+                    <div className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm ${message.role === "user" ? "bg-slate-900 ceo-chat-user-msg" : "border border-slate-200 bg-white"}`}>
+                      <MarkdownBody>{message.content}</MarkdownBody>
                     </div>
                   </div>
                 ))}
@@ -221,21 +247,26 @@ export default function CeoChat() {
                 )}
                 {runStatusText ? (
                   <div className="flex justify-start">
-                    <div className="max-w-[75%] rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
-                      {runStatusText}
+                    <div className="max-w-[80%] rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800 shadow-sm">
+                      <MarkdownBody>{runStatusText}</MarkdownBody>
                     </div>
                   </div>
                 ) : null}
                 {draftAssistant ? (
                   <div className="flex justify-start">
-                    <div className="max-w-[75%] whitespace-pre-wrap rounded-2xl bg-muted px-4 py-3 text-sm leading-6">
-                      {draftAssistant}
+                    <div className="max-w-[80%] rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm leading-6 shadow-sm">
+                      <MarkdownBody>{draftAssistant}</MarkdownBody>
                     </div>
+                  </div>
+                ) : null}
+                {responding && !draftAssistant ? (
+                  <div className="flex justify-start">
+                    <ThinkingIndicator />
                   </div>
                 ) : null}
                 {createdIssue && (
                   <div className="flex justify-start">
-                    <div className="max-w-[75%] rounded-2xl border border-green-200 bg-green-50 px-4 py-3 text-sm">
+                    <div className="max-w-[80%] rounded-2xl border border-green-200 bg-green-50 px-4 py-3 text-sm shadow-sm">
                       <div className="mb-1 flex items-center gap-2 font-medium text-green-800">
                         <span>✅</span> Issue created
                       </div>
@@ -263,7 +294,7 @@ export default function CeoChat() {
               </div>
             </div>
 
-            <div className="border-t p-4">
+            <div className="border-t border-slate-200/70 bg-white/80 p-4 backdrop-blur">
               <div className="mx-auto flex max-w-4xl gap-3">
                 <textarea
                   value={input}
@@ -274,11 +305,10 @@ export default function CeoChat() {
                       send();
                     }
                   }}
-                  disabled={sending}
                   placeholder="Tell the CEO agent what to get done..."
-                  className="min-h-[48px] flex-1 resize-none rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+                  className="min-h-[52px] flex-1 resize-none rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-300"
                 />
-                <Button onClick={send} disabled={!input.trim() || sending}>{sending ? "Sending..." : "Send"}</Button>
+                <Button onClick={send} disabled={!input.trim() || sending}>Send</Button>
               </div>
             </div>
           </>
