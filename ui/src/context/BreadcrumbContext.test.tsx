@@ -47,13 +47,13 @@ describe("BreadcrumbContext", () => {
     expect(renderCounts).toHaveLength(1);
 
     act(() => {
-      updateBreadcrumbs?.([{ label: "Issues", href: "/issues" }, { label: "PAP-1488" }]);
+      updateBreadcrumbs?.([{ label: "Tasks", href: "/issues" }, { label: "PAP-1488" }]);
     });
 
     expect(renderCounts).toHaveLength(2);
 
     act(() => {
-      updateBreadcrumbs?.([{ label: "Issues", href: "/issues" }, { label: "PAP-1488" }]);
+      updateBreadcrumbs?.([{ label: "Tasks", href: "/issues" }, { label: "PAP-1488" }]);
     });
 
     expect(renderCounts).toHaveLength(2);
@@ -65,10 +65,10 @@ describe("BreadcrumbContext", () => {
     );
     expect(
       buildDocumentTitle(
-        [{ label: "Issues", href: "/issues" }, { label: "PAP-3515" }],
+        [{ label: "Tasks", href: "/issues" }, { label: "PAP-3515" }],
         "Anachronist Wiki",
       ),
-    ).toBe("PAP-3515 • Issues • Anachronist Wiki • Paperclip");
+    ).toBe("PAP-3515 • Tasks • Anachronist Wiki • Paperclip");
   });
 
   it("omits blank company names from page titles", () => {

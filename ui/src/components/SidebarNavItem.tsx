@@ -41,10 +41,10 @@ export function SidebarNavItem({
       onClick={() => { if (isMobile) setSidebarOpen(false); }}
       className={({ isActive }) =>
         cn(
-          "flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium transition-colors",
+          "pc-shell-nav-item flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium transition-colors",
           isActive
-            ? "bg-accent text-foreground"
-            : "text-foreground/80 hover:bg-accent/50 hover:text-foreground",
+            ? "bg-[color-mix(in_oklab,var(--accent)_68%,#d7f2ef)] text-foreground"
+            : "text-foreground/80 hover:bg-accent/55 hover:text-foreground",
           className,
         )
       }

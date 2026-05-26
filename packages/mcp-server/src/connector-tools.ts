@@ -148,84 +148,99 @@ export const linearListTeamsSchema = z.object({
 // ---------------------------------------------------------------------------
 
 export interface ConnectorMcpTool {
-  name: string;
+  /** Bare tool name matching the server-side executeConnectorTool switch (e.g. "gmail_send"). */
+  bareName: string;
+  /** MCP-visible tool name (e.g. "google_gmail_send"). */
+  mcpToolName: string;
   description: string;
   schema: z.ZodObject<any>;
   connectorType: string;
 }
 
 export const CONNECTOR_MCP_TOOLS: ConnectorMcpTool[] = [
-  // Google Workspace
+  // Google Workspace — bareNames match server-side executeConnectorTool switch
   {
-    name: "google_gmail_send",
+    bareName: "gmail_send",
+    mcpToolName: "google_gmail_send",
     description: "Send an email via Gmail",
     schema: gmailSendSchema,
     connectorType: "google_workspace",
   },
   {
-    name: "google_gmail_read",
+    bareName: "gmail_read",
+    mcpToolName: "google_gmail_read",
     description: "Search and read emails from Gmail",
     schema: gmailReadSchema,
     connectorType: "google_workspace",
   },
   {
-    name: "google_calendar_events",
+    bareName: "calendar_events",
+    mcpToolName: "google_calendar_events",
     description: "List calendar events from Google Calendar",
     schema: calendarEventsSchema,
     connectorType: "google_workspace",
   },
   {
-    name: "google_calendar_create",
+    bareName: "calendar_create",
+    mcpToolName: "google_calendar_create",
     description: "Create a calendar event in Google Calendar",
     schema: calendarCreateSchema,
     connectorType: "google_workspace",
   },
   {
-    name: "google_drive_list",
+    bareName: "drive_list",
+    mcpToolName: "google_drive_list",
     description: "List files in Google Drive",
     schema: driveListSchema,
     connectorType: "google_workspace",
   },
   // Notion
   {
-    name: "notion_search",
+    bareName: "notion_search",
+    mcpToolName: "notion_search",
     description: "Search Notion pages and databases",
     schema: notionSearchSchema,
     connectorType: "notion",
   },
   {
-    name: "notion_get_page",
+    bareName: "notion_get_page",
+    mcpToolName: "notion_get_page",
     description: "Get a Notion page by ID",
     schema: notionGetPageSchema,
     connectorType: "notion",
   },
   {
-    name: "notion_create_page",
+    bareName: "notion_create_page",
+    mcpToolName: "notion_create_page",
     description: "Create a new Notion page",
     schema: notionCreatePageSchema,
     connectorType: "notion",
   },
-  // Linear
+  // Linear — bareNames match server-side executeConnectorTool switch
   {
-    name: "linear_search_issues",
+    bareName: "linear_issues",
+    mcpToolName: "linear_search_issues",
     description: "Search Linear issues",
     schema: linearSearchIssuesSchema,
     connectorType: "linear",
   },
   {
-    name: "linear_create_issue",
+    bareName: "linear_create_issue",
+    mcpToolName: "linear_create_issue",
     description: "Create a Linear issue",
     schema: linearCreateIssueSchema,
     connectorType: "linear",
   },
   {
-    name: "linear_update_issue",
+    bareName: "linear_update_issue",
+    mcpToolName: "linear_update_issue",
     description: "Update a Linear issue",
     schema: linearUpdateIssueSchema,
     connectorType: "linear",
   },
   {
-    name: "linear_list_teams",
+    bareName: "linear_list_teams",
+    mcpToolName: "linear_list_teams",
     description: "List Linear teams",
     schema: linearListTeamsSchema,
     connectorType: "linear",

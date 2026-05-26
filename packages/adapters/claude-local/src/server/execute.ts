@@ -89,6 +89,97 @@ interface ClaudeRuntimeConfig {
   extraArgs: string[];
 }
 
+interface ClaudeGoogleWorkspaceMcpConfig {
+  serverName: string;
+  url: string;
+  accessToken: string;
+}
+
+interface ClaudeJiraMcpConfig {
+  serverName: string;
+  serverConfig: Record<string, unknown>;
+}
+
+interface ClaudeGithubMcpConfig {
+  serverName: string;
+  url: string;
+  accessToken: string;
+}
+
+function readClaudeGoogleWorkspaceMcpConfig(value: unknown): ClaudeGoogleWorkspaceMcpConfig | null {
+  const root = parseObject(value);
+  const candidate = parseObject(root.googleWorkspace ?? root["google-workspace"]);
+  const url = asString(candidate.url, "").trim();
+  const accessToken = asString(candidate.accessToken, "").trim();
+  const serverName = asString(candidate.serverName, "google-workspace").trim() || "google-workspace";
+  if (!url || !accessToken) return null;
+  return { serverName, url, accessToken };
+}
+
+function readHeadersRecord(value: unknown): Record<string, string> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  const entries = Object.entries(value);
+  const headers: Record<string, string> = {};
+  for (const [key, rawValue] of entries) {
+    if (typeof key !== "string") continue;
+    if (typeof rawValue !== "string") continue;
+    const headerKey = key.trim();
+    const headerValue = rawValue.trim();
+    if (!headerKey || !headerValue) continue;
+    headers[headerKey] = headerValue;
+  }
+  return headers;
+}
+
+function readClaudeJiraMcpConfig(value: unknown): ClaudeJiraMcpConfig | null {
+  const root = parseObject(value);
+  const candidate = parseObject(root.jira);
+  const serverName = asString(candidate.serverName, "jira").trim() || "jira";
+
+  // Preferred Jira format: stdio command server (matches .mcp-jira.json style).
+  const command = asString(candidate.command, "").trim();
+  const args = asStringArray(candidate.args).map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+  if (command && args.length > 0) {
+    const serverConfig: Record<string, unknown> = { command, args };
+    const env = parseObject(candidate.env);
+    if (Object.keys(env).length > 0) serverConfig.env = env;
+    return { serverName, serverConfig };
+  }
+
+  // Backward-compatible fallback: HTTP transport config.
+  const url = asString(candidate.url, "").trim();
+  const headers = readHeadersRecord(candidate.headers);
+  if (!url || Object.keys(headers).length === 0) return null;
+  return {
+    serverName,
+    serverConfig: {
+      type: "http",
+      url,
+      headers,
+    },
+  };
+}
+
+function readClaudeGithubMcpConfig(value: unknown): ClaudeGithubMcpConfig | null {
+  const root = parseObject(value);
+  const candidate = parseObject(root.github);
+  const url = asString(candidate.url, "").trim();
+  const accessToken =
+    asString(candidate.accessToken, "").trim() || asString(candidate.token, "").trim();
+  const serverName = asString(candidate.serverName, "github").trim() || "github";
+  if (!url || !accessToken) return null;
+  return { serverName, url, accessToken };
+}
+
+async function pathExists(candidate: string): Promise<boolean> {
+  try {
+    await fs.access(candidate);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function buildLoginResult(input: {
   proc: RunProcessResult;
   loginUrl: string | null;
@@ -423,6 +514,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     ),
   );
   const billingType = resolveClaudeBillingType(effectiveEnv);
+  const googleWorkspaceMcpConfig = readClaudeGoogleWorkspaceMcpConfig(ctx.mcpConfig);
+  const jiraMcpConfig = readClaudeJiraMcpConfig(ctx.mcpConfig);
+  const githubMcpConfig = readClaudeGithubMcpConfig(ctx.mcpConfig);
   const claudeSkillEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
   const desiredSkillNames = new Set(resolveClaudeDesiredSkillNames(config, claudeSkillEntries));
   // When instructionsFilePath is configured, build a stable content-addressed
@@ -522,6 +616,112 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       ? path.posix.join(effectivePromptBundleAddDir, path.basename(promptBundle.instructionsFilePath))
       : promptBundle.instructionsFilePath
     : undefined;
+  const runScopedMcpServers = {
+    ...(googleWorkspaceMcpConfig
+      ? {
+          [googleWorkspaceMcpConfig.serverName]: {
+            type: "http",
+            url: googleWorkspaceMcpConfig.url,
+            headers: {
+              Authorization: `Bearer ${googleWorkspaceMcpConfig.accessToken}`,
+            },
+          },
+        }
+      : {}),
+    ...(jiraMcpConfig
+      ? {
+          [jiraMcpConfig.serverName]: jiraMcpConfig.serverConfig,
+        }
+      : {}),
+    ...(githubMcpConfig
+      ? {
+          [githubMcpConfig.serverName]: {
+            type: "http",
+            url: githubMcpConfig.url,
+            headers: {
+              Authorization: `Bearer ${githubMcpConfig.accessToken}`,
+            },
+          },
+        }
+      : {}),
+  };
+  const hasRunScopedMcpConfig = Object.keys(runScopedMcpServers).length > 0;
+  const localMcpConfigFilePath = hasRunScopedMcpConfig
+    ? path.join(cwd, ".paperclip-runtime", "claude", "mcp", runId, "mcp.json")
+    : null;
+  const remoteMcpConfigFilePath = hasRunScopedMcpConfig
+    ? path.posix.join(effectiveExecutionCwd, ".paperclip-runtime", "claude", "mcp", runId, "mcp.json")
+    : null;
+  const effectiveMcpConfigFilePath = hasRunScopedMcpConfig
+    ? (executionTargetIsRemote ? remoteMcpConfigFilePath : localMcpConfigFilePath)
+    : null;
+  const configuredMcpConfigPaths = (() => {
+    const direct = asString(config.mcpConfigFilePath, "").trim() || asString(config.mcpConfigPath, "").trim();
+    const fromArray = asStringArray(config.mcpConfigFilePaths);
+    const combined = [
+      ...(direct ? [direct] : []),
+      ...fromArray,
+    ];
+    const unique = new Set<string>();
+    for (const value of combined) {
+      const trimmed = value.trim();
+      if (trimmed.length === 0) continue;
+      unique.add(trimmed);
+    }
+    return [...unique];
+  })();
+  const resolvedConfiguredMcpConfigPaths = configuredMcpConfigPaths.map((mcpPath) => {
+    if (path.isAbsolute(mcpPath)) return mcpPath;
+    return executionTargetIsRemote
+      ? path.posix.join(effectiveExecutionCwd, mcpPath)
+      : path.resolve(cwd, mcpPath);
+  });
+  const autoWorkspaceJiraMcpEnabled =
+    config.autoWorkspaceJiraMcpConfig === undefined
+      ? true
+      : asBoolean(config.autoWorkspaceJiraMcpConfig, true);
+  const autoWorkspaceJiraMcpPath = !executionTargetIsRemote && autoWorkspaceJiraMcpEnabled
+    ? path.resolve(cwd, ".mcp-jira.json")
+    : null;
+  const shouldUseAutoWorkspaceJiraMcp =
+    !jiraMcpConfig &&
+    autoWorkspaceJiraMcpPath
+      ? await pathExists(autoWorkspaceJiraMcpPath)
+      : false;
+  const mcpConfigPathsForArgs = [
+    ...(effectiveMcpConfigFilePath ? [effectiveMcpConfigFilePath] : []),
+    ...resolvedConfiguredMcpConfigPaths,
+    ...(shouldUseAutoWorkspaceJiraMcp ? [autoWorkspaceJiraMcpPath as string] : []),
+  ];
+  const mcpConfigContents = hasRunScopedMcpConfig
+    ? `${JSON.stringify({
+        mcpServers: runScopedMcpServers,
+      }, null, 2)}\n`
+    : null;
+  let mcpConfigPrepared = false;
+  const ensureMcpConfigPrepared = async () => {
+    if (mcpConfigPrepared || !hasRunScopedMcpConfig || !mcpConfigContents) return;
+    if (executionTargetIsRemote) {
+      if (!remoteMcpConfigFilePath) return;
+      await runAdapterExecutionTargetShellCommand(
+        runId,
+        runtimeExecutionTarget,
+        `mkdir -p ${shellQuote(path.posix.dirname(remoteMcpConfigFilePath))} && ` +
+          `printf %s ${shellQuote(mcpConfigContents)} > ${shellQuote(remoteMcpConfigFilePath)}`,
+        {
+          cwd,
+          env,
+          timeoutSec: Math.max(timeoutSec, 15),
+          graceSec,
+          onLog,
+        },
+      );
+    } else if (localMcpConfigFilePath) {
+      await fs.mkdir(path.dirname(localMcpConfigFilePath), { recursive: true });
+      await fs.writeFile(localMcpConfigFilePath, mcpConfigContents, "utf8");
+    }
+    mcpConfigPrepared = true;
+  };
   const remoteClaudeRuntimeRoot = executionTargetIsRemote
     ? preparedExecutionTargetRuntime?.runtimeRootDir ??
       path.posix.join(effectiveExecutionCwd, ".paperclip-runtime", "claude")
@@ -684,6 +884,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     if (attemptInstructionsFilePath && !resumeSessionId) {
       args.push("--append-system-prompt-file", attemptInstructionsFilePath);
     }
+    if (mcpConfigPathsForArgs.length > 0) {
+      for (const mcpConfigPath of mcpConfigPathsForArgs) {
+        args.push("--mcp-config", mcpConfigPath);
+      }
+    }
     args.push("--add-dir", effectivePromptBundleAddDir);
     if (extraArgs.length > 0) args.push(...extraArgs);
     return args;
@@ -706,6 +911,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   };
 
   const runAttempt = async (resumeSessionId: string | null) => {
+    await ensureMcpConfigPrepared();
     const attemptInstructionsFilePath = resumeSessionId ? undefined : effectiveInstructionsFilePath;
     const args = buildClaudeArgs(resumeSessionId, attemptInstructionsFilePath);
     const commandNotes: string[] = [];
@@ -720,6 +926,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     if (attemptInstructionsFilePath && !resumeSessionId) {
       commandNotes.push(
         `Injected agent instructions via --append-system-prompt-file ${instructionsFilePath} (with path directive appended)`,
+      );
+    }
+    if (mcpConfigPathsForArgs.length > 0) {
+      commandNotes.push(
+        `Injected MCP configs via --mcp-config: ${mcpConfigPathsForArgs.join(", ")}.`,
       );
     }
     if (onMeta) {
@@ -947,6 +1158,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
     return toAdapterResult(initial, { fallbackSessionId: runtimeSessionId || runtime.sessionId });
   } finally {
+    if (localMcpConfigFilePath) {
+      await fs.rm(path.dirname(localMcpConfigFilePath), { recursive: true, force: true }).catch(() => {});
+    }
     if (paperclipBridge) {
       await paperclipBridge.stop();
     }

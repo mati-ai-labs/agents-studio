@@ -45,6 +45,8 @@ const path = require("node:path");
 const argv = process.argv.slice(2);
 const addDirIndex = argv.indexOf("--add-dir");
 const addDir = addDirIndex >= 0 ? argv[addDirIndex + 1] : null;
+const mcpConfigIndex = argv.indexOf("--mcp-config");
+const mcpConfigFilePath = mcpConfigIndex >= 0 ? argv[mcpConfigIndex + 1] : null;
 const instructionsIndex = argv.indexOf("--append-system-prompt-file");
 const instructionsFilePath = instructionsIndex >= 0 ? argv[instructionsIndex + 1] : null;
 const capturePath = process.env.PAPERCLIP_TEST_CAPTURE_PATH;
@@ -52,6 +54,8 @@ const payload = {
   argv,
   prompt: fs.readFileSync(0, "utf8"),
   addDir,
+  mcpConfigFilePath,
+  mcpConfigContents: mcpConfigFilePath ? fs.readFileSync(mcpConfigFilePath, "utf8") : null,
   instructionsFilePath,
   instructionsContents: instructionsFilePath ? fs.readFileSync(instructionsFilePath, "utf8") : null,
   skillEntries: addDir ? fs.readdirSync(path.join(addDir, ".claude", "skills")).sort() : [],
@@ -81,6 +85,8 @@ type CapturePayload = {
   instructionsFilePath: string | null;
   instructionsContents: string | null;
   skillEntries: string[];
+  mcpConfigFilePath?: string | null;
+  mcpConfigContents?: string | null;
   claudeConfigDir: string | null;
   claudeConfigEntries?: string[];
   paperclipApiUrl?: string | null;
@@ -255,6 +261,176 @@ describe("claude execute", () => {
       const captured = JSON.parse(await fs.readFile(capturePath, "utf-8"));
       expect(captured.argv).not.toContain("--append-system-prompt-file");
       expect(captured.argv).toContain("--resume");
+    } finally {
+      restore();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("injects --mcp-config for Google Workspace when run-scoped MCP config is provided", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-exec-mcp-"));
+    const { workspace, commandPath, capturePath, restore } = await setupExecuteEnv(root);
+    try {
+      await execute({
+        runId: "run-mcp-config",
+        agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: {} },
+        runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: { PAPERCLIP_TEST_CAPTURE_PATH: capturePath },
+          promptTemplate: "Do work.",
+        },
+        context: {},
+        mcpConfig: {
+          googleWorkspace: {
+            url: "http://localhost:8080/mcp",
+            accessToken: "google-access-token-for-test",
+          },
+        },
+        authToken: "tok",
+        onLog: async () => {},
+        onMeta: async () => {},
+      });
+      const captured = JSON.parse(await fs.readFile(capturePath, "utf-8")) as CapturePayload;
+      expect(captured.argv).toContain("--mcp-config");
+      expect(captured.mcpConfigContents ?? "").toContain("\"google-workspace\"");
+      expect(captured.mcpConfigContents ?? "").toContain("Bearer google-access-token-for-test");
+      if (captured.mcpConfigFilePath) {
+        await expect(fs.stat(captured.mcpConfigFilePath)).rejects.toThrow();
+      }
+    } finally {
+      restore();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("injects a combined run-scoped MCP config when Google Workspace and Jira are both provided", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-exec-mcp-combined-"));
+    const { workspace, commandPath, capturePath, restore } = await setupExecuteEnv(root);
+    try {
+      await execute({
+        runId: "run-mcp-config-combined",
+        agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: {} },
+        runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: { PAPERCLIP_TEST_CAPTURE_PATH: capturePath },
+          promptTemplate: "Do work.",
+        },
+        context: {},
+        mcpConfig: {
+          googleWorkspace: {
+            url: "http://localhost:8080/mcp",
+            accessToken: "google-access-token-for-test",
+          },
+          jira: {
+            url: "http://localhost:8090/mcp",
+            headers: {
+              "X-Atlassian-Jira-Url": "https://example.atlassian.net",
+              "X-Atlassian-Jira-Personal-Token": "jira-token-for-test",
+            },
+          },
+        },
+        authToken: "tok",
+        onLog: async () => {},
+        onMeta: async () => {},
+      });
+      const captured = JSON.parse(await fs.readFile(capturePath, "utf-8")) as CapturePayload;
+      expect(captured.argv).toContain("--mcp-config");
+      expect(captured.mcpConfigContents ?? "").toContain("\"google-workspace\"");
+      expect(captured.mcpConfigContents ?? "").toContain("Bearer google-access-token-for-test");
+      expect(captured.mcpConfigContents ?? "").toContain("\"jira\"");
+      expect(captured.mcpConfigContents ?? "").toContain("\"X-Atlassian-Jira-Url\"");
+      expect(captured.mcpConfigContents ?? "").toContain("jira-token-for-test");
+      if (captured.mcpConfigFilePath) {
+        await expect(fs.stat(captured.mcpConfigFilePath)).rejects.toThrow();
+      }
+    } finally {
+      restore();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("injects --mcp-config for GitHub when run-scoped MCP config is provided", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-exec-mcp-github-"));
+    const { workspace, commandPath, capturePath, restore } = await setupExecuteEnv(root);
+    try {
+      await execute({
+        runId: "run-mcp-config-github",
+        agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: {} },
+        runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: { PAPERCLIP_TEST_CAPTURE_PATH: capturePath },
+          promptTemplate: "Do work.",
+        },
+        context: {},
+        mcpConfig: {
+          github: {
+            url: "https://api.githubcopilot.com/mcp",
+            accessToken: "github-token-for-test",
+          },
+        },
+        authToken: "tok",
+        onLog: async () => {},
+        onMeta: async () => {},
+      });
+      const captured = JSON.parse(await fs.readFile(capturePath, "utf-8")) as CapturePayload;
+      expect(captured.argv).toContain("--mcp-config");
+      expect(captured.mcpConfigContents ?? "").toContain("\"github\"");
+      expect(captured.mcpConfigContents ?? "").toContain("https://api.githubcopilot.com/mcp");
+      expect(captured.mcpConfigContents ?? "").toContain("Bearer github-token-for-test");
+      if (captured.mcpConfigFilePath) {
+        await expect(fs.stat(captured.mcpConfigFilePath)).rejects.toThrow();
+      }
+    } finally {
+      restore();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("auto-injects workspace .mcp-jira.json when present", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-exec-auto-jira-mcp-"));
+    const { workspace, commandPath, capturePath, restore } = await setupExecuteEnv(root);
+    const workspaceMcpJiraPath = path.join(workspace, ".mcp-jira.json");
+    await fs.writeFile(
+      workspaceMcpJiraPath,
+      JSON.stringify({
+        mcpServers: {
+          jira: {
+            type: "http",
+            url: "http://localhost:8090/mcp",
+            headers: {
+              "X-Atlassian-Jira-Url": "https://example.atlassian.net",
+              "X-Atlassian-Jira-Personal-Token": "token",
+            },
+          },
+        },
+      }, null, 2),
+      "utf8",
+    );
+    try {
+      await execute({
+        runId: "run-auto-jira-mcp",
+        agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: {} },
+        runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: { PAPERCLIP_TEST_CAPTURE_PATH: capturePath },
+          promptTemplate: "Do work.",
+        },
+        context: {},
+        authToken: "tok",
+        onLog: async () => {},
+        onMeta: async () => {},
+      });
+      const captured = JSON.parse(await fs.readFile(capturePath, "utf-8")) as CapturePayload;
+      expect(captured.argv).toContain("--mcp-config");
+      expect(captured.argv).toContain(workspaceMcpJiraPath);
     } finally {
       restore();
       await fs.rm(root, { recursive: true, force: true });

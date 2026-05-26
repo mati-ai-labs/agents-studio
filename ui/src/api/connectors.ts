@@ -9,7 +9,7 @@
 
 import { api } from "./client";
 
-export type ConnectorType = "google_workspace" | "notion" | "linear";
+export type ConnectorType = "google_workspace" | "notion" | "linear" | "jira" | "github";
 export type ConnectorStatus = "disconnected" | "connecting" | "connected" | "error";
 
 export interface ConnectorRecord {
@@ -35,6 +35,12 @@ export interface InitiateOAuthResponse {
   state: string;
 }
 
+export interface ConfigureConnectorInput {
+  baseUrl?: string;
+  email?: string;
+  accessToken: string;
+}
+
 function withCompanyId(path: string, companyId?: string): string {
   if (!companyId) return path;
   const sep = path.includes("?") ? "&" : "?";
@@ -43,29 +49,29 @@ function withCompanyId(path: string, companyId?: string): string {
 
 /** List all connectors for the current company. */
 async function list(companyId?: string): Promise<ConnectorRecord[]> {
-  const res = await api.get<ConnectorListResponse>(withCompanyId("/api/connectors", companyId));
+  const res = await api.get<ConnectorListResponse>(withCompanyId("/connectors", companyId));
   return res.connectors;
 }
 
 /** Get a single connector by type. */
 async function get(type: ConnectorType, companyId?: string): Promise<ConnectorRecord> {
-  return api.get<ConnectorRecord>(withCompanyId(`/api/connectors/${type}`, companyId));
+  return api.get<ConnectorRecord>(withCompanyId(`/connectors/${type}`, companyId));
 }
 
 /** Initiate OAuth flow for a connector type. Returns authorization URL. */
 async function initiateConnect(type: ConnectorType, companyId?: string): Promise<InitiateOAuthResponse> {
-  return api.post<InitiateOAuthResponse>(withCompanyId(`/api/connectors/${type}/connect`, companyId), {});
+  return api.post<InitiateOAuthResponse>(withCompanyId(`/connectors/${type}/connect`, companyId), {});
 }
 
 /** Disconnect (remove credentials) for a connector type. */
 async function disconnect(type: ConnectorType, companyId?: string): Promise<void> {
-  await api.delete(withCompanyId(`/api/connectors/${type}`, companyId));
+  await api.delete(withCompanyId(`/connectors/${type}`, companyId));
 }
 
 /** Enable MCP tools for a connector. */
 async function enable(type: ConnectorType, companyId?: string): Promise<ConnectorRecord> {
   const res = await api.post<{ success: boolean; connector: ConnectorRecord }>(
-    withCompanyId(`/api/connectors/${type}/enable`, companyId),
+    withCompanyId(`/connectors/${type}/enable`, companyId),
     {},
   );
   return res.connector;
@@ -74,8 +80,17 @@ async function enable(type: ConnectorType, companyId?: string): Promise<Connecto
 /** Disable MCP tools for a connector. */
 async function disable(type: ConnectorType, companyId?: string): Promise<ConnectorRecord> {
   const res = await api.post<{ success: boolean; connector: ConnectorRecord }>(
-    withCompanyId(`/api/connectors/${type}/disable`, companyId),
+    withCompanyId(`/connectors/${type}/disable`, companyId),
     {},
+  );
+  return res.connector;
+}
+
+/** Configure a manual-credentials connector (jira/github). */
+async function configure(type: ConnectorType, input: ConfigureConnectorInput, companyId?: string): Promise<ConnectorRecord> {
+  const res = await api.post<{ success: boolean; connector: ConnectorRecord }>(
+    withCompanyId(`/connectors/${type}/configure`, companyId),
+    input,
   );
   return res.connector;
 }
@@ -84,6 +99,7 @@ export const connectorsApi = {
   list,
   get,
   initiateConnect,
+  configure,
   disconnect,
   enable,
   disable,

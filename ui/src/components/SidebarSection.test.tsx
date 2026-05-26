@@ -78,7 +78,7 @@ describe("SidebarSection", () => {
       currentRoot.render(
         <div>
           <SidebarSection label="Work">
-            <a href="/issues">Issues</a>
+            <a href="/issues">Tasks</a>
           </SidebarSection>
           <SidebarSection label="Projects" collapsible={{ open: true, onOpenChange: vi.fn() }}>
             <a href="/projects">Projects</a>
@@ -140,7 +140,7 @@ describe("SidebarSection", () => {
     await act(async () => {
       currentRoot.render(
         <SidebarSection label="Work">
-          <a href="/issues">Issues</a>
+          <a href="/issues">Tasks</a>
         </SidebarSection>,
       );
     });

@@ -35,26 +35,16 @@ import {
   Link2Off,
   CheckCircle2,
   AlertCircle,
-  X,
+  KeyRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { connectorsApi, type ConnectorRecord, type ConnectorType } from "@/api/connectors";
 
 // ---------------------------------------------------------------------------
 // Connector type definitions
 // ---------------------------------------------------------------------------
 
-type ConnectorType = "google_workspace" | "notion" | "linear";
 type ConnectorStatus = "disconnected" | "connecting" | "connected" | "error";
-
-interface ConnectorRecord {
-  id: string;
-  type: ConnectorType;
-  status: ConnectorStatus;
-  displayName: string | null;
-  lastError: string | null;
-  connectedAt: string | null;
-  disconnectedAt: string | null;
-}
 
 // ---------------------------------------------------------------------------
 // Connector metadata
@@ -65,24 +55,42 @@ const CONNECTOR_META: Record<ConnectorType, {
   description: string;
   icon: string;
   scopes: string[];
+  mode: "oauth" | "manual";
 }> = {
   google_workspace: {
     name: "Google Workspace",
     description: "Connect Gmail, Calendar, and Google Drive to let agents read and write your emails, meetings, and files.",
     icon: "G",
     scopes: ["Gmail read/send", "Calendar read/write", "Drive read/write"],
+    mode: "oauth",
   },
   notion: {
     name: "Notion",
     description: "Connect your Notion workspace so agents can search, read, and create pages and databases.",
     icon: "N",
     scopes: ["Search pages", "Read content", "Create/update pages"],
+    mode: "oauth",
   },
   linear: {
     name: "Linear",
     description: "Connect Linear to let agents create issues, update status, and manage sprint planning.",
     icon: "L",
     scopes: ["Read issues", "Create issues", "Update status"],
+    mode: "oauth",
+  },
+  jira: {
+    name: "Jira",
+    description: "Provide Jira base URL and token so Paperclip can inject Jira MCP at run time.",
+    icon: "J",
+    scopes: ["Search issues", "Read issue details", "Create/update issues"],
+    mode: "manual",
+  },
+  github: {
+    name: "GitHub",
+    description: "Provide a GitHub personal access token so Paperclip can inject GitHub MCP at run time.",
+    icon: "GH",
+    scopes: ["Repo read/write (as token allows)", "Pull requests", "Tasks"],
+    mode: "manual",
   },
 };
 
@@ -121,6 +129,7 @@ interface ConnectorCardProps {
   type: ConnectorType;
   connector: ConnectorRecord | null;
   onConnect: (type: ConnectorType) => void;
+  onConfigure: (type: ConnectorType) => void;
   onDisconnect: (type: ConnectorType) => void;
   isConnecting: boolean;
   isDisconnecting: boolean;
@@ -130,6 +139,7 @@ function ConnectorCard({
   type,
   connector,
   onConnect,
+  onConfigure,
   onDisconnect,
   isConnecting,
   isDisconnecting,
@@ -142,6 +152,7 @@ function ConnectorCard({
 
   const canConnect = status === "disconnected" || status === "error";
   const canDisconnect = status === "connected" || status === "connecting" || status === "error";
+  const isManual = meta.mode === "manual";
 
   return (
     <Card className="flex flex-col">
@@ -201,11 +212,11 @@ function ConnectorCard({
             <Button
               size="sm"
               className="gap-2"
-              onClick={() => onConnect(type)}
+              onClick={() => (isManual ? onConfigure(type) : onConnect(type))}
               disabled={isConnecting}
             >
-              {isConnecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
-              Connect
+              {isConnecting ? <Loader2 className="h-4 w-4 animate-spin" /> : (isManual ? <KeyRound className="h-4 w-4" /> : <Link2 className="h-4 w-4" />)}
+              {isManual ? "Configure" : "Connect"}
             </Button>
           )}
           {canDisconnect && (
@@ -241,6 +252,11 @@ export function Connectors() {
   const [connectingType, setConnectingType] = useState<ConnectorType | null>(null);
   const [disconnectingType, setDisconnectingType] = useState<ConnectorType | null>(null);
   const [disconnectDialogType, setDisconnectDialogType] = useState<ConnectorType | null>(null);
+  const [configureDialogType, setConfigureDialogType] = useState<ConnectorType | null>(null);
+  const [configBaseUrl, setConfigBaseUrl] = useState("");
+  const [configEmail, setConfigEmail] = useState("");
+  const [configAccessToken, setConfigAccessToken] = useState("");
+  const [isConfiguring, setIsConfiguring] = useState(false);
   const companyId = selectedCompany?.id ?? null;
 
   // Show toast for OAuth callback results
@@ -293,10 +309,8 @@ export function Connectors() {
     }
     setIsLoading(true);
     try {
-      const res = await fetch(`/api/connectors?companyId=${encodeURIComponent(companyId)}`, { credentials: "include" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json() as { connectors: ConnectorRecord[] };
-      setConnectors(data.connectors);
+      const data = await connectorsApi.list(companyId);
+      setConnectors(data);
     } catch (err) {
       pushToast({ title: "Failed to load connectors", body: String(err), tone: "error" });
     } finally {
@@ -334,14 +348,7 @@ export function Connectors() {
     setDisconnectDialogType(null);
     setDisconnectingType(type);
     try {
-      const res = await fetch(`/api/connectors/${type}?companyId=${encodeURIComponent(companyId)}`, {
-        method: "DELETE",
-        credentials: "include",
-      });
-      if (!res.ok) {
-        const err = await res.json() as { error?: string };
-        throw new Error(err.error ?? `HTTP ${res.status}`);
-      }
+      await connectorsApi.disconnect(type, companyId);
       pushToast({
         title: "Disconnected",
         body: `${CONNECTOR_META[type].name} has been disconnected.`,
@@ -359,7 +366,49 @@ export function Connectors() {
     return connectors.find((c) => c.type === type) ?? null;
   }
 
-  const connectorTypes: ConnectorType[] = ["google_workspace", "notion", "linear"];
+  const connectorTypes: ConnectorType[] = ["google_workspace", "jira", "github", "notion", "linear"];
+
+  function openConfigureDialog(type: ConnectorType) {
+    const existing = getConnector(type);
+    const existingConfig = (existing?.config ?? {}) as Record<string, unknown>;
+    setConfigureDialogType(type);
+    setConfigBaseUrl(typeof existingConfig.baseUrl === "string" ? existingConfig.baseUrl : "");
+    setConfigEmail(typeof existingConfig.email === "string" ? existingConfig.email : "");
+    setConfigAccessToken("");
+  }
+
+  async function handleConfigureSubmit() {
+    if (!configureDialogType || !companyId) return;
+    setIsConfiguring(true);
+    try {
+      if (configureDialogType === "jira") {
+        await connectorsApi.configure(
+          "jira",
+          { baseUrl: configBaseUrl, email: configEmail, accessToken: configAccessToken },
+          companyId,
+        );
+      } else if (configureDialogType === "github") {
+        await connectorsApi.configure(
+          "github",
+          { accessToken: configAccessToken },
+          companyId,
+        );
+      }
+      pushToast({
+        title: "Connector configured",
+        body: `${CONNECTOR_META[configureDialogType].name} credentials saved.`,
+        tone: "success",
+      });
+      setConfigureDialogType(null);
+      setConfigEmail("");
+      setConfigAccessToken("");
+      await fetchConnectors();
+    } catch (err) {
+      pushToast({ title: "Failed to configure connector", body: String(err), tone: "error" });
+    } finally {
+      setIsConfiguring(false);
+    }
+  }
 
   return (
     <div className="space-y-6 max-w-5xl">
@@ -387,6 +436,7 @@ export function Connectors() {
               type={type}
               connector={getConnector(type)}
               onConnect={handleConnect}
+              onConfigure={openConfigureDialog}
               onDisconnect={(t) => setDisconnectDialogType(t)}
               isConnecting={connectingType === type}
               isDisconnecting={disconnectingType === type}
@@ -394,6 +444,74 @@ export function Connectors() {
           ))}
         </div>
       )}
+
+      {/* Manual configure dialog (Jira/GitHub) */}
+      <Dialog open={!!configureDialogType} onOpenChange={(open) => !open && setConfigureDialogType(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Configure {configureDialogType ? CONNECTOR_META[configureDialogType].name : "connector"}
+            </DialogTitle>
+            <DialogDescription>
+              Credentials are encrypted at rest in Paperclip.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {configureDialogType === "jira" && (
+              <>
+                <label className="block space-y-1">
+                  <span className="text-sm font-medium">Jira Base URL</span>
+                  <input
+                    className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none"
+                    value={configBaseUrl}
+                    onChange={(e) => setConfigBaseUrl(e.target.value)}
+                    placeholder="https://your-company.atlassian.net"
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-sm font-medium">Jira Email</span>
+                  <input
+                    className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none"
+                    value={configEmail}
+                    onChange={(e) => setConfigEmail(e.target.value)}
+                    placeholder="you@company.com"
+                  />
+                </label>
+              </>
+            )}
+            {(configureDialogType === "jira" || configureDialogType === "github") && (
+              <label className="block space-y-1">
+                <span className="text-sm font-medium">
+                  {configureDialogType === "jira" ? "Jira Access Token" : "GitHub Personal Access Token"}
+                </span>
+                <input
+                  className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none"
+                  type="password"
+                  value={configAccessToken}
+                  onChange={(e) => setConfigAccessToken(e.target.value)}
+                  placeholder={configureDialogType === "jira" ? "Atlassian token" : "ghp_..."}
+                />
+              </label>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfigureDialogType(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleConfigureSubmit}
+              disabled={
+                isConfiguring ||
+                (configureDialogType === "jira" && (!configBaseUrl.trim() || !configEmail.trim())) ||
+                !configAccessToken.trim()
+              }
+            >
+              {isConfiguring ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Disconnect confirmation dialog */}
       <Dialog open={!!disconnectDialogType} onOpenChange={(open) => !open && setDisconnectDialogType(null)}>

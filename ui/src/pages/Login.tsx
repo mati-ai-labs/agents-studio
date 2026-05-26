@@ -188,7 +188,7 @@ export function LoginPage() {
                   textTransform: "uppercase",
                 }}
               >
-                Paperclip
+                Agent Studio
               </div>
               <div
                 style={{
@@ -199,7 +199,7 @@ export function LoginPage() {
                   marginTop: 1,
                 }}
               >
-                AI Agent Platform
+                by Mati Labs
               </div>
             </div>
           </div>

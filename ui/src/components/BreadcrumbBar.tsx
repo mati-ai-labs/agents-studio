@@ -1,5 +1,5 @@
 import { Link } from "@/lib/router";
-import { Menu } from "lucide-react";
+import { Menu, Search } from "lucide-react";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useCompany } from "../context/CompanyContext";
@@ -56,6 +56,13 @@ export function BreadcrumbBar() {
   if (breadcrumbs.length === 0) {
     return (
       <div className="border-b border-border px-4 md:px-6 h-12 shrink-0 flex items-center justify-end">
+        <Link
+          to="/search"
+          className="pc-shell-search-chip mr-2 hidden md:inline-flex"
+        >
+          <Search className="h-3.5 w-3.5" />
+          <span>Search</span>
+        </Link>
         {globalToolbarSlots}
       </div>
     );
@@ -76,13 +83,20 @@ export function BreadcrumbBar() {
   // Single breadcrumb = page title (uppercase)
   if (breadcrumbs.length === 1) {
     return (
-      <div className="border-b border-border px-4 md:px-6 h-12 shrink-0 flex items-center">
+      <div className="pc-shell-breadcrumb border-b border-border px-4 md:px-6 h-12 shrink-0 flex items-center">
         {menuButton}
         <div className="min-w-0 overflow-hidden flex-1">
           <h1 className="text-sm font-semibold uppercase tracking-wider truncate">
             {breadcrumbs[0].label}
           </h1>
         </div>
+        <Link
+          to="/search"
+          className="pc-shell-search-chip mr-2 hidden md:inline-flex"
+        >
+          <Search className="h-3.5 w-3.5" />
+          <span>Search</span>
+        </Link>
         {globalToolbarSlots}
       </div>
     );
@@ -90,7 +104,7 @@ export function BreadcrumbBar() {
 
   // Multiple breadcrumbs = breadcrumb trail
   return (
-    <div className="border-b border-border px-4 md:px-6 h-12 shrink-0 flex items-center">
+    <div className="pc-shell-breadcrumb border-b border-border px-4 md:px-6 h-12 shrink-0 flex items-center">
       {menuButton}
       <div className="min-w-0 overflow-hidden flex-1">
         <Breadcrumb className="min-w-0 overflow-hidden">
@@ -115,6 +129,13 @@ export function BreadcrumbBar() {
           </BreadcrumbList>
         </Breadcrumb>
       </div>
+      <Link
+        to="/search"
+        className="pc-shell-search-chip mr-2 hidden md:inline-flex"
+      >
+        <Search className="h-3.5 w-3.5" />
+        <span>Search</span>
+      </Link>
       {globalToolbarSlots}
     </div>
   );
