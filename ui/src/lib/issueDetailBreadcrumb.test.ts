@@ -168,7 +168,7 @@ describe("issueDetailBreadcrumb", () => {
 
   it("attaches and reads issue header seed data from route state", () => {
     const seededState = withIssueDetailHeaderSeed(
-      createIssueDetailLocationState("Issues", "/issues", "issues"),
+      createIssueDetailLocationState("Tasks", "/issues", "issues"),
       createIssue(),
     );
 

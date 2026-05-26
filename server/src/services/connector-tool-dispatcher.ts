@@ -2,7 +2,7 @@
  * ConnectorToolDispatcher — bridges connector tools into the agent tool system.
  *
  * Integrates with the PluginToolDispatcher so connector tools (Google Workspace,
- * Notion, Linear) appear in the same `listTools` / `executeTool` flow used by
+ * Jira, GitHub, Notion, Linear) appear in the same `listTools` / `executeTool` flow used by
  * plugin tools. When a connector is connected, its tools are registered and
  * become available to agents through the unified tool dispatching mechanism.
  *
@@ -234,4 +234,4 @@ export interface ConnectorToolDispatcher {
 // Constants
 // ---------------------------------------------------------------------------
 
-const CONNECTOR_TYPES = ["google_workspace", "notion", "linear"] as const;
+const CONNECTOR_TYPES = ["google_workspace", "jira", "github", "notion", "linear"] as const;

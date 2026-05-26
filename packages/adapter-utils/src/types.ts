@@ -138,6 +138,11 @@ export interface AdapterExecutionContext {
   onMeta?: (meta: AdapterInvocationMeta) => Promise<void>;
   onSpawn?: (meta: { pid: number; processGroupId: number | null; startedAt: string }) => Promise<void>;
   authToken?: string;
+  /**
+   * Optional per-run MCP config hints injected by the orchestrator.
+   * Adapters may materialize this into runtime-specific config files.
+   */
+  mcpConfig?: Record<string, unknown> | null;
 }
 
 export interface AdapterModel {

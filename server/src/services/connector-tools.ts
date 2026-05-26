@@ -349,6 +349,50 @@ export async function linear_create_issue(db: Db, input: ConnectorToolInput): Pr
   }
 }
 
+export async function linear_update_issue(db: Db, input: ConnectorToolInput): Promise<ConnectorToolResult> {
+  try {
+    const { issueId, title, description, assigneeId, status, priority } = input.args as {
+      issueId: string; title?: string; description?: string; assigneeId?: string;
+      status?: string; priority?: number;
+    };
+    const result = await linear_graphql(
+      db,
+      input.companyId,
+      `mutation UpdateIssue($id: String!, $input: IssueUpdateInput!) {
+        issueUpdate(id: $id, input: $input) { success issue { id identifier title state { name } } }
+      }`,
+      {
+        id: issueId,
+        input: {
+          ...(title !== undefined && { title }),
+          ...(description !== undefined && { description }),
+          ...(assigneeId !== undefined && { assigneeId }),
+          ...(status !== undefined && { stateId: status }),
+          ...(priority !== undefined && { priority }),
+        },
+      },
+    );
+    return result;
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+}
+
+export async function linear_list_teams(db: Db, input: ConnectorToolInput): Promise<ConnectorToolResult> {
+  try {
+    const result = await linear_graphql(
+      db,
+      input.companyId,
+      `query Teams {
+        teams { id name key description } }
+      `,
+    );
+    return result;
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tool registry — maps connector tool name → implementation
 // ---------------------------------------------------------------------------
@@ -488,6 +532,30 @@ export const CONNECTOR_TOOLS: Record<ConnectorType, ConnectorToolDef[]> = {
         required: ["teamId", "title"],
       },
     },
+    {
+      name: "linear_update_issue",
+      description: "Update a Linear issue.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          issueId: { type: "string", description: "Linear issue ID or identifier" },
+          title: { type: "string" },
+          description: { type: "string" },
+          assigneeId: { type: "string" },
+          status: { type: "string", description: "Linear workflow state ID" },
+          priority: { type: "number" },
+        },
+        required: ["issueId"],
+      },
+    },
+    {
+      name: "linear_list_teams",
+      description: "List Linear teams.",
+      inputSchema: {
+        type: "object",
+        properties: {},
+      },
+    },
   ],
 };
 
@@ -516,6 +584,8 @@ export async function executeConnectorTool(
     // Linear
     case "linear_issues": return linear_issues(db, { companyId, args });
     case "linear_create_issue": return linear_create_issue(db, { companyId, args });
+    case "linear_update_issue": return linear_update_issue(db, { companyId, args });
+    case "linear_list_teams": return linear_list_teams(db, { companyId, args });
     default:
       return { success: false, error: `Unknown connector tool: ${toolName}` };
   }

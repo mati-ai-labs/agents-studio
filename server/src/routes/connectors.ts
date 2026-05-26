@@ -9,13 +9,15 @@ export function connectorsRoutes(db: Db): Router {
 }
 
 /**
- * @fileoverview Connector OAuth routes — initiate/callback/disconnect for
- * Google Workspace, Notion, and Linear.
+ * @fileoverview Connector routes — OAuth and manual credential connectors.
  *
- * Flow:
+ * OAuth flow:
  *   1. POST /api/connectors/:type/connect  → redirect to OAuth provider
  *   2. GET  /api/connectors/:type/callback → exchange code for tokens, upsert connector
  *   3. DELETE /api/connectors/:type        → clear credentials, set disconnected
+ *
+ * Manual flow (non-OAuth):
+ *   1. POST /api/connectors/:type/configure → save credential fields directly
  *
  * Additional routes:
  *   GET  /api/connectors          → list all connectors for the company
@@ -41,8 +43,11 @@ import { logger } from "../middleware/logger.js";
 // Types
 // ---------------------------------------------------------------------------
 
-type ConnectorType = "google_workspace" | "notion" | "linear";
+type ConnectorType = "google_workspace" | "notion" | "linear" | "jira" | "github";
 const GOOGLE_CONNECTOR_TYPE: ConnectorType = "google_workspace";
+const OAUTH_CONNECTOR_TYPES: ConnectorType[] = ["google_workspace", "notion", "linear"];
+const MANUAL_CONNECTOR_TYPES: ConnectorType[] = ["jira", "github"];
+const ALL_CONNECTOR_TYPES: ConnectorType[] = [...OAUTH_CONNECTOR_TYPES, ...MANUAL_CONNECTOR_TYPES];
 const GOOGLE_OAUTH_SCOPES = [
   "openid",
   "email",
@@ -163,6 +168,7 @@ function buildAuthorizationUrl(
 
 interface OAuthState {
   companyId: string;
+  userId: string;
   type: ConnectorType;
   verifier: string;
   returnPath: string;
@@ -203,23 +209,30 @@ function appendQueryParam(path: string, key: string, value: string): string {
   return `${path}${sep}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
 }
 
+function readNonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 function createOAuthState(
   companyId: string,
+  userId: string,
   type: ConnectorType,
   returnPath: string,
 ): { state: string; oauthState: OAuthState } {
   const state = crypto.randomBytes(32).toString("base64url");
   const verifier = crypto.randomBytes(64).toString("base64url");
-  const oauthState: OAuthState = { companyId, type, verifier, returnPath };
+  const oauthState: OAuthState = { companyId, userId, type, verifier, returnPath };
   oauthStateStore.set(state, oauthState);
   // Auto-expire after 10 minutes
   setTimeout(() => oauthStateStore.delete(state), 10 * 60 * 1000);
   return { state, oauthState };
 }
 
-function clearOAuthStatesForCompanyAndType(companyId: string, type: ConnectorType): void {
+function clearOAuthStatesForCompanyAndType(companyId: string, userId: string, type: ConnectorType): void {
   for (const [state, entry] of oauthStateStore.entries()) {
-    if (entry.companyId === companyId && entry.type === type) {
+    if (entry.companyId === companyId && entry.userId === userId && entry.type === type) {
       oauthStateStore.delete(state);
     }
   }
@@ -327,6 +340,17 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
     return fallbackCompany.id;
   }
 
+  function resolveActorUserId(req: Request): string {
+    if (req.actor.type !== "board") {
+      throw badRequest("Board access required");
+    }
+    const userId = req.actor.userId?.trim();
+    if (!userId) {
+      throw badRequest("Authenticated board user ID is required");
+    }
+    return userId;
+  }
+
   async function handleOAuthCallback(req: Request, res: Response): Promise<void> {
     let callbackReturnPath = DEFAULT_CONNECTORS_RETURN_PATH;
     try {
@@ -354,7 +378,7 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
       }
       oauthStateStore.delete(state);
 
-      const { companyId, type: connectorType, verifier, returnPath } = oauthState;
+      const { companyId, userId, type: connectorType, verifier, returnPath } = oauthState;
       callbackReturnPath = returnPath;
       const config = getOAuthConfig(connectorType as ConnectorType, getBaseUrl);
 
@@ -385,6 +409,7 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
       // Persist connector with credentials
       await registry.upsert({
         companyId,
+        userId,
         type: connectorType as ConnectorType,
         status: "connected",
         credentials: tokens,
@@ -407,7 +432,8 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
     assertBoard(req);
     try {
       const companyId = await resolveCompanyId(req);
-      const connectors = await registry.listByCompany(companyId);
+      const userId = resolveActorUserId(req);
+      const connectors = await registry.listByCompanyForUser(companyId, userId);
       // Strip credentialsEncrypted from list response (security)
       const safe = connectors.map((c) => ({
         id: c.id,
@@ -442,12 +468,13 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
     assertBoard(req);
     try {
       const companyId = await resolveCompanyId(req);
+      const userId = resolveActorUserId(req);
       const type = req.params.type as ConnectorType;
-      if (!["google_workspace", "notion", "linear"].includes(type)) {
+      if (!ALL_CONNECTOR_TYPES.includes(type)) {
         res.status(400).json({ error: "Invalid connector type" });
         return;
       }
-      const connector = await registry.getByType(companyId, type);
+      const connector = await registry.getByType(companyId, type, userId);
       if (!connector) {
         res.status(404).json({ error: "Connector not found" });
         return;
@@ -476,6 +503,113 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
   });
 
   // -------------------------------------------------------------------------
+  // POST /api/connectors/:type/configure — save manual credentials
+  // -------------------------------------------------------------------------
+  router.post("/:type/configure", async (req: Request, res: Response) => {
+    assertAuthenticated(req);
+    assertBoard(req);
+    try {
+      const companyId = await resolveCompanyId(req);
+      const userId = resolveActorUserId(req);
+      const type = req.params.type as ConnectorType;
+      if (!MANUAL_CONNECTOR_TYPES.includes(type)) {
+        res.status(400).json({ error: "This connector must be configured via OAuth connect flow" });
+        return;
+      }
+
+      const payload = (req.body ?? {}) as Record<string, unknown>;
+      if (type === "jira") {
+        const baseUrl = readNonEmptyString(payload.baseUrl);
+        const email = readNonEmptyString(payload.email);
+        const accessToken = readNonEmptyString(payload.accessToken);
+        if (!baseUrl || !email || !accessToken) {
+          res.status(400).json({ error: "jira requires baseUrl, email, and accessToken" });
+          return;
+        }
+        const existing = await registry.getByType(companyId, type, userId);
+        const connector = await registry.upsert({
+          companyId,
+          userId,
+          type,
+          status: "connected",
+          config: {
+            ...(existing?.config ?? {}),
+            baseUrl,
+            email,
+            mcpEnabled: true,
+          },
+          credentials: {
+            accessToken,
+          },
+          displayName: email,
+        });
+        res.json({
+          success: true,
+          connector: {
+            id: connector.id,
+            companyId: connector.companyId,
+            type: connector.type,
+            config: connector.config,
+            status: connector.status,
+            displayName: connector.displayName,
+            lastError: connector.lastError,
+            connectedAt: connector.connectedAt,
+            disconnectedAt: connector.disconnectedAt,
+            createdAt: connector.createdAt,
+            updatedAt: connector.updatedAt,
+          },
+        });
+        return;
+      }
+
+      const accessToken = readNonEmptyString(payload.accessToken);
+      if (!accessToken) {
+        res.status(400).json({ error: "github requires accessToken" });
+        return;
+      }
+      const existing = await registry.getByType(companyId, type, userId);
+      const connector = await registry.upsert({
+        companyId,
+        userId,
+        type,
+        status: "connected",
+        config: {
+          ...(existing?.config ?? {}),
+          mcpEnabled: true,
+        },
+        credentials: {
+          accessToken,
+        },
+        displayName: "GitHub PAT",
+      });
+      res.json({
+        success: true,
+        connector: {
+          id: connector.id,
+          companyId: connector.companyId,
+          type: connector.type,
+          config: connector.config,
+          status: connector.status,
+          displayName: connector.displayName,
+          lastError: connector.lastError,
+          connectedAt: connector.connectedAt,
+          disconnectedAt: connector.disconnectedAt,
+          createdAt: connector.createdAt,
+          updatedAt: connector.updatedAt,
+        },
+      });
+    } catch (err) {
+      if (isMissingConnectorsTableError(err)) {
+        logger.warn({ err }, "Connector table missing; cannot configure connector");
+        res.status(503).json({ error: "Connectors storage is not initialized on this instance" });
+        return;
+      }
+      logger.error({ err }, "Failed to configure manual connector");
+      res.status(500).json({ error: "Internal error" });
+    }
+  });
+
+  // -------------------------------------------------------------------------
   // POST /api/connectors/:type/connect — initiate OAuth
   // -------------------------------------------------------------------------
   router.post("/:type/connect", async (req: Request, res: Response) => {
@@ -483,9 +617,14 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
     assertBoard(req);
     try {
       const companyId = await resolveCompanyId(req);
+      const userId = resolveActorUserId(req);
       const type = req.params.type as ConnectorType;
-      if (!["google_workspace", "notion", "linear"].includes(type)) {
+      if (!ALL_CONNECTOR_TYPES.includes(type)) {
         res.status(400).json({ error: "Invalid connector type" });
+        return;
+      }
+      if (!OAUTH_CONNECTOR_TYPES.includes(type)) {
+        res.status(400).json({ error: `Use /api/connectors/${type}/configure for this connector` });
         return;
       }
 
@@ -496,11 +635,11 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
       }
 
       // Mark connector as "connecting" immediately
-      await registry.upsert({ companyId, type, status: "connecting" });
+      await registry.upsert({ companyId, userId, type, status: "connecting" });
 
-      clearOAuthStatesForCompanyAndType(companyId, type);
+      clearOAuthStatesForCompanyAndType(companyId, userId, type);
       const returnPath = resolveReturnPath(req);
-      const { state, oauthState } = createOAuthState(companyId, type, returnPath);
+      const { state, oauthState } = createOAuthState(companyId, userId, type, returnPath);
       const verifier = oauthState.verifier;
       const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
       const authUrl = buildAuthorizationUrl(type, config, state, challenge);
@@ -547,13 +686,14 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
     assertBoard(req);
     try {
       const companyId = await resolveCompanyId(req);
+      const userId = resolveActorUserId(req);
       const type = req.params.type as ConnectorType;
-      if (!["google_workspace", "notion", "linear"].includes(type)) {
+      if (!ALL_CONNECTOR_TYPES.includes(type)) {
         res.status(400).json({ error: "Invalid connector type" });
         return;
       }
 
-      const result = await registry.disconnect(companyId, type);
+      const result = await registry.disconnectForUser(companyId, type, userId);
       if (!result) {
         res.status(404).json({ error: "Connector not found" });
         return;
@@ -580,15 +720,17 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
     assertBoard(req);
     try {
       const companyId = await resolveCompanyId(req);
+      const userId = resolveActorUserId(req);
       const type = req.params.type as ConnectorType;
-      if (!["google_workspace", "notion", "linear"].includes(type)) {
+      if (!ALL_CONNECTOR_TYPES.includes(type)) {
         res.status(400).json({ error: "Invalid connector type" });
         return;
       }
 
-      const existing = await registry.getByType(companyId, type);
+      const existing = await registry.getByType(companyId, type, userId);
       const connector = await registry.upsert({
         companyId,
+        userId,
         type,
         status: "connected",
         config: {
@@ -618,15 +760,17 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
     assertBoard(req);
     try {
       const companyId = await resolveCompanyId(req);
+      const userId = resolveActorUserId(req);
       const type = req.params.type as ConnectorType;
-      if (!["google_workspace", "notion", "linear"].includes(type)) {
+      if (!ALL_CONNECTOR_TYPES.includes(type)) {
         res.status(400).json({ error: "Invalid connector type" });
         return;
       }
 
-      const existing = await registry.getByType(companyId, type);
+      const existing = await registry.getByType(companyId, type, userId);
       const connector = await registry.upsert({
         companyId,
+        userId,
         type,
         status: "connected",
         config: {

@@ -347,7 +347,7 @@ export function Layout() {
     <GeneralSettingsProvider value={{ keyboardShortcutsEnabled }}>
       <div
       className={cn(
-        "bg-background text-foreground pt-[env(safe-area-inset-top)]",
+        "pc-app-root bg-background text-foreground pt-[env(safe-area-inset-top)]",
         isMobile ? "min-h-dvh" : "flex h-dvh flex-col overflow-hidden",
       )}
       >
@@ -359,7 +359,8 @@ export function Layout() {
       </a>
       <WorktreeBanner />
       <DevRestartBanner devServer={health?.devServer} />
-      <div className={cn("min-h-0 flex-1", isMobile ? "w-full" : "flex overflow-hidden")}>
+      <div className={cn("min-h-0 flex-1", isMobile ? "w-full" : "px-3 pb-3")}>
+        <div className={cn(isMobile ? "w-full" : "pc-app-frame flex h-full overflow-hidden")}>
         {isMobile && sidebarOpen && (
           <button
             type="button"
@@ -394,7 +395,7 @@ export function Layout() {
             />
           </div>
         ) : (
-          <div className="flex h-full flex-col shrink-0">
+          <div className="pc-shell-sidebar-wrap flex h-full flex-col shrink-0">
             <div className="flex flex-1 min-h-0">
               <ResizableSidebarPane open={sidebarOpen} resizable className="h-full shrink-0">
                 {isInstanceSettingsRoute ? (
@@ -414,7 +415,7 @@ export function Layout() {
           </div>
         )}
 
-        <div className={cn("flex min-w-0 flex-col", isMobile ? "w-full" : "h-full flex-1")}>
+        <div className={cn("pc-shell-content flex min-w-0 flex-col", isMobile ? "w-full" : "h-full flex-1")}>
           <div
             className={cn(
               isMobile && "sticky top-0 z-20 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/85",
@@ -428,7 +429,7 @@ export function Layout() {
               ref={mainContentRef}
               tabIndex={-1}
               className={cn(
-                "flex-1 p-4 outline-none md:p-6",
+                "flex-1 p-4 outline-none md:p-5",
                 isMobile ? "overflow-visible pb-[calc(5rem+env(safe-area-inset-bottom))]" : "overflow-auto",
               )}
             >
@@ -443,6 +444,7 @@ export function Layout() {
             </main>
             <PropertiesPanel />
           </div>
+        </div>
         </div>
       </div>
       {isMobile && <MobileBottomNav visible={mobileNavVisible} />}

@@ -468,7 +468,7 @@ function ExecutionWorkspaceRoutinesList({
         <CardHeader>
           <CardTitle>Workspace routines</CardTitle>
           <CardDescription>
-            Routines that use workspace-specific variables can be run against this execution workspace.
+            Daily jobs that use workspace-specific variables can be run against this execution workspace.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -734,11 +734,11 @@ export function ExecutionWorkspaceDetail() {
         <Tabs value={activeTab ?? "issues"} onValueChange={(value) => handleTabChange(value as ExecutionWorkspaceTab)}>
           <PageTabBar
             items={[
-              { value: "issues", label: "Issues" },
+              { value: "issues", label: "Tasks" },
               { value: "services", label: "Services" },
               { value: "configuration", label: "Configuration" },
               { value: "runtime_logs", label: "Runtime logs" },
-              { value: "routines", label: "Routines" },
+              { value: "routines", label: "Daily Jobs" },
             ]}
             align="start"
             value={activeTab ?? "issues"}

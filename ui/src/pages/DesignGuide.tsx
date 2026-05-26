@@ -360,7 +360,7 @@ export function DesignGuide() {
 
         <SubSection title="With icons">
           <div className="flex items-center gap-2 flex-wrap">
-            <Button><Plus /> New Issue</Button>
+            <Button><Plus /> New Task</Button>
             <Button variant="outline"><Upload /> Upload</Button>
             <Button variant="destructive"><Trash2 /> Delete</Button>
             <Button size="sm"><Plus /> Add</Button>
@@ -722,7 +722,7 @@ export function DesignGuide() {
                 </CommandItem>
                 <CommandItem>
                   <CircleDot className="h-4 w-4" />
-                  Issues
+                  Tasks
                 </CommandItem>
               </CommandGroup>
               <CommandSeparator />
@@ -785,7 +785,7 @@ export function DesignGuide() {
         <SubSection title="Metric Cards">
           <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4">
             <MetricCard icon={Bot} value={12} label="Active Agents" description="+3 this week" />
-            <MetricCard icon={CircleDot} value={48} label="Open Issues" />
+            <MetricCard icon={CircleDot} value={48} label="Open Tasks" />
             <MetricCard icon={DollarSign} value="$1,234" label="Monthly Cost" description="Under budget" />
             <MetricCard icon={Zap} value="99.9%" label="Uptime" />
           </div>
@@ -1124,7 +1124,7 @@ export function DesignGuide() {
             </div>
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground cursor-pointer">
               <CircleDot className="h-4 w-4" />
-              Issues
+              Tasks
               <span className="ml-auto text-xs bg-primary text-primary-foreground rounded-full px-1.5 py-0.5">
                 12
               </span>
@@ -1155,9 +1155,9 @@ export function DesignGuide() {
       </Section>
 
       {/* ============================================================ */}
-      {/*  GROUPED LIST (Issues pattern)                                */}
+      {/*  GROUPED LIST (Tasks pattern)                                */}
       {/* ============================================================ */}
-      <Section title="Grouped List (Issues pattern)">
+      <Section title="Grouped List (Tasks pattern)">
         <div>
           <div className="flex items-center gap-2 px-4 py-2 bg-muted/50 rounded-t-md">
             <StatusIcon status="in_progress" />
@@ -1326,7 +1326,7 @@ export function DesignGuide() {
         <div className="border border-border rounded-md divide-y divide-border text-sm">
           {[
             ["Cmd+K / Ctrl+K", "Open Command Palette"],
-            ["C", "New Issue (outside inputs)"],
+            ["C", "New Task (outside inputs)"],
             ["[", "Toggle Sidebar"],
             ["]", "Toggle Properties Panel"],
 

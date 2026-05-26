@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, NavLink, useLocation } from "@/lib/router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ChevronRight,
   MoreHorizontal,
   PauseCircle,
   Pencil,
@@ -46,6 +47,37 @@ const AGENT_SORT_CHOICES: SidebarSectionRadioChoice[] = [
   { value: "alphabetical", label: "Alphabetical" },
   { value: "recent", label: "Recent" },
 ];
+
+const SIDEBAR_AGENT_GROUPS = [
+  "1 · Exploration",
+  "2 · Discovery",
+  "3 · BMC Sprint",
+  "4 · Validation",
+  "5 · Launch & Growth",
+] as const;
+
+type SidebarAgentGroup = (typeof SIDEBAR_AGENT_GROUPS)[number];
+
+function groupAgent(agent: Agent): SidebarAgentGroup {
+  const combined = `${agent.name} ${agent.role ?? ""} ${agent.title ?? ""} ${agent.capabilities ?? ""}`.toLowerCase();
+
+  if (/\b(compliance|audit|discovery|interview|jtbd|customer research|competitive intelligence)\b/.test(combined)) {
+    return "2 · Discovery";
+  }
+  if (/\b(bmc|business model|assumption|concept|synthesis|product strategy|roadmap)\b/.test(combined)) {
+    return "3 · BMC Sprint";
+  }
+  if (/\b(engineering|developer|devops|qa|test|testing|validation|mvp|build|implementation)\b/.test(combined)) {
+    return "4 · Validation";
+  }
+  if (/\b(launch|growth|gtm|marketing|sales|revenue|paid media|performance|demand gen|website|outreach)\b/.test(combined)) {
+    return "5 · Launch & Growth";
+  }
+  if (/\b(research|exploration|strategy|analyst|industry|market intelligence|dig site)\b/.test(combined)) {
+    return "1 · Exploration";
+  }
+  return "1 · Exploration";
+}
 
 function agentTimestamp(agent: Agent, field: "lastHeartbeatAt" | "updatedAt" | "createdAt"): number {
   const raw = agent[field];
@@ -195,6 +227,13 @@ function SidebarAgentItem({
 export function SidebarAgents() {
   const [open, setOpen] = useState(true);
   const [pendingAgentIds, setPendingAgentIds] = useState<Set<string>>(() => new Set());
+  const [groupOpen, setGroupOpen] = useState<Record<SidebarAgentGroup, boolean>>(() => ({
+    "1 · Exploration": false,
+    "2 · Discovery": false,
+    "3 · BMC Sprint": false,
+    "4 · Validation": false,
+    "5 · Launch & Growth": false,
+  }));
   const queryClient = useQueryClient();
   const { selectedCompanyId } = useCompany();
   const { openNewAgent } = useDialogActions();
@@ -251,6 +290,14 @@ export function SidebarAgents() {
     () => sortAgents(orderedAgents, sortMode),
     [orderedAgents, sortMode],
   );
+  const groupedAgents = useMemo(() => {
+    const grouped = new Map<SidebarAgentGroup, Agent[]>();
+    for (const group of SIDEBAR_AGENT_GROUPS) grouped.set(group, []);
+    for (const agent of sortedAgents) {
+      grouped.get(groupAgent(agent))?.push(agent);
+    }
+    return grouped;
+  }, [sortedAgents]);
 
   const agentMatch = location.pathname.match(/^\/(?:[^/]+\/)?agents\/([^/]+)(?:\/([^/]+))?/);
   const activeAgentId = agentMatch?.[1] ?? null;
@@ -364,20 +411,49 @@ export function SidebarAgents() {
         onRadioValueChange: persistSortMode,
       }}
     >
-      {sortedAgents.map((agent: Agent) => {
-        const runCount = liveCountByAgent.get(agent.id) ?? 0;
+      {SIDEBAR_AGENT_GROUPS.map((group) => {
+        const agentsInGroup = groupedAgents.get(group) ?? [];
+        const isGroupOpen = groupOpen[group] ?? false;
         return (
-          <SidebarAgentItem
-            key={agent.id}
-            activeAgentId={activeAgentId}
-            activeTab={activeTab}
-            agent={agent}
-            disabled={pendingAgentIds.has(agent.id)}
-            isMobile={isMobile}
-            onPauseResume={(targetAgent, action) => pauseResumeAgent.mutate({ agent: targetAgent, action })}
-            runCount={runCount}
-            setSidebarOpen={setSidebarOpen}
-          />
+          <div key={group} className="pt-2 first:pt-0">
+            <button
+              type="button"
+              onClick={() => {
+                setGroupOpen((current) => ({
+                  ...current,
+                  [group]: !isGroupOpen,
+                }));
+              }}
+              className="flex w-full items-center gap-1.5 px-3 pb-1 text-left text-[11px] font-bold uppercase tracking-[0.11em] text-muted-foreground/85 hover:text-foreground"
+              aria-label={isGroupOpen ? `Collapse ${group}` : `Expand ${group}`}
+              aria-expanded={isGroupOpen}
+            >
+              <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", isGroupOpen && "rotate-90")} />
+              <span>{group}</span>
+            </button>
+            {isGroupOpen ? (
+              agentsInGroup.length > 0 ? (
+                agentsInGroup.map((agent) => {
+                  const runCount = liveCountByAgent.get(agent.id) ?? 0;
+                  return (
+                    <SidebarAgentItem
+                      key={agent.id}
+                      activeAgentId={activeAgentId}
+                      activeTab={activeTab}
+                      agent={agent}
+                      disabled={pendingAgentIds.has(agent.id)}
+                      isMobile={isMobile}
+                      onPauseResume={(targetAgent, action) => pauseResumeAgent.mutate({ agent: targetAgent, action })}
+                      runCount={runCount}
+                      setSidebarOpen={setSidebarOpen}
+                    />
+                  );
+                })
+              ) : (
+                <div className="px-3 py-1 text-[11px] text-muted-foreground/70">No agents yet</div>
+              )
+            ) : null}
+          </div>
         );
       })}
     </SidebarSection>

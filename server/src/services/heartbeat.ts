@@ -163,6 +163,8 @@ import { extractSkillMentionIds } from "@paperclipai/shared";
 import { environmentService } from "./environments.js";
 import { environmentRuntimeService } from "./environment-runtime.js";
 import { environmentRunOrchestrator } from "./environment-run-orchestrator.js";
+import { connectorRegistryService } from "./connector-registry.js";
+import { resolveGoogleWorkspaceMcpAccessToken } from "./google-workspace-mcp-auth.js";
 import type { PluginWorkerManager } from "./plugin-worker-manager.js";
 
 const MAX_LIVE_LOG_CHUNK_BYTES = 8 * 1024;
@@ -199,6 +201,10 @@ const MAX_INLINE_WAKE_COMMENTS = 8;
 const MAX_INLINE_WAKE_COMMENT_BODY_CHARS = 4_000;
 const MAX_INLINE_WAKE_COMMENT_BODY_TOTAL_CHARS = 12_000;
 const execFile = promisify(execFileCallback);
+const MIRROR_RUN_LOGS_TO_CONSOLE = (() => {
+  const value = process.env.PAPERCLIP_MIRROR_RUN_LOGS?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+})();
 const EXECUTION_PATH_HEARTBEAT_RUN_STATUSES = ["queued", "running", "scheduled_retry"] as const;
 const CANCELLABLE_HEARTBEAT_RUN_STATUSES = ["queued", "running", "scheduled_retry"] as const;
 const HEARTBEAT_RUN_TERMINAL_STATUSES = ["succeeded", "failed", "cancelled", "timed_out"] as const;
@@ -7110,7 +7116,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       runScopedMentionedSkillKeys,
     );
     const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(agent.companyId);
-    let runtimeConfig = {
+    let runtimeConfig: Record<string, unknown> = {
       ...effectiveResolvedConfig,
       paperclipRuntimeSkills: runtimeSkillEntries,
     };
@@ -7547,6 +7553,11 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         const sanitizedChunk = compactRunLogChunk(
           redactCurrentUserText(chunk, currentUserRedactionOptions),
         );
+        if (MIRROR_RUN_LOGS_TO_CONSOLE && sanitizedChunk.length > 0) {
+          const prefix = `[paperclip][run:${run.id}][agent:${run.agentId}][${stream}] `;
+          if (stream === "stderr") process.stderr.write(`${prefix}${sanitizedChunk}`);
+          else process.stdout.write(`${prefix}${sanitizedChunk}`);
+        }
         if (stream === "stdout") stdoutExcerpt = appendExcerpt(stdoutExcerpt, sanitizedChunk);
         if (stream === "stderr") stderrExcerpt = appendExcerpt(stderrExcerpt, sanitizedChunk);
         const ts = new Date().toISOString();
@@ -7665,6 +7676,151 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         });
       };
 
+      const googleWorkspaceMcpEnabled =
+        runtimeConfig.enableGoogleWorkspaceMcp === undefined
+          ? true
+          : asBoolean(runtimeConfig.enableGoogleWorkspaceMcp, true);
+      const runRequestedByUserId = await (async () => {
+        const contextUserId =
+          readNonEmptyString(context.requestedByUserId) ??
+          (readNonEmptyString(context.requestedByActorType) === "user"
+            ? readNonEmptyString(context.requestedByActorId)
+            : null) ??
+          readNonEmptyString(context.userId);
+        if (contextUserId) return contextUserId;
+        if (!run.wakeupRequestId) return null;
+        const wakeupRequest = await db
+          .select({
+            requestedByActorType: agentWakeupRequests.requestedByActorType,
+            requestedByActorId: agentWakeupRequests.requestedByActorId,
+          })
+          .from(agentWakeupRequests)
+          .where(and(
+            eq(agentWakeupRequests.id, run.wakeupRequestId),
+            eq(agentWakeupRequests.companyId, agent.companyId),
+          ))
+          .limit(1)
+          .then((rows) => rows[0] ?? null);
+        if (wakeupRequest?.requestedByActorType !== "user") return null;
+        return readNonEmptyString(wakeupRequest.requestedByActorId);
+      })();
+      const googleWorkspaceMcpUrl =
+        readNonEmptyString(runtimeConfig.googleWorkspaceMcpUrl) ??
+        readNonEmptyString(process.env.GOOGLE_WORKSPACE_MCP_URL) ??
+        "http://localhost:8080/mcp";
+      const googleWorkspaceMcpToken = googleWorkspaceMcpEnabled
+        ? await resolveGoogleWorkspaceMcpAccessToken({
+            db,
+            companyId: agent.companyId,
+            userId: runRequestedByUserId,
+          })
+        : null;
+      if (
+        googleWorkspaceMcpEnabled &&
+        googleWorkspaceMcpToken?.reason &&
+        googleWorkspaceMcpToken.reason !== "missing_credentials"
+      ) {
+        await onLog(
+          "stderr",
+          `[paperclip] Google Workspace MCP auth is unavailable (${googleWorkspaceMcpToken.reason}).\n`,
+        );
+      }
+      const connectorRegistry = connectorRegistryService(db);
+      const jiraConnector = await connectorRegistry.getByType(agent.companyId, "jira", runRequestedByUserId);
+      const jiraCreds = await connectorRegistry.getCredentialsAsync(agent.companyId, "jira", {
+        userId: runRequestedByUserId,
+      });
+      const jiraMcpEnabled = (jiraConnector?.config as Record<string, unknown> | null)?.mcpEnabled !== false;
+      const jiraMcpUrl =
+        readNonEmptyString((jiraConnector?.config as Record<string, unknown> | null)?.mcpUrl) ??
+        readNonEmptyString(runtimeConfig.jiraMcpUrl) ??
+        readNonEmptyString(process.env.JIRA_MCP_URL) ??
+        "http://localhost:8090/mcp";
+      const jiraBaseUrl =
+        readNonEmptyString((jiraConnector?.config as Record<string, unknown> | null)?.baseUrl) ??
+        readNonEmptyString(runtimeConfig.jiraBaseUrl);
+      const jiraEmail =
+        readNonEmptyString((jiraConnector?.config as Record<string, unknown> | null)?.email) ??
+        readNonEmptyString(runtimeConfig.jiraEmail) ??
+        readNonEmptyString(runtimeConfig.jiraUsername);
+      const jiraAccessToken = readNonEmptyString(jiraCreds?.accessToken);
+      const jiraConfig =
+        jiraMcpEnabled && jiraBaseUrl && jiraAccessToken
+          ? {
+              serverName:
+                readNonEmptyString((jiraConnector?.config as Record<string, unknown> | null)?.mcpServerName) ??
+                readNonEmptyString(runtimeConfig.jiraMcpServerName) ??
+                "jira",
+              command:
+                readNonEmptyString((jiraConnector?.config as Record<string, unknown> | null)?.mcpCommand) ??
+                readNonEmptyString(runtimeConfig.jiraMcpCommand) ??
+                "uvx",
+              args: [
+                readNonEmptyString((jiraConnector?.config as Record<string, unknown> | null)?.mcpPackage) ??
+                  readNonEmptyString(runtimeConfig.jiraMcpPackage) ??
+                  "mcp-atlassian",
+                "--transport",
+                "stdio",
+                "--read-only",
+                "--jira-url",
+                jiraBaseUrl,
+                "--jira-username",
+                jiraEmail ?? "",
+                "--jira-token",
+                jiraAccessToken,
+              ],
+            }
+          : null;
+      if (jiraMcpEnabled && !jiraConfig) {
+        await onLog(
+          "stderr",
+          `[paperclip] Jira MCP config skipped (hasBaseUrl=${Boolean(jiraBaseUrl)}, hasEmail=${Boolean(jiraEmail)}, hasToken=${Boolean(jiraAccessToken)}).\n`,
+        );
+      }
+
+      const githubConnector = await connectorRegistry.getByType(agent.companyId, "github", runRequestedByUserId);
+      const githubCreds = await connectorRegistry.getCredentialsAsync(agent.companyId, "github", {
+        userId: runRequestedByUserId,
+      });
+      const githubMcpEnabled = (githubConnector?.config as Record<string, unknown> | null)?.mcpEnabled !== false;
+      const githubMcpUrl =
+        readNonEmptyString((githubConnector?.config as Record<string, unknown> | null)?.mcpUrl) ??
+        readNonEmptyString(runtimeConfig.githubMcpUrl) ??
+        readNonEmptyString(process.env.GITHUB_MCP_URL) ??
+        "https://api.githubcopilot.com/mcp";
+      const githubAccessToken =
+        readNonEmptyString(githubCreds?.accessToken) ??
+        readNonEmptyString(runtimeConfig.githubMcpAccessToken) ??
+        readNonEmptyString(runtimeConfig.githubPersonalAccessToken) ??
+        readNonEmptyString(runtimeConfig.githubPat);
+      const githubConfig =
+        githubMcpEnabled && githubAccessToken
+          ? {
+              serverName:
+                readNonEmptyString((githubConnector?.config as Record<string, unknown> | null)?.mcpServerName) ??
+                readNonEmptyString(runtimeConfig.githubMcpServerName) ??
+                "github",
+              url: githubMcpUrl,
+              accessToken: githubAccessToken,
+            }
+          : null;
+      const adapterMcpConfig = (
+        googleWorkspaceMcpEnabled && googleWorkspaceMcpToken?.accessToken
+      ) || jiraConfig || githubConfig
+        ? {
+            ...(googleWorkspaceMcpEnabled && googleWorkspaceMcpToken?.accessToken
+              ? {
+                  googleWorkspace: {
+                    url: googleWorkspaceMcpUrl,
+                    accessToken: googleWorkspaceMcpToken.accessToken,
+                  },
+                }
+              : {}),
+            ...(jiraConfig ? { jira: jiraConfig } : {}),
+            ...(githubConfig ? { github: githubConfig } : {}),
+          }
+        : null;
+
       const adapter = getServerAdapter(agent.adapterType);
       const authToken = adapter.supportsLocalAgentJwt
         ? createLocalAgentJwt(agent.id, agent.companyId, agent.adapterType, run.id)
@@ -7704,6 +7860,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           });
         },
         authToken: authToken ?? undefined,
+        mcpConfig: adapterMcpConfig,
       });
       const adapterManagedRuntimeServices = adapterResult.runtimeServices
         ? await persistAdapterManagedRuntimeServices({
@@ -8563,6 +8720,22 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     const source = opts.source ?? "on_demand";
     const triggerDetail = opts.triggerDetail ?? null;
     const contextSnapshot: Record<string, unknown> = { ...(opts.contextSnapshot ?? {}) };
+    const requestedByActorId = readNonEmptyString(opts.requestedByActorId);
+    const requestedByActorType = opts.requestedByActorType ?? null;
+    if (!readNonEmptyString(contextSnapshot.requestedByActorType) && requestedByActorType) {
+      contextSnapshot.requestedByActorType = requestedByActorType;
+    }
+    if (!readNonEmptyString(contextSnapshot.requestedByActorId) && requestedByActorId) {
+      contextSnapshot.requestedByActorId = requestedByActorId;
+    }
+    // Persist initiating user identity on the run context so downstream wakes/retries
+    // and MCP credential resolution keep the same user scope.
+    if (requestedByActorType === "user" && requestedByActorId) {
+      contextSnapshot.requestedByUserId = requestedByActorId;
+      if (!readNonEmptyString(contextSnapshot.userId)) {
+        contextSnapshot.userId = requestedByActorId;
+      }
+    }
     const reason = opts.reason ?? null;
     const payload = opts.payload ?? null;
     const {

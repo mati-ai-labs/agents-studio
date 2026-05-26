@@ -620,7 +620,7 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
 
 function buildConnectorToolExecuteParams(
   client: PaperclipApiClient,
-  toolName: string,
+  toolDef: ConnectorMcpTool,
   input: Record<string, unknown>,
 ): { tool: string; parameters: Record<string, unknown>; runContext: Record<string, unknown> } {
   // Extract companyId from input, merge with defaults from client
@@ -632,8 +632,14 @@ function buildConnectorToolExecuteParams(
     parameters.companyId = resolvedCompanyId;
   }
 
+  // Use namespaced format expected by the unified tool dispatcher:
+  //   "google_workspace:gmail_send", "notion:notion_search", "linear:linear_issues"
+  // The connector-type dispatcher routes by "<connectorType>:<bareName>"
+  // and the server-side executeConnectorTool switch uses bare names.
+  const namespacedName = `${toolDef.connectorType}:${toolDef.bareName}`;
+
   return {
-    tool: toolName,
+    tool: namespacedName,
     parameters,
     runContext: {
       agentId: client.defaults.agentId ?? "",
@@ -646,16 +652,13 @@ function buildConnectorToolExecuteParams(
 
 function createConnectorToolDefs(client: PaperclipApiClient): ToolDefinition[] {
   return CONNECTOR_MCP_TOOLS.map((toolDef: ConnectorMcpTool) => {
-    // Build a descriptive name: "google_gmail_send" -> "googleWorkspaceGmailSend"
-    const camelName = toolDef.name.replace(/^[a-z]|-([a-z])/g, (_, c) => c ? c.toUpperCase() : '');
-
     return makeTool(
-      `${toolDef.connectorType.replace(/_([a-z])/g, (_, c) => c.toUpperCase())}_${toolDef.name.split('_').slice(1).join('_')}`,
+      toolDef.mcpToolName,
       toolDef.description,
       toolDef.schema,
       async (input) => {
         // Call POST /plugins/tools/execute with the unified dispatcher's format
-        const { tool, parameters, runContext } = buildConnectorToolExecuteParams(client, toolDef.name, input as Record<string, unknown>);
+        const { tool, parameters, runContext } = buildConnectorToolExecuteParams(client, toolDef, input as Record<string, unknown>);
         return client.requestJson("POST", "/plugins/tools/execute", {
           body: { tool, parameters, runContext },
           includeRunId: true,
