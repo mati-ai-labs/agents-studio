@@ -14,12 +14,12 @@ interface PlanningEvent {
 function ThinkingIndicator() {
   return (
     <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-600 shadow-sm">
-      <div className="flex items-center gap-1.5" aria-label="LangGraph is thinking" role="status">
+      <div className="flex items-center gap-1.5" aria-label="Orchestrator is thinking" role="status">
         <span className="h-2 w-2 animate-pulse rounded-full bg-slate-400" />
         <span className="h-2 w-2 animate-pulse rounded-full bg-slate-400 [animation-delay:150ms]" />
         <span className="h-2 w-2 animate-pulse rounded-full bg-slate-400 [animation-delay:300ms]" />
       </div>
-      <span>LangGraph is thinking...</span>
+      <span>Orchestrator is thinking...</span>
     </div>
   );
 }
@@ -42,7 +42,7 @@ export default function CeoChat() {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    setBreadcrumbs([{ label: "CEO Chat", href: `/${companyPrefix}/chat` }]);
+    setBreadcrumbs([{ label: "Orchestrator Chat", href: `/${companyPrefix}/chat` }]);
   }, [companyPrefix, setBreadcrumbs]);
 
   useEffect(() => {
@@ -169,7 +169,7 @@ export default function CeoChat() {
       <aside className="flex w-72 shrink-0 flex-col border-r border-slate-200/70 bg-white/70 backdrop-blur">
         <div className="flex items-center justify-between border-b border-slate-200/70 p-4">
           <div>
-            <h1 className="text-sm font-semibold">CEO Chat</h1>
+            <h1 className="text-sm font-semibold">Orchestrator Chat</h1>
             <p className="text-xs text-muted-foreground">Company orchestration console</p>
           </div>
           <Button size="sm" onClick={createNewChat} disabled={!selectedCompanyId || loading}>New</Button>
@@ -205,7 +205,7 @@ export default function CeoChat() {
 
       <main className="flex min-w-0 flex-1 flex-col">
         <div className="border-b border-slate-200/70 bg-white/70 p-4 backdrop-blur">
-          <h2 className="text-base font-semibold">Talk to the CEO Agent</h2>
+          <h2 className="text-base font-semibold">Talk to the Orchestrator</h2>
           <p className="text-sm text-muted-foreground">Create tasks, assign owners, and track execution from one thread.</p>
         </div>
 
@@ -219,7 +219,7 @@ export default function CeoChat() {
               <p className="mb-5 text-sm text-muted-foreground">
                 This is the chat-first interface for the agent company. Start here instead of manually creating issues.
               </p>
-              <Button onClick={createNewChat} disabled={!selectedCompanyId || loading}>Start CEO Chat</Button>
+              <Button onClick={createNewChat} disabled={!selectedCompanyId || loading}>Start Orchestrator Chat</Button>
             </Card>
           </div>
         ) : (
@@ -305,7 +305,7 @@ export default function CeoChat() {
                       send();
                     }
                   }}
-                  placeholder="Tell the CEO agent what to get done..."
+                  placeholder="Tell the Orchestrator what to get done..."
                   className="min-h-[52px] flex-1 resize-none rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-300"
                 />
                 <Button onClick={send} disabled={!input.trim() || sending}>Send</Button>

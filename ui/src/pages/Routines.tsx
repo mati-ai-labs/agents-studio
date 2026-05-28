@@ -241,7 +241,7 @@ export function Routines() {
   const [routineViewState, setRoutineViewState] = useState<RoutineViewState>(() => getRoutineViewState(routineViewStateKey));
 
   useEffect(() => {
-    setBreadcrumbs([{ label: "Daily Jobs" }]);
+    setBreadcrumbs([{ label: "Recurring Jobs" }]);
   }, [setBreadcrumbs]);
 
   useEffect(() => {
@@ -491,7 +491,7 @@ export function Routines() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight">
-            Daily Jobs
+            Recurring Jobs
           </h1>
           <p className="text-sm text-muted-foreground">
             Recurring work definitions that materialize into auditable execution issues.
@@ -509,7 +509,7 @@ export function Routines() {
           value={activeTab}
           onValueChange={handleTabChange}
           items={[
-            { value: "routines", label: "Daily Jobs" },
+            { value: "routines", label: "Recurring Jobs" },
             { value: "runs", label: "Recent Runs" },
           ]}
         />

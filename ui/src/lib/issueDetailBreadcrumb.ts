@@ -124,13 +124,13 @@ function inferIssueDetailSource(
 ): IssueDetailSource | null {
   if (isIssueDetailSource(state?.issueDetailSource)) return state.issueDetailSource;
   if (!breadcrumb) return null;
-  if (breadcrumb.label === "Inbox" || breadcrumb.href.includes("/inbox")) return "inbox";
+  if (breadcrumb.label === "Inbox" || breadcrumb.label === "Work Updates" || breadcrumb.href.includes("/inbox")) return "inbox";
   if (breadcrumb.label === "Tasks" || breadcrumb.href.includes("/issues")) return "issues";
   return null;
 }
 
 function breadcrumbForSource(source: IssueDetailSource): IssueDetailBreadcrumb {
-  if (source === "inbox") return { label: "Inbox", href: "/inbox" };
+  if (source === "inbox") return { label: "Work Updates", href: "/inbox" };
   return { label: "Tasks", href: "/issues" };
 }
 

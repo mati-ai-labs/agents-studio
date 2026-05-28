@@ -49,7 +49,7 @@ export function MobileBottomNav({ visible }: MobileBottomNavProps) {
       {
         type: "link",
         to: "/inbox",
-        label: "Inbox",
+        label: "Work Updates",
         icon: Inbox,
         badge: inboxBadge.inbox,
       },
