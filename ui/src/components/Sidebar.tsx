@@ -92,7 +92,7 @@ export function Sidebar() {
           <SidebarNavItem to="/dashboard" label="Dashboard" icon={LayoutDashboard} liveCount={liveRunCount} />
           <SidebarNavItem
             to="/inbox"
-            label="Inbox"
+            label="Work Updates"
             icon={Inbox}
             badge={inboxBadge.inbox}
             badgeTone={inboxBadge.failedRuns > 0 ? "danger" : "default"}
@@ -107,9 +107,13 @@ export function Sidebar() {
           />
         </div>
 
+        <SidebarSection label="ORCHESTRATOR">
+          <SidebarNavItem to="/chat" label="Chat" icon={Bot} />
+        </SidebarSection>
+
         <SidebarSection label="Work">
           <SidebarNavItem to="/issues" label="Tasks" icon={CircleDot} />
-          <SidebarNavItem to="/routines" label="Daily Jobs" icon={Repeat} />
+          <SidebarNavItem to="/routines" label="Recurring Jobs" icon={Repeat} />
           <SidebarNavItem to="/goals" label="Goals" icon={Target} />
           {showWorkspacesLink ? (
             <SidebarNavItem to="/workspaces" label="Workspaces" icon={GitBranch} />
@@ -117,10 +121,6 @@ export function Sidebar() {
         </SidebarSection>
 
         <SidebarProjects />
-
-        <SidebarSection label="ORCHESTRATOR">
-          <SidebarNavItem to="/chat" label="Chat" icon={Bot} />
-        </SidebarSection>
 
         <SidebarAgents />
 

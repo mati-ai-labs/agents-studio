@@ -49,11 +49,11 @@ const AGENT_SORT_CHOICES: SidebarSectionRadioChoice[] = [
 ];
 
 const SIDEBAR_AGENT_GROUPS = [
-  "1 · Exploration",
-  "2 · Discovery",
-  "3 · BMC Sprint",
-  "4 · Validation",
-  "5 · Launch & Growth",
+  "Market Signals Research",
+  "Innovative Concepts Ideation",
+  "Product Team (Engineering & Design)",
+  "Concept Validation",
+  "Growth(GTM + Marketing)",
 ] as const;
 
 type SidebarAgentGroup = (typeof SIDEBAR_AGENT_GROUPS)[number];
@@ -61,22 +61,22 @@ type SidebarAgentGroup = (typeof SIDEBAR_AGENT_GROUPS)[number];
 function groupAgent(agent: Agent): SidebarAgentGroup {
   const combined = `${agent.name} ${agent.role ?? ""} ${agent.title ?? ""} ${agent.capabilities ?? ""}`.toLowerCase();
 
-  if (/\b(compliance|audit|discovery|interview|jtbd|customer research|competitive intelligence)\b/.test(combined)) {
-    return "2 · Discovery";
+  if (/\b(market|research|signals|trend|intel|intelligence|insight|competitive|analyst)\b/.test(combined)) {
+    return "Market Signals Research";
   }
-  if (/\b(bmc|business model|assumption|concept|synthesis|product strategy|roadmap)\b/.test(combined)) {
-    return "3 · BMC Sprint";
+  if (/\b(ceo|orchestrator|concept|ideation|idea|innovation|strategy|synthesis|roadmap|vision|founder)\b/.test(combined)) {
+    return "Innovative Concepts Ideation";
   }
-  if (/\b(engineering|developer|devops|qa|test|testing|validation|mvp|build|implementation)\b/.test(combined)) {
-    return "4 · Validation";
+  if (/\b(cto|engineering|engineer|developer|devops|design|designer|ux|frontend|backend|fullstack|product|pm|team organiser|team organizer)\b/.test(combined)) {
+    return "Product Team (Engineering & Design)";
   }
-  if (/\b(launch|growth|gtm|marketing|sales|revenue|paid media|performance|demand gen|website|outreach)\b/.test(combined)) {
-    return "5 · Launch & Growth";
+  if (/\b(compliance|audit|qa|test|testing|validation|security|risk|legal)\b/.test(combined)) {
+    return "Concept Validation";
   }
-  if (/\b(research|exploration|strategy|analyst|industry|market intelligence|dig site)\b/.test(combined)) {
-    return "1 · Exploration";
+  if (/\b(growth|gtm|marketing|sales|revenue|launch|paid media|performance|demand gen|website|outreach|brand|content)\b/.test(combined)) {
+    return "Growth(GTM + Marketing)";
   }
-  return "1 · Exploration";
+  return "Innovative Concepts Ideation";
 }
 
 function agentTimestamp(agent: Agent, field: "lastHeartbeatAt" | "updatedAt" | "createdAt"): number {
@@ -228,11 +228,11 @@ export function SidebarAgents() {
   const [open, setOpen] = useState(true);
   const [pendingAgentIds, setPendingAgentIds] = useState<Set<string>>(() => new Set());
   const [groupOpen, setGroupOpen] = useState<Record<SidebarAgentGroup, boolean>>(() => ({
-    "1 · Exploration": false,
-    "2 · Discovery": false,
-    "3 · BMC Sprint": false,
-    "4 · Validation": false,
-    "5 · Launch & Growth": false,
+    "Market Signals Research": true,
+    "Innovative Concepts Ideation": true,
+    "Product Team (Engineering & Design)": true,
+    "Concept Validation": true,
+    "Growth(GTM + Marketing)": true,
   }));
   const queryClient = useQueryClient();
   const { selectedCompanyId } = useCompany();
@@ -429,7 +429,7 @@ export function SidebarAgents() {
               aria-expanded={isGroupOpen}
             >
               <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", isGroupOpen && "rotate-90")} />
-              <span>{group}</span>
+              <span className="normal-case">{group}</span>
             </button>
             {isGroupOpen ? (
               agentsInGroup.length > 0 ? (
