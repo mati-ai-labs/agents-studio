@@ -64,17 +64,17 @@ function groupAgent(agent: Agent): SidebarAgentGroup {
   if (/\b(market|research|signals|trend|intel|intelligence|insight|competitive|analyst)\b/.test(combined)) {
     return "Market Signals Research";
   }
-  if (/\b(ceo|orchestrator|concept|ideation|idea|innovation|strategy|synthesis|roadmap|vision|founder)\b/.test(combined)) {
-    return "Innovative Concepts Ideation";
-  }
-  if (/\b(cto|engineering|engineer|developer|devops|design|designer|ux|frontend|backend|fullstack|product|pm|team organiser|team organizer)\b/.test(combined)) {
+  if (/\b(cto|engineering|engineer|developer|devops|design|designer|ux|frontend|backend|fullstack|product|pm|api|tester|test|testing|qa|team organiser|team organizer)\b/.test(combined)) {
     return "Product Team (Engineering & Design)";
   }
-  if (/\b(compliance|audit|qa|test|testing|validation|security|risk|legal)\b/.test(combined)) {
+  if (/\b(compliance|audit|validation|security|risk|legal|governance|policy)\b/.test(combined)) {
     return "Concept Validation";
   }
   if (/\b(growth|gtm|marketing|sales|revenue|launch|paid media|performance|demand gen|website|outreach|brand|content)\b/.test(combined)) {
     return "Growth(GTM + Marketing)";
+  }
+  if (/\b(ceo|orchestrator|concept|ideation|idea|innovation|strategy|synthesis|roadmap|vision|founder)\b/.test(combined)) {
+    return "Innovative Concepts Ideation";
   }
   return "Innovative Concepts Ideation";
 }
