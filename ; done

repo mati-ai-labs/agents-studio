@@ -1,0 +1,16 @@
+● workspace-mcp.service - Workspace MCP Server (Google Workspace HTTP MCP)
+     Loaded: loaded (/home/ubuntu/.config/systemd/user/workspace-mcp.service; enabled; preset: enabled)
+     Active: active (running) since Mon 2026-05-25 20:09:42 UTC; 2s ago
+ Invocation: 20cb16057d434dfbb6a97e344c8db401
+   Main PID: 171325 (uv)
+      Tasks: 25 (limit: 3807)
+     Memory: 153.3M (peak: 153.3M)
+        CPU: 2.010s
+     CGroup: /user.slice/user-1000.slice/user@1000.service/app.slice/workspace-mcp.service
+             ├─171325 /home/ubuntu/.local/bin/uv tool uvx workspace-mcp --transport streamable-http --tool-tier core
+             └─171355 /home/ubuntu/.cache/uv/archive-v0/l5SScKS_VhKDcCQn/bin/python /home/ubuntu/.cache/uv/archive-v0/l5SScKS_VhKDcCQn/bin/workspace-mcp --transport streamable-http --tool-tier core
+
+May 25 20:09:42 ip-172-31-13-103 systemd[1139]: Started workspace-mcp.service - Workspace MCP Server (Google Workspace HTTP MCP).
+May 25 20:09:43 ip-172-31-13-103 uvx[171355]: [TOOLS] Configuration loaded from /home/ubuntu/.cache/uv/archive-v0/l5SScKS_VhKDcCQn/lib/python3.14/site-packages/core/tool_tiers.yaml
+May 25 20:09:43 ip-172-31-13-103 uvx[171355]: [TOOLS] Tool tier 'core' loaded: 43 tools across 12 services [['appscript', 'calendar', 'chat', 'contacts', 'docs', 'drive', 'forms', 'gmail', 'search', 'sheets', 'slides', 'tasks']]
+May 25 20:09:43 ip-172-31-13-103 uvx[171355]: [AUTH] Scope management active for 12 services

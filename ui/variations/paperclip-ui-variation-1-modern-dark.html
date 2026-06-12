@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Paperclip UI — Modern Dark</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+        }
+      }
+    }
+  </script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .scrollbar-hide::-webkit-scrollbar { display: none; }
+    .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+    /* Subtle gradient glow on cards */
+    .glow-card {
+      background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(168,85,247,0.04));
+      border: 1px solid rgba(99,102,241,0.2);
+    }
+    .glow-card:hover {
+      border-color: rgba(99,102,241,0.5);
+      box-shadow: 0 0 20px rgba(99,102,241,0.15);
+    }
+
+    /* Sidebar glow accent */
+    .sidebar-accent {
+      background: linear-gradient(180deg, #1e1b4b 0%, #0f0e1a 100%);
+      border-right: 1px solid rgba(99,102,241,0.25);
+    }
+
+    /* Metric card gradient top border */
+    .metric-border {
+      border-top: 3px solid transparent;
+      border-image: linear-gradient(90deg, #6366f1, #8b5cf6) 1;
+    }
+    .metric-border:hover { transform: translateY(-2px); }
+
+    /* Chart fills */
+    .chart-fill-1 { fill: #6366f1; }
+    .chart-fill-2 { fill: #8b5cf6; }
+    .chart-fill-3 { fill: #06b6d4; }
+    .chart-fill-4 { fill: #10b981; }
+
+    /* Animated pulse dot */
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.8); }
+    }
+    .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+
+    /* Live indicator bar */
+    @keyframes live-bar {
+      0% { width: 0%; opacity: 1; }
+      100% { width: 100%; opacity: 0; }
+    }
+    .live-bar::after {
+      content: '';
+      position: absolute;
+      bottom: 0; left: 0;
+      height: 2px;
+      background: linear-gradient(90deg, #6366f1, #8b5cf6, transparent);
+      animation: live-bar 2s ease-in-out infinite;
+    }
+
+    /* Activity row entrance */
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateX(-8px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+    .slide-in { animation: slideIn 0.3s ease-out; }
+
+    /* Status dot colors */
+    .status-running { color: #22c55e; }
+    .status-paused { color: #f59e0b; }
+    .status-error { color: #ef4444; }
+    .status-done { color: #6366f1; }
+  </style>
+</head>
+<body class="bg-[#0a0a0f] text-[#e2e8f0] antialiased h-dvh flex flex-col overflow-hidden">
+
+  <!-- ===== SIDEBAR ===== -->
+  <aside class="w-60 shrink-0 h-full flex flex-col sidebar-accent">
+    <!-- Company header -->
+    <div class="flex items-center gap-2 px-3 h-12 border-b border-indigo-900/50">
+      <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shrink-0 shadow-lg shadow-indigo-500/30">
+        <span class="text-white text-xs font-bold">P</span>
+      </div>
+      <span class="text-sm font-semibold text-white truncate">Acme Corp</span>
+      <button class="ml-auto text-indigo-400 hover:text-indigo-300 transition-colors" aria-label="Search">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      </button>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="flex-1 overflow-y-auto scrollbar-hide py-3 px-2 flex flex-col gap-0.5">
+      <!-- New Issue -->
+      <button class="flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-indigo-300 hover:bg-indigo-900/30 hover:text-white rounded-md transition-colors">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        New Issue
+      </button>
+
+      <!-- Nav items -->
+      <a href="#" class="flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium bg-indigo-900/40 text-white rounded-md">
+        <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        Dashboard
+        <span class="ml-auto flex h-2 w-2 relative">
+          <span class="pulse-dot absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+          <span class="relative inline-flex rounded-full h-2 w-2 bg-green-400"></span>
+        </span>
+      </a>
+
+      <a href="#" class="flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-indigo-200/70 hover:bg-indigo-900/20 hover:text-white rounded-md transition-colors">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
+        Inbox
+        <span class="ml-auto bg-indigo-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">3</span>
+      </a>
+
+      <a href="#" class="flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-indigo-200/70 hover:bg-indigo-900/20 hover:text-white rounded-md transition-colors">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+        Agents
+      </a>
+
+      <a href="#" class="flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-indigo-200/70 hover:bg-indigo-900/20 hover:text-white rounded-md transition-colors">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M3 7h18M3 12h18M3 17h18"/></svg>
+        Projects
+      </a>
+
+      <a href="#" class="flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-indigo-200/70 hover:bg-indigo-900/20 hover:text-white rounded-md transition-colors">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+        Issues
+      </a>
+
+      <a href="#" class="flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-indigo-200/70 hover:bg-indigo-900/20 hover:text-white rounded-md transition-colors">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        Routines
+      </a>
+
+      <a href="#" class="flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-indigo-200/70 hover:bg-indigo-900/20 hover:text-white rounded-md transition-colors">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+        Goals
+      </a>
+
+      <!-- Divider -->
+      <div class="my-2 border-t border-indigo-900/40"></div>
+
+      <a href="#" class="flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-indigo-200/50 hover:bg-indigo-900/20 hover:text-white rounded-md transition-colors">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        Settings
+      </a>
+    </nav>
+
+    <!-- Agent status footer -->
+    <div class="border-t border-indigo-900/50 px-3 py-3">
+      <div class="flex items-center gap-2">
+        <div class="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shrink-0">
+          <span class="text-white text-[10px] font-bold">JD</span>
+        </div>
+        <div class="min-w-0 flex-1">
+          <p class="text-xs font-medium text-white truncate">Jane Doe</p>
+          <p class="text-[10px] text-indigo-300/60">Admin</p>
+        </div>
+        <div class="w-2 h-2 rounded-full bg-green-400 shrink-0"></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ===== MAIN CONTENT ===== -->
+  <div class="flex-1 flex flex-col min-w-0 h-dvh overflow-hidden">
+    <!-- Top breadcrumb bar -->
+    <div class="h-10 border-b border-[#1e1b4b]/60 flex items-center px-4 gap-2 text-xs text-indigo-200/50 shrink-0">
+      <span>Acme Corp</span>
+      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+      <span class="text-indigo-200/80">Dashboard</span>
+    </div>
+
+    <!-- Scrollable content -->
+    <div class="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-hide">
+
+      <!-- Warning banner -->
+      <div class="flex items-start justify-between gap-3 rounded-xl border border-amber-500/20 bg-gradient-to-r from-amber-950/60 to-transparent px-4 py-3">
+        <div class="flex items-start gap-2.5">
+          <svg class="w-4 h-4 text-amber-400 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-2.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <div>
+            <p class="text-sm font-medium text-amber-100">You have no agents.</p>
+            <p class="text-xs text-amber-200/60">Create one here to get started.</p>
+          </div>
+        </div>
+        <button class="text-xs font-medium text-amber-300 hover:text-amber-100 underline underline-offset-2 shrink-0">Create one here</button>
+      </div>
+
+      <!-- Active agents -->
+      <div class="glow-card rounded-xl p-4 transition-all duration-300">
+        <div class="flex items-center gap-2 mb-3">
+          <div class="flex -space-x-2">
+            <div class="w-7 h-7 rounded-full bg-indigo-600 border-2 border-[#0a0a0f] flex items-center justify-center text-white text-[10px] font-bold">A1</div>
+            <div class="w-7 h-7 rounded-full bg-purple-600 border-2 border-[#0a0a0f] flex items-center justify-center text-white text-[10px] font-bold">A2</div>
+            <div class="w-7 h-7 rounded-full bg-cyan-600 border-2 border-[#0a0a0f] flex items-center justify-center text-white text-[10px] font-bold">A3</div>
+          </div>
+          <span class="text-sm font-medium text-white">3 Agents Active</span>
+          <span class="ml-auto flex items-center gap-1 text-xs text-green-400">
+            <span class="w-1.5 h-1.5 rounded-full bg-green-400"></span>
+            All systems running
+          </span>
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          <div class="bg-[#1e1b4b]/40 rounded-lg p-2.5">
+            <p class="text-[11px] text-indigo-300 mb-1">Alpha Agent</p>
+            <p class="text-xs text-green-400 font-medium">Running</p>
+          </div>
+          <div class="bg-[#1e1b4b]/40 rounded-lg p-2.5">
+            <p class="text-[11px] text-indigo-300 mb-1">Beta Runner</p>
+            <p class="text-xs text-amber-400 font-medium">Paused</p>
+          </div>
+          <div class="bg-[#1e1b4b]/40 rounded-lg p-2.5">
+            <p class="text-[11px] text-indigo-300 mb-1">Gamma Worker</p>
+            <p class="text-xs text-green-400 font-medium">Running</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Metric cards -->
+      <div class="grid grid-cols-2 xl:grid-cols-4 gap-3">
+        <div class="metric-border glow-card rounded-xl p-4 transition-all duration-300 hover:-translate-y-0.5 cursor-pointer">
+          <div class="flex items-center gap-2 mb-3">
+            <div class="w-8 h-8 rounded-lg bg-indigo-900/50 flex items-center justify-center">
+              <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8z"/><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+            </div>
+          </div>
+          <p class="text-2xl font-bold text-white">4</p>
+          <p class="text-xs text-indigo-200/60 mt-0.5">Agents Enabled</p>
+          <p class="text-[11px] text-indigo-300/50 mt-2">2 running · 1 paused · 0 errors</p>
+        </div>
+
+        <div class="metric-border glow-card rounded-xl p-4 transition-all duration-300 hover:-translate-y-0.5 cursor-pointer">
+          <div class="flex items-center gap-2 mb-3">
+            <div class="w-8 h-8 rounded-lg bg-cyan-900/50 flex items-center justify-center">
+              <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="M12 8v4l3 3"/></svg>
+            </div>
+          </div>
+          <p class="text-2xl font-bold text-white">7</p>
+          <p class="text-xs text-indigo-200/60 mt-0.5">Tasks In Progress</p>
+          <p class="text-[11px] text-indigo-300/50 mt-2">12 open · 2 blocked</p>
+        </div>
+
+        <div class="metric-border glow-card rounded-xl p-4 transition-all duration-300 hover:-translate-y-0.5 cursor-pointer">
+          <div class="flex items-center gap-2 mb-3">
+            <div class="w-8 h-8 rounded-lg bg-emerald-900/50 flex items-center justify-center">
+              <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+            </div>
+          </div>
+          <p class="text-2xl font-bold text-white">$284</p>
+          <p class="text-xs text-indigo-200/60 mt-0.5">Month Spend</p>
+          <p class="text-[11px] text-indigo-300/50 mt-2">42% of $675 budget</p>
+        </div>
+
+        <div class="metric-border glow-card rounded-xl p-4 transition-all duration-300 hover:-translate-y-0.5 cursor-pointer">
+          <div class="flex items-center gap-2 mb-3">
+            <div class="w-8 h-8 rounded-lg bg-amber-900/50 flex items-center justify-center">
+              <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            </div>
+          </div>
+          <p class="text-2xl font-bold text-white">2</p>
+          <p class="text-xs text-indigo-200/60 mt-0.5">Pending Approvals</p>
+          <p class="text-[11px] text-indigo-300/50 mt-2">Budget overrides awaiting</p>
+        </div>
+      </div>
+
+      <!-- Charts row -->
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-[#1e1b4b]/30 rounded-xl border border-indigo-900/30 p-4">
+          <p class="text-xs font-semibold text-indigo-200/80 uppercase tracking-wide mb-3">Run Activity</p>
+          <p class="text-[10px] text-indigo-300/50 mb-3">Last 14 days</p>
+          <div class="flex items-end gap-1 h-16">
+            <div class="flex-1 bg-indigo-600/70 rounded-t" style="height:45%"></div>
+            <div class="flex-1 bg-indigo-500/70 rounded-t" style="height:65%"></div>
+            <div class="flex-1 bg-indigo-600/70 rounded-t" style="height:55%"></div>
+            <div class="flex-1 bg-indigo-500/70 rounded-t" style="height:80%"></div>
+            <div class="flex-1 bg-indigo-600/70 rounded-t" style="height:70%"></div>
+            <div class="flex-1 bg-indigo-500/70 rounded-t" style="height:60%"></div>
+            <div class="flex-1 bg-indigo-600/70 rounded-t" style="height:90%"></div>
+            <div class="flex-1 bg-indigo-500/70 rounded-t" style="height:75%"></div>
+            <div class="flex-1 bg-indigo-600/70 rounded-t" style="height:85%"></div>
+            <div class="flex-1 bg-indigo-500/70 rounded-t" style="height:60%"></div>
+            <div class="flex-1 bg-indigo-600/70 rounded-t" style="height:95%"></div>
+            <div class="flex-1 bg-indigo-500/70 rounded-t" style="height:80%"></div>
+            <div class="flex-1 bg-indigo-600/70 rounded-t" style="height:70%"></div>
+            <div class="flex-1 bg-indigo-500/70 rounded-t" style="height:100%"></div>
+          </div>
+        </div>
+
+        <div class="bg-[#1e1b4b]/30 rounded-xl border border-indigo-900/30 p-4">
+          <p class="text-xs font-semibold text-indigo-200/80 uppercase tracking-wide mb-3">Issues by Priority</p>
+          <p class="text-[10px] text-indigo-300/50 mb-3">Last 14 days</p>
+          <div class="space-y-2">
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-red-400 shrink-0"></span>
+              <span class="text-[11px] text-indigo-200/70 flex-1">Critical</span>
+              <span class="text-[11px] font-medium text-white">2</span>
+            </div>
+            <div class="w-full bg-[#1e1b4b]/60 rounded-full h-1.5">
+              <div class="bg-red-400 h-1.5 rounded-full" style="width:8%"></div>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-amber-400 shrink-0"></span>
+              <span class="text-[11px] text-indigo-200/70 flex-1">High</span>
+              <span class="text-[11px] font-medium text-white">5</span>
+            </div>
+            <div class="w-full bg-[#1e1b4b]/60 rounded-full h-1.5">
+              <div class="bg-amber-400 h-1.5 rounded-full" style="width:20%"></div>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-blue-400 shrink-0"></span>
+              <span class="text-[11px] text-indigo-200/70 flex-1">Medium</span>
+              <span class="text-[11px] font-medium text-white">8</span>
+            </div>
+            <div class="w-full bg-[#1e1b4b]/60 rounded-full h-1.5">
+              <div class="bg-blue-400 h-1.5 rounded-full" style="width:33%"></div>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-green-400 shrink-0"></span>
+              <span class="text-[11px] text-indigo-200/70 flex-1">Low</span>
+              <span class="text-[11px] font-medium text-white">9</span>
+            </div>
+            <div class="w-full bg-[#1e1b4b]/60 rounded-full h-1.5">
+              <div class="bg-green-400 h-1.5 rounded-full" style="width:37%"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-[#1e1b4b]/30 rounded-xl border border-indigo-900/30 p-4">
+          <p class="text-xs font-semibold text-indigo-200/80 uppercase tracking-wide mb-3">Issues by Status</p>
+          <p class="text-[10px] text-indigo-300/50 mb-3">Last 14 days</p>
+          <div class="flex items-center justify-center h-16">
+            <div class="relative w-16 h-16">
+              <svg viewBox="0 0 36 36" class="w-16 h-16 -rotate-90">
+                <circle cx="18" cy="18" r="14" fill="none" stroke="#1e1b4b" stroke-width="4"/>
+                <circle cx="18" cy="18" r="14" fill="none" stroke="#6366f1" stroke-width="4" stroke-dasharray="30 58" stroke-linecap="round"/>
+                <circle cx="18" cy="18" r="14" fill="none" stroke="#8b5cf6" stroke-width="4" stroke-dasharray="18 70" stroke-dashoffset="-30" stroke-linecap="round"/>
+                <circle cx="18" cy="18" r="14" fill="none" stroke="#06b6d4" stroke-width="4" stroke-dasharray="12 76" stroke-dashoffset="-48" stroke-linecap="round"/>
+              </svg>
+            </div>
+          </div>
+          <div class="flex items-center justify-center gap-3 mt-2">
+            <span class="flex items-center gap-1 text-[10px] text-indigo-300/60"><span class="w-2 h-2 rounded-full bg-indigo-500"></span>Done 40%</span>
+            <span class="flex items-center gap-1 text-[10px] text-indigo-300/60"><span class="w-2 h-2 rounded-full bg-purple-500"></span>In Progress 25%</span>
+            <span class="flex items-center gap-1 text-[10px] text-indigo-300/60"><span class="w-2 h-2 rounded-full bg-cyan-500"></span>Blocked 15%</span>
+          </div>
+        </div>
+
+        <div class="bg-[#1e1b4b]/30 rounded-xl border border-indigo-900/30 p-4">
+          <p class="text-xs font-semibold text-indigo-200/80 uppercase tracking-wide mb-3">Success Rate</p>
+          <p class="text-[10px] text-indigo-300/50 mb-3">Last 14 days</p>
+          <div class="flex items-center justify-center h-16">
+            <div class="relative w-16 h-16">
+              <svg viewBox="0 0 36 36" class="w-16 h-16 -rotate-90">
+                <circle cx="18" cy="18" r="14" fill="none" stroke="#1e1b4b" stroke-width="4"/>
+                <circle cx="18" cy="18" r="14" fill="none" stroke="#10b981" stroke-width="4" stroke-dasharray="79 9" stroke-linecap="round"/>
+              </svg>
+              <span class="absolute inset-0 flex items-center justify-center text-lg font-bold text-white">90%</span>
+            </div>
+          </div>
+          <p class="text-center text-[11px] text-indigo-300/50 mt-2">90% of runs succeeded</p>
+        </div>
+      </div>
+
+      <!-- Recent activity + tasks -->
+      <div class="grid md:grid-cols-2 gap-4">
+        <!-- Recent Activity -->
+        <div>
+          <h3 class="text-xs font-semibold text-indigo-200/50 uppercase tracking-wide mb-3">Recent Activity</h3>
+          <div class="border border-[#1e1b4b]/60 divide-y divide-[#1e1b4b]/60 overflow-hidden rounded-xl">
+            <div class="flex items-center gap-3 px-4 py-3 slide-in">
+              <div class="w-7 h-7 rounded-full bg-indigo-600 flex items-center justify-center shrink-0 text-white text-[10px] font-bold">A1</div>
+              <div class="min-w-0 flex-1">
+                <p class="text-xs text-white truncate"><span class="text-indigo-300">Alpha Agent</span> completed THE-48</p>
+                <p class="text-[10px] text-indigo-300/40">Build auth flow</p>
+              </div>
+              <span class="text-[10px] text-indigo-300/40 shrink-0">2m ago</span>
+            </div>
+            <div class="flex items-center gap-3 px-4 py-3 slide-in">
+              <div class="w-7 h-7 rounded-full bg-purple-600 flex items-center justify-center shrink-0 text-white text-[10px] font-bold">A2</div>
+              <div class="min-w-0 flex-1">
+                <p class="text-xs text-white truncate"><span class="text-indigo-300">Beta Runner</span> started THE-49</p>
+                <p class="text-[10px] text-indigo-300/40">Deploy staging</p>
+              </div>
+              <span class="text-[10px] text-indigo-300/40 shrink-0">8m ago</span>
+            </div>
+            <div class="flex items-center gap-3 px-4 py-3 slide-in">
+              <div class="w-7 h-7 rounded-full bg-cyan-600 flex items-center justify-center shrink-0 text-white text-[10px] font-bold">A3</div>
+              <div class="min-w-0 flex-1">
+                <p class="text-xs text-white truncate"><span class="text-indigo-300">Gamma Worker</span> failed THE-45</p>
+                <p class="text-[10px] text-indigo-300/40">API rate limit</p>
+              </div>
+              <span class="text-[10px] text-red-400/60 shrink-0">15m ago</span>
+            </div>
+            <div class="flex items-center gap-3 px-4 py-3 slide-in">
+              <div class="w-7 h-7 rounded-full bg-emerald-600 flex items-center justify-center shrink-0 text-white text-[10px] font-bold">A1</div>
+              <div class="min-w-0 flex-1">
+                <p class="text-xs text-white truncate"><span class="text-indigo-300">Alpha Agent</span> approved THE-47</p>
+                <p class="text-[10px] text-indigo-300/40">Budget override</p>
+              </div>
+              <span class="text-[10px] text-indigo-300/40 shrink-0">22m ago</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Recent Tasks -->
+        <div>
+          <h3 class="text-xs font-semibold text-indigo-200/50 uppercase tracking-wide mb-3">Recent Tasks</h3>
+          <div class="border border-[#1e1b4b]/60 divide-y divide-[#1e1b4b]/60 overflow-hidden rounded-xl">
+            <a href="#" class="flex items-center gap-3 px-4 py-3 hover:bg-[#1e1b4b]/30 transition-colors block">
+              <span class="w-5 h-5 rounded-full bg-green-500/20 flex items-center justify-center shrink-0">
+                <svg class="w-3 h-3 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
+              </span>
+              <div class="min-w-0 flex-1">
+                <p class="text-xs text-white truncate">Build authentication flow</p>
+                <p class="text-[10px] font-mono text-indigo-300/40">THE-48 · Completed</p>
+              </div>
+              <span class="text-[10px] text-indigo-300/40 shrink-0">2m ago</span>
+            </a>
+            <a href="#" class="flex items-center gap-3 px-4 py-3 hover:bg-[#1e1b4b]/30 transition-colors block">
+              <span class="w-5 h-5 rounded-full bg-indigo-500/20 flex items-center justify-center shrink-0">
+                <svg class="w-3 h-3 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+              </span>
+              <div class="min-w-0 flex-1">
+                <p class="text-xs text-white truncate">Deploy to staging environment</p>
+                <p class="text-[10px] font-mono text-indigo-300/40">THE-49 · In Progress</p>
+              </div>
+              <span class="text-[10px] text-indigo-300/40 shrink-0">8m ago</span>
+            </a>
+            <a href="#" class="flex items-center gap-3 px-4 py-3 hover:bg-[#1e1b4b]/30 transition-colors block">
+              <span class="w-5 h-5 rounded-full bg-amber-500/20 flex items-center justify-center shrink-0">
+                <svg class="w-3 h-3 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-2.42 0z"/></svg>
+              </span>
+              <div class="min-w-0 flex-1">
+                <p class="text-xs text-white truncate">Fix API rate limit error</p>
+                <p class="text-[10px] font-mono text-indigo-300/40">THE-45 · Blocked</p>
+              </div>
+              <span class="text-[10px] text-red-400/60 shrink-0">15m ago</span>
+            </a>
+            <a href="#" class="flex items-center gap-3 px-4 py-3 hover:bg-[#1e1b4b]/30 transition-colors block">
+              <span class="w-5 h-5 rounded-full bg-blue-500/20 flex items-center justify-center shrink-0">
+                <svg class="w-3 h-3 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>
+              </span>
+              <div class="min-w-0 flex-1">
+                <p class="text-xs text-white truncate">Update database schema</p>
+                <p class="text-[10px] font-mono text-indigo-300/40">THE-50 · Open</p>
+              </div>
+              <span class="text-[10px] text-indigo-300/40 shrink-0">1h ago</span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
