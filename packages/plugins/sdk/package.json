@@ -1,7 +1,7 @@
 {
   "name": "@paperclipai/plugin-sdk",
   "version": "1.0.0",
-  "description": "Stable public API for Paperclip plugins \u2014 worker-side context and UI bridge hooks",
+  "description": "Stable public API for Paperclip plugins — worker-side context and UI bridge hooks",
   "license": "MIT",
   "homepage": "https://github.com/paperclipai/paperclip",
   "bugs": {
@@ -123,7 +123,5 @@
     "react": {
       "optional": true
     }
-  },
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts"
+  }
 }
