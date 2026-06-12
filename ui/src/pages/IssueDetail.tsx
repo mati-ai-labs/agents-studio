@@ -77,6 +77,7 @@ import { IssueRunLedger } from "../components/IssueRunLedger";
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
 import type { MentionOption } from "../components/MarkdownEditor";
 import { ImageGalleryModal } from "../components/ImageGalleryModal";
+import { IssueOutputPanel, IssuePropertiesStrip } from "../components/IssueOutputPanel";
 import { ScrollToBottom } from "../components/ScrollToBottom";
 import { StatusIcon } from "../components/StatusIcon";
 import { PriorityIcon } from "../components/PriorityIcon";
@@ -123,6 +124,7 @@ import {
   EyeOff,
   Flag,
   Hexagon,
+  LayoutGrid,
   ListTree,
   MessageSquare,
   MoreHorizontal,
@@ -134,6 +136,8 @@ import {
   Repeat,
   SlidersHorizontal,
   Trash2,
+  UserRound,
+  CalendarDays,
   XCircle,
 } from "lucide-react";
 import {
@@ -154,6 +158,29 @@ import {
   type SuggestTasksInteraction,
   type IssueTreeControlMode,
 } from "@paperclipai/shared";
+
+const WORKED_ISSUES_KEY = "paperclip.worked-issues";
+
+function markIssueWorkStarted(issueId: string) {
+  try {
+    const stored = localStorage.getItem(WORKED_ISSUES_KEY) ?? "[]";
+    const ids: string[] = JSON.parse(stored);
+    if (!ids.includes(issueId)) {
+      ids.push(issueId);
+      localStorage.setItem(WORKED_ISSUES_KEY, JSON.stringify(ids));
+    }
+  } catch {}
+}
+
+function hasIssueWorkStarted(issueId: string): boolean {
+  try {
+    const stored = localStorage.getItem(WORKED_ISSUES_KEY) ?? "[]";
+    const ids: string[] = JSON.parse(stored);
+    return ids.includes(issueId);
+  } catch {
+    return false;
+  }
+}
 
 type CommentReassignment = IssueCommentReassignment;
 type ActionableIssueThreadInteraction = SuggestTasksInteraction | RequestConfirmationInteraction;
@@ -1528,6 +1555,11 @@ export function IssueDetail() {
     () => buildIssuePropertiesPanelKey(issue ?? null, childIssues),
     [childIssues, issue],
   );
+  const outputPanelKey = useMemo(() => {
+    if (!attachments) return "pending";
+    return attachments.map((a) => a.id).sort().join(",") || "empty";
+  }, [attachments]);
+
   const panelIssue = useMemo(
     () => issue ?? null,
     [issue?.id, issuePanelKey],
@@ -2626,13 +2658,62 @@ export function IssueDetail() {
   }, [issue?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    if (issue?.status !== "todo" && issue?.id) {
+      markIssueWorkStarted(issue.id);
+    }
+  }, [issue?.status, issue?.id]);
+
+  // When Output tab is active, show IssueOutputPanel in the right properties panel
+  useEffect(() => {
+    if (detailTab !== "output") return;
     if (!panelIssue) {
       closePanel();
       return;
     }
     openPanel(
-      <IssueProperties
+      "Output",
+      <IssueOutputPanel
         issue={panelIssue}
+        childIssues={panelChildIssues}
+        attachments={attachmentList}
+        isLoading={attachmentsLoading}
+        onImageClick={handleChatImageClick}
+        onUpdate={handleIssuePropertiesUpdate}
+      />
+    );
+    return () => closePanel();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailTab, issuePanelKey, outputPanelKey]);
+
+  // When not on Output tab, show IssueOutputPanel (if work started) or IssueProperties in the right panel
+  useEffect(() => {
+    if (detailTab === "output") return;
+
+    if (!issue) {
+      closePanel();
+      return;
+    }
+
+    // When issue has left todo status (or was worked on before), show Output panel by default instead of Properties
+    if (issue.status !== "todo" || hasIssueWorkStarted(issue.id)) {
+      openPanel(
+        "Output",
+        <IssueOutputPanel
+          issue={issue}
+          childIssues={panelChildIssues}
+          attachments={attachments ?? []}
+          isLoading={attachmentsLoading}
+          onImageClick={handleChatImageClick}
+          onUpdate={handleIssuePropertiesUpdate}
+        />
+      );
+      return () => closePanel();
+    }
+
+    openPanel(
+      "Properties",
+      <IssueProperties
+        issue={issue}
         childIssues={panelChildIssues}
         onAddSubIssue={openNewSubIssue}
         onUpdate={handleIssuePropertiesUpdate}
@@ -2641,12 +2722,17 @@ export function IssueDetail() {
     return () => closePanel();
   }, [
     closePanel,
+    detailTab,
     handleIssuePropertiesUpdate,
+    issue,
+    issue?.id,
     issuePanelKey,
     openNewSubIssue,
     openPanel,
     panelChildIssues,
     panelIssue,
+    attachments,
+    attachmentsLoading,
   ]);
 
   const goToInboxShortcutArmedRef = useRef(false);
@@ -3708,6 +3794,10 @@ export function IssueDetail() {
         extraActions={!hasAttachments ? attachmentUploadButton : null}
       />
 
+      {(issue.status !== "todo" || hasIssueWorkStarted(issue.id)) && (
+        <IssuePropertiesStrip issue={issue} />
+      )}
+
       {attachmentsInitialLoading ? (
         <IssueSectionSkeleton titleWidth="w-24" rows={2} />
       ) : hasAttachments ? (
@@ -3869,6 +3959,10 @@ export function IssueDetail() {
             <ListTree className="h-3.5 w-3.5" />
             Related work
           </TabsTrigger>
+          <TabsTrigger value="output" className="gap-1.5">
+            <LayoutGrid className="h-3.5 w-3.5" />
+            Output
+          </TabsTrigger>
           {issuePluginTabItems.map((item) => (
             <TabsTrigger key={item.value} value={item.value}>
               {item.label}
@@ -3970,6 +4064,10 @@ export function IssueDetail() {
 
         <TabsContent value="related-work">
           <IssueRelatedWorkPanel relatedWork={issue.relatedWork} />
+        </TabsContent>
+
+        <TabsContent value="output">
+          {/* Output artifacts are shown in the right Properties panel when this tab is active. */}
         </TabsContent>
 
         {activePluginTab && (

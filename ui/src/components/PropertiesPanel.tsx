@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 export function PropertiesPanel() {
-  const { panelContent, panelVisible, setPanelVisible } = usePanel();
+  const { panelContent, panelTitle, panelVisible, setPanelVisible } = usePanel();
 
   if (!panelContent) return null;
 
@@ -15,7 +15,7 @@ export function PropertiesPanel() {
     >
       <div className="w-80 flex-1 flex flex-col min-w-[320px] min-h-0">
         <div className="flex items-center justify-between px-4 py-2 border-b border-border/70">
-          <span className="text-sm font-medium">Properties</span>
+          <span className="text-sm font-medium">{panelTitle}</span>
           <Button variant="ghost" size="icon-xs" onClick={() => setPanelVisible(false)}>
             <X className="h-4 w-4" />
           </Button>

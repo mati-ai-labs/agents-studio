@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Paperclip UI — Midnight Command</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+        }
+      }
+    }
+  </script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .scrollbar-hide::-webkit-scrollbar { display: none; }
+    .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+    /* Terminal-inspired frame */
+    .cmd-bar {
+      background: linear-gradient(180deg, #0d0d12 0%, #0a0a0e 100%);
+      border-bottom: 1px solid #1a1a24;
+    }
+
+    /* Sidebar with thin accent line */
+    .cmd-sidebar {
+      background: #0d0d12;
+      border-right: 1px solid #1a1a24;
+    }
+
+    .cmd-nav-item {
+      color: #6b7280;
+      transition: all 0.15s;
+      border-left: 2px solid transparent;
+    }
+    .cmd-nav-item:hover {
+      background: #1a1a24;
+      color: #d1d5db;
+    }
+    .cmd-nav-item.active {
+      background: #1a1a24;
+      color: #f97316;
+      border-left-color: #f97316;
+    }
+
+    /* Content bg with subtle grid */
+    .cmd-content {
+      background: #111118;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px);
+      background-size: 32px 32px;
+    }
+
+    /* Cards with orange top accent */
+    .cmd-card {
+      background: #0f0f14;
+      border: 1px solid #1e1e2a;
+      border-top: 2px solid #f97316;
+      transition: all 0.2s;
+    }
+    .cmd-card:hover {
+      border-color: #f97316;
+      background: #13131a;
+    }
+
+    /* Dot grid status indicators */
+    .status-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    /* Activity timestamp */
+    .ts { font-family: 'JetBrains Mono', monospace; }
+
+    /* Section label — monospace uppercase */
+    .cmd-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #4b5563;
+    }
+
+    /* Scrollbar for content */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #1e1e2a; border-radius: 2px; }
+
+    @keyframes slideInLeft {
+      from { opacity: 0; transform: translateX(-6px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+    .slide-in { animation: slideInLeft 0.25s ease-out; }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+    .cursor-blink::after {
+      content: '▋';
+      color: #f97316;
+      animation: blink 1s step-end infinite;
+      margin-left: 2px;
+    }
+  </style>
+</head>
+<body class="bg-[#111118] text-[#9ca3af] antialiased h-dvh flex flex-col overflow-hidden font-sans">
+
+  <!-- ===== SIDEBAR — narrow, terminal style ===== -->
+  <aside class="w-48 shrink-0 h-full flex flex-col cmd-sidebar">
+    <!-- Company -->
+    <div class="flex items-center gap-2 px-3 h-11 border-b border-[#1a1a24]">
+      <div class="w-6 h-6 rounded bg-[#f97316] flex items-center justify-center shrink-0">
+        <span class="text-black text-[9px] font-black">P</span>
+      </div>
+      <div class="min-w-0 flex-1">
+        <p class="text-[12px] font-semibold text-[#e5e7eb] truncate">ACME<span class="cursor-blink"></span></p>
+      </div>
+    </div>
+
+    <!-- Nav -->
+    <nav class="flex-1 overflow-y-auto scrollbar-hide py-3 flex flex-col gap-0.5">
+      <p class="cmd-label px-3 mb-1">Workspace</p>
+
+      <a href="#" class="cmd-nav-item active flex items-center gap-2 px-3 py-1.5 text-[12px] font-medium rounded-r">
+        <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        Dashboard
+        <span class="ml-auto w-1.5 h-1.5 rounded-full bg-[#22c55e] shrink-0"></span>
+      </a>
+
+      <a href="#" class="cmd-nav-item flex items-center gap-2 px-3 py-1.5 text-[12px] font-medium rounded-r">
+        <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
+        Inbox
+        <span class="ml-auto bg-[#f97316]/20 text-[#f97316] text-[9px] font-bold px-1.5 py-0.5 rounded">3</span>
+      </a>
+
+      <a href="#" class="cmd-nav-item flex items-center gap-2 px-3 py-1.5 text-[12px] font-medium rounded-r">
+        <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+        Agents
+      </a>
+
+      <a href="#" class="cmd-nav-item flex items-center gap-2 px-3 py-1.5 text-[12px] font-medium rounded-r">
+        <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M3 7h18M3 12h18M3 17h18"/></svg>
+        Projects
+      </a>
+
+      <a href="#" class="cmd-nav-item flex items-center gap-2 px-3 py-1.5 text-[12px] font-medium rounded-r">
+        <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+        Issues
+      </a>
+
+      <a href="#" class="cmd-nav-item flex items-center gap-2 px-3 py-1.5 text-[12px] font-medium rounded-r">
+        <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        Routines
+      </a>
+
+      <a href="#" class="cmd-nav-item flex items-center gap-2 px-3 py-1.5 text-[12px] font-medium rounded-r">
+        <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+        Goals
+      </a>
+
+      <p class="cmd-label px-3 mt-4 mb-1">Account</p>
+
+      <a href="#" class="cmd-nav-item flex items-center gap-2 px-3 py-1.5 text-[12px] font-medium rounded-r">
+        <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+        Settings
+      </a>
+    </nav>
+
+    <!-- Footer -->
+    <div class="border-t border-[#1a1a24] px-3 py-2.5">
+      <div class="flex items-center gap-2">
+        <div class="w-6 h-6 rounded-full bg-[#f97316] flex items-center justify-center shrink-0">
+          <span class="text-black text-[9px] font-black">JD</span>
+        </div>
+        <div class="min-w-0 flex-1">
+          <p class="text-[11px] font-medium text-[#e5e7eb] truncate">jane@acme</p>
+          <p class="text-[9px] text-[#4b5563] font-mono">admin · 3 agts</p>
+        </div>
+        <div class="w-1.5 h-1.5 rounded-full bg-[#22c55e] shrink-0"></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ===== MAIN ===== -->
+  <div class="flex-1 flex flex-col min-w-0 h-dvh overflow-hidden">
+    <!-- Breadcrumb bar -->
+    <div class="cmd-bar h-9 flex items-center px-4 gap-2 shrink-0">
+      <span class="text-[11px] text-[#4b5563] font-mono">acme</span>
+      <svg class="w-3 h-3 text-[#2a2a3a]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+      <span class="text-[11px] text-[#6b7280] font-mono">dashboard</span>
+      <span class="ml-auto text-[10px] text-[#2a2a3a] font-mono">// live</span>
+    </div>
+
+    <!-- Content -->
+    <div class="flex-1 overflow-y-auto p-5 space-y-4 cmd-content">
+
+      <!-- No agents alert — amber terminal style -->
+      <div class="cmd-card rounded-lg p-3 flex items-center justify-between gap-3">
+        <div class="flex items-center gap-2">
+          <span class="status-dot bg-[#f59e0b]"></span>
+          <p class="text-xs text-[#d1d5db]">No agents configured. <span class="text-[#f97316] cursor-pointer hover:underline">Initialize agent</span></p>
+        </div>
+        <span class="text-[10px] text-[#4b5563] font-mono ts">2m ago</span>
+      </div>
+
+      <!-- Active agents row -->
+      <div class="cmd-card rounded-lg p-4">
+        <div class="flex items-center gap-3 mb-3">
+          <div class="flex -space-x-1.5">
+            <div class="w-7 h-7 rounded border border-[#f97316] bg-[#f97316]/10 flex items-center justify-center text-[#f97316] text-[9px] font-bold font-mono">A1</div>
+            <div class="w-7 h-7 rounded border border-[#7c3aed] bg-[#7c3aed]/10 flex items-center justify-center text-[#7c3aed] text-[9px] font-bold font-mono">A2</div>
+            <div class="w-7 h-7 rounded border border-[#0891b2] bg-[#0891b2]/10 flex items-center justify-center text-[#0891b2] text-[9px] font-bold font-mono">A3</div>
+          </div>
+          <span class="text-[12px] font-semibold text-[#e5e7eb]">3 agents active</span>
+          <div class="ml-auto flex items-center gap-1 text-[11px] text-[#22c55e]">
+            <span class="status-dot bg-[#22c55e]"></span> operational
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          <div class="bg-[#0a0a0e] rounded p-2">
+            <p class="text-[10px] text-[#4b5563] mb-0.5 font-mono">alpha</p>
+            <p class="text-[11px] text-[#22c55e] font-medium">running <span class="status-dot bg-[#22c55e] ml-1"></span></p>
+          </div>
+          <div class="bg-[#0a0a0e] rounded p-2">
+            <p class="text-[10px] text-[#4b5563] mb-0.5 font-mono">beta</p>
+            <p class="text-[11px] text-[#f59e0b] font-medium">paused <span class="status-dot bg-[#f59e0b] ml-1"></span></p>
+          </div>
+          <div class="bg-[#0a0a0e] rounded p-2">
+            <p class="text-[10px] text-[#4b5563] mb-0.5 font-mono">gamma</p>
+            <p class="text-[11px] text-[#22c55e] font-medium">running <span class="status-dot bg-[#22c55e] ml-1"></span></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Metrics -->
+      <div class="grid grid-cols-2 xl:grid-cols-4 gap-2">
+        <div class="cmd-card rounded-lg p-3 cursor-pointer">
+          <p class="text-[22px] font-bold text-[#e5e7eb] font-mono">4</p>
+          <p class="text-[11px] text-[#4b5563] mt-0.5">agents.enabled</p>
+          <p class="text-[10px] text-[#6b7280] mt-2 font-mono">2 run · 1 pause · 0 err</p>
+        </div>
+        <div class="cmd-card rounded-lg p-3 cursor-pointer">
+          <p class="text-[22px] font-bold text-[#e5e7eb] font-mono">7</p>
+          <p class="text-[11px] text-[#4b5563] mt-0.5">tasks.in_progress</p>
+          <p class="text-[10px] text-[#6b7280] mt-2 font-mono">12 open · 2 blocked</p>
+        </div>
+        <div class="cmd-card rounded-lg p-3 cursor-pointer">
+          <p class="text-[22px] font-bold text-[#e5e7eb] font-mono">$284</p>
+          <p class="text-[11px] text-[#4b5563] mt-0.5">month.spend</p>
+          <p class="text-[10px] text-[#6b7280] mt-2 font-mono">42% of $675 budget</p>
+        </div>
+        <div class="cmd-card rounded-lg p-3 cursor-pointer">
+          <p class="text-[22px] font-bold text-[#e5e7eb] font-mono">2</p>
+          <p class="text-[11px] text-[#4b5563] mt-0.5">pending.approvals</p>
+          <p class="text-[10px] text-[#6b7280] mt-2 font-mono">budget overrides</p>
+        </div>
+      </div>
+
+      <!-- Charts -->
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-2">
+        <div class="cmd-card rounded-lg p-3">
+          <p class="text-[10px] text-[#4b5563] font-mono mb-1">run_activity · 14d</p>
+          <div class="flex items-end gap-0.5 h-12 mt-2">
+            <div class="flex-1 bg-[#f97316]/40 rounded-t" style="height:45%"></div>
+            <div class="flex-1 bg-[#f97316]/30 rounded-t" style="height:65%"></div>
+            <div class="flex-1 bg-[#f97316]/40 rounded-t" style="height:55%"></div>
+            <div class="flex-1 bg-[#f97316]/30 rounded-t" style="height:80%"></div>
+            <div class="flex-1 bg-[#f97316]/40 rounded-t" style="height:70%"></div>
+            <div class="flex-1 bg-[#f97316]/30 rounded-t" style="height:60%"></div>
+            <div class="flex-1 bg-[#f97316]/40 rounded-t" style="height:90%"></div>
+            <div class="flex-1 bg-[#f97316]/30 rounded-t" style="height:75%"></div>
+            <div class="flex-1 bg-[#f97316]/40 rounded-t" style="height:85%"></div>
+            <div class="flex-1 bg-[#f97316]/30 rounded-t" style="height:60%"></div>
+            <div class="flex-1 bg-[#f97316]/40 rounded-t" style="height:95%"></div>
+            <div class="flex-1 bg-[#f97316]/30 rounded-t" style="height:80%"></div>
+            <div class="flex-1 bg-[#f97316]/40 rounded-t" style="height:70%"></div>
+            <div class="flex-1 bg-[#f97316] rounded-t" style="height:100%"></div>
+          </div>
+        </div>
+
+        <div class="cmd-card rounded-lg p-3">
+          <p class="text-[10px] text-[#4b5563] font-mono mb-1">issues.by_priority · 14d</p>
+          <div class="space-y-1.5 mt-2">
+            <div class="flex items-center gap-1.5">
+              <span class="status-dot bg-[#ef4444]"></span>
+              <span class="text-[10px] text-[#6b7280] flex-1">critical</span>
+              <span class="text-[10px] font-mono text-[#e5e7eb]">2</span>
+            </div>
+            <div class="w-full bg-[#1a1a24] rounded-full h-1">
+              <div class="bg-[#ef4444] h-1 rounded-full" style="width:8%"></div>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <span class="status-dot bg-[#f59e0b]"></span>
+              <span class="text-[10px] text-[#6b7280] flex-1">high</span>
+              <span class="text-[10px] font-mono text-[#e5e7eb]">5</span>
+            </div>
+            <div class="w-full bg-[#1a1a24] rounded-full h-1">
+              <div class="bg-[#f59e0b] h-1 rounded-full" style="width:20%"></div>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <span class="status-dot bg-[#2563eb]"></span>
+              <span class="text-[10px] text-[#6b7280] flex-1">medium</span>
+              <span class="text-[10px] font-mono text-[#e5e7eb]">8</span>
+            </div>
+            <div class="w-full bg-[#1a1a24] rounded-full h-1">
+              <div class="bg-[#2563eb] h-1 rounded-full" style="width:33%"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="cmd-card rounded-lg p-3">
+          <p class="text-[10px] text-[#4b5563] font-mono mb-1">issues.by_status · 14d</p>
+          <div class="flex items-center justify-center h-12 mt-2">
+            <div class="relative w-12 h-12">
+              <svg viewBox="0 0 36 36" class="w-12 h-12 -rotate-90">
+                <circle cx="18" cy="18" r="14" fill="none" stroke="#1a1a24" stroke-width="4"/>
+                <circle cx="18" cy="18" r="14" fill="none" stroke="#f97316" stroke-width="4" stroke-dasharray="30 58" stroke-linecap="round"/>
+                <circle cx="18" cy="18" r="14" fill="none" stroke="#7c3aed" stroke-width="4" stroke-dasharray="18 70" stroke-dashoffset="-30" stroke-linecap="round"/>
+                <circle cx="18" cy="18" r="14" fill="none" stroke="#0891b2" stroke-width="4" stroke-dasharray="12 76" stroke-dashoffset="-48" stroke-linecap="round"/>
+              </svg>
+            </div>
+          </div>
+          <div class="flex items-center justify-center gap-2 mt-2">
+            <span class="text-[9px] text-[#4b5563] font-mono">40% done · 25% wip · 15% blk</span>
+          </div>
+        </div>
+
+        <div class="cmd-card rounded-lg p-3">
+          <p class="text-[10px] text-[#4b5563] font-mono mb-1">success_rate · 14d</p>
+          <div class="flex items-center justify-center h-12 mt-2">
+            <div class="relative w-12 h-12">
+              <svg viewBox="0 0 36 36" class="w-12 h-12 -rotate-90">
+                <circle cx="18" cy="18" r="14" fill="none" stroke="#1a1a24" stroke-width="4"/>
+                <circle cx="18" cy="18" r="14" fill="none" stroke="#22c55e" stroke-width="4" stroke-dasharray="79 9" stroke-linecap="round"/>
+              </svg>
+              <span class="absolute inset-0 flex items-center justify-center text-sm font-bold text-[#22c55e] font-mono">90%</span>
+            </div>
+          </div>
+          <p class="text-center text-[9px] text-[#4b5563] font-mono mt-2">79/88 runs OK</p>
+        </div>
+      </div>
+
+      <!-- Activity + Tasks -->
+      <div class="grid md:grid-cols-2 gap-2">
+        <div>
+          <p class="cmd-label mb-2">recent_activity</p>
+          <div class="cmd-card divide-y divide-[#1a1a24] overflow-hidden rounded-lg">
+            <div class="slide-in flex items-center gap-2.5 px-3 py-2">
+              <div class="w-6 h-6 rounded bg-[#f97316]/10 border border-[#f97316]/30 flex items-center justify-center text-[#f97316] text-[9px] font-bold font-mono">A1</div>
+              <div class="min-w-0 flex-1">
+                <p class="text-[11px] text-[#9ca3af] truncate"><span class="text-[#6b7280]">alpha</span> completed THE-48</p>
+                <p class="text-[9px] text-[#4b5563] font-mono">build auth flow</p>
+              </div>
+              <span class="text-[9px] text-[#4b5563] font-mono ts shrink-0">2m</span>
+            </div>
+            <div class="slide-in flex items-center gap-2.5 px-3 py-2">
+              <div class="w-6 h-6 rounded bg-[#7c3aed]/10 border border-[#7c3aed]/30 flex items-center justify-center text-[#7c3aed] text-[9px] font-bold font-mono">A2</div>
+              <div class="min-w-0 flex-1">
+                <p class="text-[11px] text-[#9ca3af] truncate"><span class="text-[#6b7280]">beta</span> started THE-49</p>
+                <p class="text-[9px] text-[#4b5563] font-mono">deploy staging</p>
+              </div>
+              <span class="text-[9px] text-[#4b5563] font-mono ts shrink-0">8m</span>
+            </div>
+            <div class="slide-in flex items-center gap-2.5 px-3 py-2">
+              <div class="w-6 h-6 rounded bg-[#0891b2]/10 border border-[#0891b2]/30 flex items-center justify-center text-[#0891b2] text-[9px] font-bold font-mono">A3</div>
+              <div class="min-w-0 flex-1">
+                <p class="text-[11px] text-[#9ca3af] truncate"><span class="text-[#6b7280]">gamma</span> failed THE-45</p>
+                <p class="text-[9px] text-[#4b5563] font-mono">api rate limit</p>
+              </div>
+              <span class="text-[9px] text-[#ef4444] font-mono ts shrink-0">15m</span>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <p class="cmd-label mb-2">recent_tasks</p>
+          <div class="cmd-card divide-y divide-[#1a1a24] overflow-hidden rounded-lg">
+            <a href="#" class="slide-in flex items-center gap-2.5 px-3 py-2 hover:bg-[#1a1a24] transition-colors block">
+              <span class="w-5 h-5 rounded border border-[#22c55e]/40 bg-[#22c55e]/10 flex items-center justify-center shrink-0">
+                <svg class="w-2.5 h-2.5 text-[#22c55e]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
+              </span>
+              <div class="min-w-0 flex-1">
+                <p class="text-[11px] text-[#9ca3af] truncate">Build authentication flow</p>
+                <p class="text-[9px] font-mono text-[#4b5563]">THE-48 · done</p>
+              </div>
+              <span class="text-[9px] text-[#4b5563] font-mono ts shrink-0">2m</span>
+            </a>
+            <a href="#" class="slide-in flex items-center gap-2.5 px-3 py-2 hover:bg-[#1a1a24] transition-colors block">
+              <span class="w-5 h-5 rounded border border-[#f97316]/40 bg-[#f97316]/10 flex items-center justify-center shrink-0">
+                <svg class="w-2.5 h-2.5 text-[#f97316]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+              </span>
+              <div class="min-w-0 flex-1">
+                <p class="text-[11px] text-[#9ca3af] truncate">Deploy to staging</p>
+                <p class="text-[9px] font-mono text-[#4b5563]">THE-49 · in_progress</p>
+              </div>
+              <span class="text-[9px] text-[#4b5563] font-mono ts shrink-0">8m</span>
+            </a>
+            <a href="#" class="slide-in flex items-center gap-2.5 px-3 py-2 hover:bg-[#1a1a24] transition-colors block">
+              <span class="w-5 h-5 rounded border border-[#ef4444]/40 bg-[#ef4444]/10 flex items-center justify-center shrink-0">
+                <svg class="w-2.5 h-2.5 text-[#ef4444]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-2.42 0z"/></svg>
+              </span>
+              <div class="min-w-0 flex-1">
+                <p class="text-[11px] text-[#9ca3af] truncate">Fix API rate limit</p>
+                <p class="text-[9px] font-mono text-[#4b5563]">THE-45 · blocked</p>
+              </div>
+              <span class="text-[9px] text-[#ef4444] font-mono ts shrink-0">15m</span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

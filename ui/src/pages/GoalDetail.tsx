@@ -126,6 +126,7 @@ export function GoalDetail() {
   useEffect(() => {
     if (goal) {
       openPanel(
+        "Properties",
         <GoalProperties
           goal={goal}
           onUpdate={(data) => updateGoal.mutate(data)}

@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Paperclip UI — Warm Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['DM Sans', 'system-ui', 'sans-serif'],
+            mono: ['DM Mono', 'monospace'],
+          },
+        }
+      }
+    }
+  </script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: 'DM Sans', system-ui, sans-serif; }
+    .scrollbar-hide::-webkit-scrollbar { display: none; }
+    .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+    /* Warm cream background */
+    body { background: #faf8f5; }
+
+    /* Warm paper sidebar */
+    .studio-sidebar {
+      background: #f4f0ea;
+      border-right: 1px solid #e8e0d4;
+    }
+
+    /* Top bar — warm white */
+    .studio-topbar {
+      background: rgba(255,252,247,0.9);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid #e8e0d4;
+    }
+
+    /* Warm cards — cream bg with warm border */
+    .studio-card {
+      background: #fffdf9;
+      border: 1px solid #ede6da;
+      border-radius: 14px;
+      box-shadow: 0 2px 8px rgba(120,80,20,0.05);
+      transition: all 0.25s ease;
+    }
+    .studio-card:hover {
+      border-color: #d4b896;
+      box-shadow: 0 6px 20px rgba(120,80,20,0.08);
+      transform: translateY(-2px);
+    }
+
+    /* Nav items — warm hover */
+    .studio-nav {
+      color: #8a7a68;
+      transition: all 0.15s ease;
+      border-radius: 10px;
+    }
+    .studio-nav:hover {
+      background: #ede6da;
+      color: #5a4a38;
+    }
+    .studio-nav.active {
+      background: #5a4a38;
+      color: #faf8f5;
+    }
+    .studio-nav.active svg { color: #faf8f5; }
+
+    /* Brand mark — warm amber */
+    .brand-mark {
+      background: linear-gradient(135deg, #b45309, #d97706);
+      color: white;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(180,83,9,0.25);
+    }
+
+    /* Metric accent line — warm gradient */
+    .metric-card {
+      border-top: 3px solid transparent;
+      border-image: linear-gradient(90deg, #b45309, #f59e0b, #fbbf24) 1;
+    }
+
+    /* Status badges — warm palette */
+    .badge-warm-success { background: #fef3c7; color: #92400e; }
+    .badge-warm-info { background: #dbeafe; color: #1e40af; }
+    .badge-warm-danger { background: #fee2e2; color: #991b1b; }
+    .badge-warm-running { background: #f0fdf4; color: #166534; }
+
+    /* Charts warm colors */
+    .chart-amber { fill: #f59e0b; }
+    .chart-orange { fill: #ea580c; }
+    .chart-amber-dark { fill: #b45309; }
+
+    /* Section title */
+    .studio-section-title {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #b5a48a;
+    }
+
+    /* Avatar ring */
+    .avatar-ring {
+      border: 2px solid #faf8f5;
+      box-shadow: 0 0 0 1px #e8e0d4;
+    }
+
+    @keyframes warmIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .warm-in { animation: warmIn 0.35s ease-out; }
+
+    @keyframes subtlePulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+    .warm-pulse { animation: subtlePulse 3s ease-in-out infinite; }
+  </style>
+</head>
+<body class="bg-[#faf8f5] text-[#44403b] antialiased h-dvh flex flex-col overflow-hidden">
+
+  <!-- ===== SIDEBAR ===== -->
+  <aside class="w-56 shrink-0 h-full flex flex-col studio-sidebar">
+    <!-- Company header -->
+    <div class="flex items-center gap-3 px-4 h-14 border-b border-[#e8e0d4]">
+      <div class="brand-mark w-9 h-9 flex items-center justify-center shrink-0">
+        <span class="text-white text-sm font-bold">P</span>
+      </div>
+      <div class="min-w-0 flex-1">
+        <p class="text-sm font-semibold text-[#3d2e1e] truncate">Acme Studio</p>
+        <p class="text-[10px] text-[#b5a48a]">Innovation Lab</p>
+      </div>
+      <button class="text-[#c4b49a] hover:text-[#8a7a68] transition-colors" aria-label="Search">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      </button>
+    </div>
+
+    <!-- Nav -->
+    <nav class="flex-1 overflow-y-auto scrollbar-hide py-4 px-2.5 flex flex-col gap-4">
+      <!-- New Issue -->
+      <button class="w-full flex items-center gap-2.5 px-3 py-2.5 text-[13px] font-semibold text-white brand-mark hover:opacity-90 transition-opacity">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        New Issue
+      </button>
+
+      <!-- Main nav -->
+      <div class="flex flex-col gap-0.5">
+        <p class="studio-section-title px-3 mb-1.5">Workspace</p>
+        <a href="#" class="studio-nav active flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          Dashboard
+          <span class="ml-auto w-2 h-2 rounded-full bg-[#22c55e] warm-pulse"></span>
+        </a>
+        <a href="#" class="studio-nav flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
+          Inbox
+          <span class="ml-auto bg-[#b45309] text-white text-[10px] font-bold px-2 py-0.5 rounded-full">3</span>
+        </a>
+        <a href="#" class="studio-nav flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+          Agents
+        </a>
+        <a href="#" class="studio-nav flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M3 7h18M3 12h18M3 17h18"/></svg>
+          Projects
+        </a>
+        <a href="#" class="studio-nav flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+          Issues
+        </a>
+        <a href="#" class="studio-nav flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          Routines
+        </a>
+        <a href="#" class="studio-nav flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+          Goals
+        </a>
+      </div>
+
+      <!-- Account -->
+      <div class="flex flex-col gap-0.5">
+        <p class="studio-section-title px-3 mb-1.5">Account</p>
+        <a href="#" class="studio-nav flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          Settings
+        </a>
+      </div>
+    </nav>
+
+    <!-- Footer -->
+    <div class="border-t border-[#e8e0d4] px-4 py-3">
+      <div class="flex items-center gap-2.5">
+        <div class="w-8 h-8 rounded-full bg-gradient-to-br from-[#b45309] to-[#f59e0b] flex items-center justify-center shrink-0">
+          <span class="text-white text-[10px] font-bold">JD</span>
+        </div>
+        <div class="min-w-0 flex-1">
+          <p class="text-xs font-medium text-[#3d2e1e] truncate">Jane Doe</p>
+          <p class="text-[10px] text-[#b5a48a]">Admin · 3 agents</p>
+        </div>
+        <div class="w-2 h-2 rounded-full bg-[#22c55e]"></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ===== MAIN ===== -->
+  <div class="flex-1 flex flex-col min-w-0 h-dvh overflow-hidden">
+    <!-- Top bar -->
+    <div class="studio-topbar h-11 flex items-center px-6 gap-2 text-xs text-[#b5a48a] shrink-0">
+      <span class="text-[#3d2e1e] font-medium">Acme Studio</span>
+      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+      <span class="text-[#44403b]">Dashboard</span>
+    </div>
+
+    <!-- Content -->
+    <div class="flex-1 overflow-y-auto p-6 space-y-5 scrollbar-hide">
+
+      <!-- No agents banner -->
+      <div class="studio-card flex items-center justify-between gap-4 px-5 py-4">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-full bg-[#fef3c7] flex items-center justify-center shrink-0">
+            <svg class="w-4 h-4 text-[#b45309]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-2.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </div>
+          <div>
+            <p class="text-sm font-medium text-[#3d2e1e]">You have no agents.</p>
+            <p class="text-xs text-[#b5a48a]">Create your first agent to get started.</p>
+          </div>
+        </div>
+        <button class="text-xs font-semibold text-[#b45309] hover:text-[#92400e] underline underline-offset-2">Create one here</button>
+      </div>
+
+      <!-- Active agents -->
+      <div class="studio-card p-5 warm-in">
+        <div class="flex items-center gap-3 mb-4">
+          <div class="flex -space-x-2.5">
+            <div class="w-9 h-9 rounded-full bg-[#b45309] avatar-ring flex items-center justify-center text-white text-[10px] font-bold">A1</div>
+            <div class="w-9 h-9 rounded-full bg-[#d97706] avatar-ring flex items-center justify-center text-white text-[10px] font-bold">A2</div>
+            <div class="w-9 h-9 rounded-full bg-[#ea580c] avatar-ring flex items-center justify-center text-white text-[10px] font-bold">A3</div>
+          </div>
+          <div>
+            <p class="text-sm font-semibold text-[#3d2e1e]">3 Agents Active</p>
+            <p class="text-xs text-[#b5a48a]">All systems operational</p>
+          </div>
+          <div class="ml-auto flex items-center gap-1 text-xs font-medium text-[#166534]">
+            <span class="w-1.5 h-1.5 rounded-full bg-[#22c55e]"></span>
+            Running
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div class="bg-[#faf8f5] rounded-xl p-3">
+            <p class="text-[11px] text-[#8a7a68] mb-1">Alpha Agent</p>
+            <div class="flex items-center gap-1.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-[#22c55e]"></span>
+              <span class="text-[11px] font-semibold text-[#166534]">Running</span>
+            </div>
+          </div>
+          <div class="bg-[#faf8f5] rounded-xl p-3">
+            <p class="text-[11px] text-[#8a7a68] mb-1">Beta Runner</p>
+            <div class="flex items-center gap-1.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-[#f59e0b]"></span>
+              <span class="text-[11px] font-semibold text-[#92400e]">Paused</span>
+            </div>
+          </div>
+          <div class="bg-[#faf8f5] rounded-xl p-3">
+            <p class="text-[11px] text-[#8a7a68] mb-1">Gamma Worker</p>
+            <div class="flex items-center gap-1.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-[#22c55e]"></span>
+              <span class="text-[11px] font-semibold text-[#166534]">Running</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Metrics -->
+      <div class="grid grid-cols-2 xl:grid-cols-4 gap-3">
+        <div class="metric-card studio-card rounded-xl p-4 cursor-pointer">
+          <div class="flex items-center gap-2.5 mb-3">
+            <div class="w-9 h-9 rounded-xl bg-[#fef3c7] flex items-center justify-center">
+              <svg class="w-4.5 h-4.5 text-[#b45309]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </div>
+          </div>
+          <p class="text-2xl font-bold text-[#3d2e1e]">4</p>
+          <p class="text-xs text-[#8a7a68] mt-0.5">Agents Enabled</p>
+          <p class="text-[11px] text-[#b5a48a] mt-2">2 running · 1 paused · 0 errors</p>
+        </div>
+
+        <div class="metric-card studio-card rounded-xl p-4 cursor-pointer">
+          <div class="flex items-center gap-2.5 mb-3">
+            <div class="w-9 h-9 rounded-xl bg-[#fef3c7] flex items-center justify-center">
+              <svg class="w-4.5 h-4.5 text-[#d97706]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+            </div>
+          </div>
+          <p class="text-2xl font-bold text-[#3d2e1e]">7</p>
+          <p class="text-xs text-[#8a7a68] mt-0.5">Tasks In Progress</p>
+          <p class="text-[11px] text-[#b5a48a] mt-2">12 open · 2 blocked</p>
+        </div>
+
+        <div class="metric-card studio-card rounded-xl p-4 cursor-pointer">
+          <div class="flex items-center gap-2.5 mb-3">
+            <div class="w-9 h-9 rounded-xl bg-[#fef3c7] flex items-center justify-center">
+              <svg class="w-4.5 h-4.5 text-[#b45309]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+            </div>
+          </div>
+          <p class="text-2xl font-bold text-[#3d2e1e]">$284</p>
+          <p class="text-xs text-[#8a7a68] mt-0.5">Month Spend</p>
+          <p class="text-[11px] text-[#b5a48a] mt-2">42% of $675 budget</p>
+        </div>
+
+        <div class="metric-card studio-card rounded-xl p-4 cursor-pointer">
+          <div class="flex items-center gap-2.5 mb-3">
+            <div class="w-9 h-9 rounded-xl bg-[#fef3c7] flex items-center justify-center">
+              <svg class="w-4.5 h-4.5 text-[#ea580c]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            </div>
+          </div>
+          <p class="text-2xl font-bold text-[#3d2e1e]">2</p>
+          <p class="text-xs text-[#8a7a68] mt-0.5">Pending Approvals</p>
+          <p class="text-[11px] text-[#b5a48a] mt-2">Budget overrides awaiting</p>
+        </div>
+      </div>
+
+      <!-- Charts -->
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="studio-card rounded-xl p-4">
+          <p class="text-xs font-semibold text-[#3d2e1e] mb-1">Run Activity</p>
+          <p class="text-[10px] text-[#b5a48a] mb-4">Last 14 days</p>
+          <div class="flex items-end gap-0.5 h-14">
+            <div class="flex-1 bg-[#fde68a] rounded-t" style="height:45%"></div>
+            <div class="flex-1 bg-[#fcd34d] rounded-t" style="height:65%"></div>
+            <div class="flex-1 bg-[#fde68a] rounded-t" style="height:55%"></div>
+            <div class="flex-1 bg-[#fcd34d] rounded-t" style="height:80%"></div>
+            <div class="flex-1 bg-[#fde68a] rounded-t" style="height:70%"></div>
+            <div class="flex-1 bg-[#fcd34d] rounded-t" style="height:60%"></div>
+            <div class="flex-1 bg-[#fde68a] rounded-t" style="height:90%"></div>
+            <div class="flex-1 bg-[#fcd34d] rounded-t" style="height:75%"></div>
+            <div class="flex-1 bg-[#fde68a] rounded-t" style="height:85%"></div>
+            <div class="flex-1 bg-[#fcd34d] rounded-t" style="height:60%"></div>
+            <div class="flex-1 bg-[#fde68a] rounded-t" style="height:95%"></div>
+            <div class="flex-1 bg-[#fcd34d] rounded-t" style="height:80%"></div>
+            <div class="flex-1 bg-[#fde68a] rounded-t" style="height:70%"></div>
+            <div class="flex-1 bg-[#b45309] rounded-t" style="height:100%"></div>
+          </div>
+        </div>
+
+        <div class="studio-card rounded-xl p-4">
+          <p class="text-xs font-semibold text-[#3d2e1e] mb-1">Issues by Priority</p>
+          <p class="text-[10px] text-[#b5a48a] mb-3">Last 14 days</p>
+          <div class="space-y-2">
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-[#ef4444] shrink-0"></span>
+              <span class="text-[11px] text-[#8a7a68] flex-1">Critical</span>
+              <span class="text-[11px] font-semibold text-[#3d2e1e]">2</span>
+            </div>
+            <div class="w-full bg-[#f4f0ea] rounded-full h-1.5">
+              <div class="bg-[#ef4444] h-1.5 rounded-full" style="width:8%"></div>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-[#f59e0b] shrink-0"></span>
+              <span class="text-[11px] text-[#8a7a68] flex-1">High</span>
+              <span class="text-[11px] font-semibold text-[#3d2e1e]">5</span>
+            </div>
+            <div class="w-full bg-[#f4f0ea] rounded-full h-1.5">
+              <div class="bg-[#f59e0b] h-1.5 rounded-full" style="width:20%"></div>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-[#2563eb] shrink-0"></span>
+              <span class="text-[11px] text-[#8a7a68] flex-1">Medium</span>
+              <span class="text-[11px] font-semibold text-[#3d2e1e]">8</span>
+            </div>
+            <div class="w-full bg-[#f4f0ea] rounded-full h-1.5">
+              <div class="bg-[#2563eb] h-1.5 rounded-full" style="width:33%"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="studio-card rounded-xl p-4">
+          <p class="text-xs font-semibold text-[#3d2e1e] mb-1">Issues by Status</p>
+          <p class="text-[10px] text-[#b5a48a] mb-3">Last 14 days</p>
+          <div class="flex items-center justify-center h-14">
+            <div class="relative w-14 h-14">
+              <svg viewBox="0 0 36 36" class="w-14 h-14 -rotate-90">
+                <circle cx="18" cy="18" r="14" fill="none" stroke="#f4f0ea" stroke-width="4"/>
+                <circle cx="18" cy="18" r="14" fill="none" stroke="#b45309" stroke-width="4" stroke-dasharray="30 58" stroke-linecap="round"/>
+                <circle cx="18" cy="18" r="14" fill="none" stroke="#d97706" stroke-width="4" stroke-dasharray="18 70" stroke-dashoffset="-30" stroke-linecap="round"/>
+                <circle cx="18" cy="18" r="14" fill="none" stroke="#ea580c" stroke-width="4" stroke-dasharray="12 76" stroke-dashoffset="-48" stroke-linecap="round"/>
+              </svg>
+            </div>
+          </div>
+          <div class="flex items-center justify-center gap-2 mt-2">
+            <span class="text-[10px] text-[#b5a48a]"><span class="w-2 h-2 rounded-full bg-[#b45309] inline-block mr-1"></span>Done 40%</span>
+            <span class="text-[10px] text-[#b5a48a]"><span class="w-2 h-2 rounded-full bg-[#d97706] inline-block mr-1"></span>In Progress 25%</span>
+          </div>
+        </div>
+
+        <div class="studio-card rounded-xl p-4">
+          <p class="text-xs font-semibold text-[#3d2e1e] mb-1">Success Rate</p>
+          <p class="text-[10px] text-[#b5a48a] mb-3">Last 14 days</p>
+          <div class="flex items-center justify-center h-14">
+            <div class="relative w-14 h-14">
+              <svg viewBox="0 0 36 36" class="w-14 h-14 -rotate-90">
+                <circle cx="18" cy="18" r="14" fill="none" stroke="#f4f0ea" stroke-width="4"/>
+                <circle cx="18" cy="18" r="14" fill="none" stroke="#22c55e" stroke-width="4" stroke-dasharray="79 9" stroke-linecap="round"/>
+              </svg>
+              <span class="absolute inset-0 flex items-center justify-center text-sm font-bold text-[#3d2e1e]">90%</span>
+            </div>
+          </div>
+          <p class="text-center text-[11px] text-[#b5a48a] mt-2">90% succeeded</p>
+        </div>
+      </div>
+
+      <!-- Activity + Tasks -->
+      <div class="grid md:grid-cols-2 gap-4">
+        <div>
+          <h3 class="studio-section-title mb-3">Recent Activity</h3>
+          <div class="studio-card divide-y divide-[#ede6da] overflow-hidden rounded-xl">
+            <div class="warm-in flex items-center gap-3 px-4 py-3">
+              <div class="w-8 h-8 rounded-full bg-[#b45309] flex items-center justify-center shrink-0 text-white text-[10px] font-bold">A1</div>
+              <div class="min-w-0 flex-1">
+                <p class="text-xs text-[#44403b] truncate"><span class="text-[#8a7a68]">Alpha Agent</span> completed THE-48</p>
+                <p class="text-[10px] text-[#b5a48a]">Build auth flow</p>
+              </div>
+              <span class="text-[10px] text-[#b5a48a] shrink-0">2m ago</span>
+            </div>
+            <div class="warm-in flex items-center gap-3 px-4 py-3">
+              <div class="w-8 h-8 rounded-full bg-[#d97706] flex items-center justify-center shrink-0 text-white text-[10px] font-bold">A2</div>
+              <div class="min-w-0 flex-1">
+                <p class="text-xs text-[#44403b] truncate"><span class="text-[#8a7a68]">Beta Runner</span> started THE-49</p>
+                <p class="text-[10px] text-[#b5a48a]">Deploy staging</p>
+              </div>
+              <span class="text-[10px] text-[#b5a48a] shrink-0">8m ago</span>
+            </div>
+            <div class="warm-in flex items-center gap-3 px-4 py-3">
+              <div class="w-8 h-8 rounded-full bg-[#ea580c] flex items-center justify-center shrink-0 text-white text-[10px] font-bold">A3</div>
+              <div class="min-w-0 flex-1">
+                <p class="text-xs text-[#44403b] truncate"><span class="text-[#8a7a68]">Gamma Worker</span> failed THE-45</p>
+                <p class="text-[10px] text-[#b5a48a]">API rate limit</p>
+              </div>
+              <span class="text-[10px] text-[#ef4444] shrink-0">15m ago</span>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <h3 class="studio-section-title mb-3">Recent Tasks</h3>
+          <div class="studio-card divide-y divide-[#ede6da] overflow-hidden rounded-xl">
+            <a href="#" class="warm-in flex items-center gap-3 px-4 py-3 hover:bg-[#f4f0ea] transition-colors block">
+              <span class="badge-warm-success w-6 h-6 rounded-full flex items-center justify-center shrink-0">
+                <svg class="w-3 h-3 text-[#92400e]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
+              </span>
+              <div class="min-w-0 flex-1">
+                <p class="text-xs text-[#44403b] truncate">Build authentication flow</p>
+                <p class="text-[10px] font-mono text-[#b5a48a]">THE-48 · Completed</p>
+              </div>
+              <span class="text-[10px] text-[#b5a48a] shrink-0">2m ago</span>
+            </a>
+            <a href="#" class="warm-in flex items-center gap-3 px-4 py-3 hover:bg-[#f4f0ea] transition-colors block">
+              <span class="badge-warm-info w-6 h-6 rounded-full flex items-center justify-center shrink-0">
+                <svg class="w-3 h-3 text-[#1e40af]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+              </span>
+              <div class="min-w-0 flex-1">
+                <p class="text-xs text-[#44403b] truncate">Deploy to staging environment</p>
+                <p class="text-[10px] font-mono text-[#b5a48a]">THE-49 · In Progress</p>
+              </div>
+              <span class="text-[10px] text-[#b5a48a] shrink-0">8m ago</span>
+            </a>
+            <a href="#" class="warm-in flex items-center gap-3 px-4 py-3 hover:bg-[#f4f0ea] transition-colors block">
+              <span class="badge-warm-danger w-6 h-6 rounded-full flex items-center justify-center shrink-0">
+                <svg class="w-3 h-3 text-[#991b1b]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-2.42 0z"/></svg>
+              </span>
+              <div class="min-w-0 flex-1">
+                <p class="text-xs text-[#44403b] truncate">Fix API rate limit error</p>
+                <p class="text-[10px] font-mono text-[#b5a48a]">THE-45 · Blocked</p>
+              </div>
+              <span class="text-[10px] text-[#ef4444] shrink-0">15m ago</span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
