@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { cn, formatDate } from "@/lib/utils";
+import { cn, formatDate, formatDateTime } from "@/lib/utils";
 import { CalendarDays, FileText, Globe, Image as ImageIcon, Loader2, UserRound } from "lucide-react";
 import { ImageGalleryModal } from "./ImageGalleryModal";
 import { MarkdownBody } from "./MarkdownBody";
@@ -21,6 +21,11 @@ import { buildCompanyUserLabelMap } from "@/lib/company-members";
 import { formatAssigneeUserLabel } from "@/lib/assignees";
 import { queryKeys } from "@/lib/queryKeys";
 import { StatusBadge } from "./StatusBadge";
+import { PriorityIcon } from "./PriorityIcon";
+import { IssueReferencePill } from "./IssueReferencePill";
+import { Identity } from "./Identity";
+import { Link } from "@/lib/router";
+import { timeAgo } from "@/lib/timeAgo";
 
 const DEFAULT_OUTPUT_SPLIT = 60; // percent for left panel
 const MIN_LEFT_PCT = 30;
@@ -118,11 +123,11 @@ export function OutputSplitPane({
   }, [storageKey]);
 
   return (
-    <div ref={containerRef} className="flex h-full w-full overflow-hidden">
+    <div ref={containerRef} className="flex h-full w-full min-w-0 overflow-hidden">
       {/* Left panel */}
       <div
         className={cn(
-          "overflow-auto h-full",
+          "min-w-0 overflow-auto h-full",
           !isResizing && "transition-[width] duration-100 ease-out",
         )}
         style={{ width: `${leftPct}%` }}
@@ -158,7 +163,7 @@ export function OutputSplitPane({
       {/* Right panel */}
       <div
         className={cn(
-          "overflow-auto h-full",
+          "min-w-0 overflow-auto h-full",
           !isResizing && "transition-[width] duration-100 ease-out",
         )}
         style={{ width: `${100 - leftPct}%` }}
@@ -187,6 +192,27 @@ function issueDueDate(issue: Issue) {
   );
 }
 
+function StripField({
+  label,
+  children,
+  className,
+}: {
+  label: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn("min-w-0 space-y-1", className)}>
+      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </div>
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm text-foreground">
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export function IssuePropertiesStrip({ issue }: { issue: Issue }) {
   const { selectedCompanyId } = useCompany();
   const companyId = issue.companyId ?? selectedCompanyId;
@@ -200,13 +226,13 @@ export function IssuePropertiesStrip({ issue }: { issue: Issue }) {
   const { data: agents } = useQuery({
     queryKey: queryKeys.agents.list(companyId!),
     queryFn: () => agentsApi.list(companyId!),
-    enabled: !!companyId && !!issue.assigneeAgentId,
+    enabled: !!companyId && (!!issue.assigneeAgentId || !!issue.createdByAgentId),
   });
 
   const { data: companyMembers } = useQuery({
     queryKey: queryKeys.access.companyUserDirectory(companyId!),
     queryFn: () => accessApi.listUserDirectory(companyId!),
-    enabled: !!companyId && !!issue.assigneeUserId,
+    enabled: !!companyId && (!!issue.assigneeUserId || !!issue.createdByUserId),
   });
 
   const userLabelMap = useMemo(
@@ -236,26 +262,105 @@ export function IssuePropertiesStrip({ issue }: { issue: Issue }) {
 
   const dueDate = issueDueDate(issue);
   const dueLabel = dueDate ? formatDate(dueDate) : "No due date";
+  const parentIdentifier = issue.ancestors?.[0]?.identifier;
+  const parentTitle = issue.ancestors?.[0]?.title ?? issue.parentId?.slice(0, 8);
+  const relatedIssues = useMemo(() => {
+    const seen = new Set<string>();
+    const related: Array<NonNullable<NonNullable<Issue["relatedWork"]>["outbound"]>[number]["issue"]> = [];
+    for (const item of [
+      ...(issue.relatedWork?.outbound ?? []),
+      ...(issue.relatedWork?.inbound ?? []),
+    ]) {
+      if (!item.issue || seen.has(item.issue.id)) continue;
+      seen.add(item.issue.id);
+      related.push(item.issue);
+    }
+    return related;
+  }, [issue.relatedWork?.inbound, issue.relatedWork?.outbound]);
+  const creatorAgentName = issue.createdByAgentId
+    ? agents?.find((agent) => agent.id === issue.createdByAgentId)?.name
+    : null;
+  const creatorUserLabel = formatAssigneeUserLabel(
+    issue.createdByUserId,
+    currentUserId,
+    userLabelMap,
+  );
 
   return (
     <div
       className={cn(
-        "flex min-w-0 items-center gap-3 overflow-hidden rounded-lg border border-border/70 bg-muted/20 px-2.5 py-1.5",
-        "text-[11px] text-muted-foreground",
+        "min-w-0 rounded-lg border border-border/70 bg-muted/20 p-4",
+        "text-sm",
       )}
       aria-label="Issue summary"
     >
-      <StatusBadge status={issue.status} />
-      <span className="h-3 w-px shrink-0 bg-border" aria-hidden="true" />
-      <span className="flex min-w-0 items-center gap-1.5 truncate">
-        <UserRound className="h-3.5 w-3.5 shrink-0 opacity-70" />
-        <span className="truncate">{assigneeLabel}</span>
-      </span>
-      <span className="h-3 w-px shrink-0 bg-border" aria-hidden="true" />
-      <span className="flex min-w-0 items-center gap-1.5 truncate">
-        <CalendarDays className="h-3.5 w-3.5 shrink-0 opacity-70" />
-        <span className="truncate">{dueLabel}</span>
-      </span>
+      <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
+        <StripField label="Status">
+          <StatusBadge status={issue.status} />
+        </StripField>
+        <StripField label="Priority">
+          <PriorityIcon priority={issue.priority} showLabel />
+        </StripField>
+
+        <StripField label="Assignee">
+          <UserRound className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 truncate">{assigneeLabel}</span>
+        </StripField>
+        <StripField label="Due Date">
+          <CalendarDays className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 truncate">{dueLabel}</span>
+        </StripField>
+
+        <StripField label="Parent Task">
+          {issue.parentId ? (
+            <Link
+              to={`/issues/${parentIdentifier ?? issue.parentId}`}
+              className="min-w-0 truncate text-primary hover:underline"
+            >
+              {parentIdentifier ? `${parentIdentifier} ` : ""}
+              {parentTitle}
+            </Link>
+          ) : (
+            <span className="text-muted-foreground">No parent</span>
+          )}
+        </StripField>
+        <StripField label="Blocking">
+          <span>{(issue.blocks?.length ?? 0) > 0 ? "Yes" : "No"}</span>
+          {(issue.blocks?.length ?? 0) > 0 ? (
+            <span className="text-xs text-muted-foreground">({issue.blocks?.length})</span>
+          ) : null}
+        </StripField>
+
+        <StripField label="Related to" className="sm:col-span-2">
+          {relatedIssues.length > 0 ? (
+            relatedIssues.map((related) => (
+              <IssueReferencePill key={related.id} issue={related} />
+            ))
+          ) : (
+            <span className="text-muted-foreground">No related issues</span>
+          )}
+        </StripField>
+
+        <StripField label="Creator">
+          {issue.createdByAgentId ? (
+            <Link to={`/agents/${issue.createdByAgentId}`} className="min-w-0 hover:underline">
+              <Identity name={creatorAgentName ?? issue.createdByAgentId.slice(0, 8)} size="sm" />
+            </Link>
+          ) : issue.createdByUserId ? (
+            <>
+              <UserRound className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 truncate">{creatorUserLabel ?? "User"}</span>
+            </>
+          ) : (
+            <span className="text-muted-foreground">Unknown</span>
+          )}
+        </StripField>
+        <StripField label="Timestamps">
+          <span className="min-w-0 truncate">Created {formatDateTime(issue.createdAt)}</span>
+          <span className="text-muted-foreground">·</span>
+          <span className="min-w-0 truncate">Updated {timeAgo(issue.updatedAt)}</span>
+        </StripField>
+      </div>
     </div>
   );
 }
@@ -311,9 +416,9 @@ export function IssueOutputPanel({
 
   return (
     <>
-      <div className="p-4 space-y-5">
-        <div className="flex items-center justify-between gap-3">
-          <div>
+      <div className="min-w-0 max-w-full space-y-5 overflow-x-hidden p-4">
+        <div className="flex min-w-0 items-center justify-between gap-3">
+          <div className="min-w-0">
             <h2 className="text-sm font-semibold text-foreground">Artifacts</h2>
             <p className="text-xs text-muted-foreground">
               Generated images and documents from this issue.
@@ -342,14 +447,14 @@ export function IssueOutputPanel({
             </p>
           </div>
         ) : (
-          <div className="space-y-5">
+          <div className="min-w-0 space-y-5">
             {/* Image grid */}
             {imageAttachments.length > 0 && (
-              <div className="space-y-3">
+              <div className="min-w-0 space-y-3">
                 <h3 className="text-xs font-semibold text-foreground">
                   Images ({imageAttachments.length})
                 </h3>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
                   {imageAttachments.map((attachment) => (
                     <div
                       key={attachment.id}
@@ -377,11 +482,11 @@ export function IssueOutputPanel({
 
             {/* Document list */}
             {documentAttachments.length > 0 && (
-              <div className="space-y-3">
+              <div className="min-w-0 space-y-3">
                 <h3 className="text-xs font-semibold text-foreground">
                   Documents ({documentAttachments.length})
                 </h3>
-                <div className="grid gap-2">
+                <div className="grid min-w-0 gap-2">
                   {documentAttachments.map((attachment) => {
                     const isMd = isMarkdown(attachment);
                     const isHtmlFile = isHtml(attachment);
@@ -391,7 +496,7 @@ export function IssueOutputPanel({
                         type="button"
                         onClick={() => handleDocumentClick(attachment)}
                         className={cn(
-                          "w-full flex items-center gap-3 rounded-xl border border-border bg-background p-4 shadow-sm",
+                          "flex w-full min-w-0 items-center gap-3 rounded-xl border border-border bg-background p-4 shadow-sm",
                           "hover:bg-accent/40 hover:shadow transition-all text-left",
                           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                         )}
@@ -409,7 +514,7 @@ export function IssueOutputPanel({
                           <p className="text-sm font-semibold truncate">
                             {attachment.originalFilename ?? attachment.id}
                           </p>
-                          <p className="text-[11px] text-muted-foreground">
+                          <p className="min-w-0 truncate text-[11px] text-muted-foreground">
                             {attachment.contentType} ·{" "}
                             {formatSize(attachment.byteSize ?? 0)}
                           </p>
