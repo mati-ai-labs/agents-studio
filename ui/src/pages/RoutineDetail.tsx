@@ -423,7 +423,7 @@ export function RoutineDetail() {
 
   useEffect(() => {
     if (!routine) return;
-    setBreadcrumbs([{ label: isWorkflowView ? "Workflows" : "Recurring Jobs", href: isWorkflowView ? "/workflows" : "/routines" }, { label: routine.title }]);
+    setBreadcrumbs([{ label: "Workflows", href: isWorkflowView ? "/workflows" : "/routines" }, { label: routine.title }]);
     if (!routineDefaults) return;
 
     const changedRoutine = hydratedRoutineIdRef.current !== routine.id;
