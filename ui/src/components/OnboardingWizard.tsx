@@ -73,6 +73,8 @@ const DEFAULT_TASK_DESCRIPTION = `You are the CEO. You set the direction for the
 
 const LARRY_SKILL_SOURCE =
   "https://clawhub.ai/api/v1/skills/larry/file?path=SKILL.md&ownerHandle=olliewazza";
+const MARKET_RESEARCH_SKILL_KEY =
+  "paperclipai/paperclip/market-research-agent";
 
 const MARKETING_STACK_AGENTS = [
   {
@@ -528,18 +530,7 @@ export function OnboardingWizard() {
         const existingNames = new Set(
           existingAgents.map((entry) => entry.name.trim().toLowerCase())
         );
-        const skillKeys: Partial<Record<"market-research" | "larry", string>> = {};
-
-        if (!existingNames.has("market research agent")) {
-          const imported = await companySkillsApi.importFromSource(
-            createdCompanyId,
-            "skills/market-research-agent"
-          );
-          const skill = imported.imported.find(
-            (entry) => entry.slug === "market-research-agent"
-          ) ?? imported.imported[0];
-          if (skill) skillKeys["market-research"] = skill.key;
-        }
+        const skillKeys: Partial<Record<"larry", string>> = {};
 
         if (!existingNames.has("carousel social media agent")) {
           const imported = await companySkillsApi.importFromSource(
@@ -556,7 +547,7 @@ export function OnboardingWizard() {
           if (existingNames.has(definition.name.toLowerCase())) continue;
           const desiredSkill =
             definition.skill === "market-research"
-              ? skillKeys["market-research"]
+              ? MARKET_RESEARCH_SKILL_KEY
               : definition.skill === "larry"
                 ? skillKeys.larry
                 : null;
