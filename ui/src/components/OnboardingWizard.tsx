@@ -99,6 +99,12 @@ When finished, comment on this issue with:
 const LARRY_SKILL_SOURCE =
   "https://clawhub.ai/api/v1/skills/larry/file?path=SKILL.md&ownerHandle=olliewazza";
 const MARKETING_SKILLS_SOURCE = "coreyhaines31/marketingskills";
+const PRODUCT_IDEATION_SKILL_SOURCE =
+  "borghei/Claude-Skills/brainstorm-ideas";
+const PRODUCT_JTBD_SKILL_SOURCE =
+  "deanpeters/Product-Manager-Skills/jobs-to-be-done";
+const PRODUCT_OST_SKILL_SOURCE =
+  "deanpeters/Product-Manager-Skills/opportunity-solution-tree";
 const MARKET_RESEARCH_SKILL_KEY =
   "paperclipai/paperclip/market-research-agent";
 
@@ -107,6 +113,66 @@ function renderSkillList(items: readonly string[]) {
 }
 
 const MARKETING_STACK_AGENTS = [
+  {
+    name: "Product Design Agent",
+    capabilities:
+      "Reads the company's knowledge base and vector memory, studies the market, and proposes new product opportunities across software, hardware, services, and physical products.",
+    desiredSkillRefs: [
+      "customer-research",
+      "competitor-profiling",
+      "analytics",
+      "product-marketing",
+      "pricing",
+      "marketing-psychology",
+    ],
+    needsTikTokSkill: false as const,
+    needsProductIdeationSkills: true as const,
+    instructions: `You are the company's Product Design Agent.
+
+Mission
+Find high-potential new product opportunities for the company. The product can be software, hardware, a service, a wearable, a consumer product, or another format if the market evidence supports it. Your job is to recommend what should be launched next and why.
+
+Mandatory starting point
+Before ideation, read company context from vector memory using the Paperclip company ID as user_id. This is mandatory.
+- Use the current company ID from task or runtime context.
+- Never use an email, run ID, issue ID, agent ID, or placeholder as user_id.
+- Read memory about the company's current products, customer segments, positioning, market findings, uploaded documents, important links, decisions, and constraints.
+
+Core workflow
+1. Reconstruct the company's current offerings, strengths, distribution advantages, customer pain points, and strategic constraints from vector memory and supplied onboarding material.
+2. Identify what the company already knows: proven demand signals, failed ideas, customer objections, pricing constraints, and operational edges.
+3. Research the live market online: customer demand, category growth, adjacent needs, substitutes, competitors, whitespace, and timing.
+4. Use structured brainstorming to generate product ideas across multiple product shapes, not just SaaS.
+5. Filter ideas using customer pain, differentiation, speed to validate, company fit, expected demand, monetization potential, and defensibility.
+6. Recommend the strongest product ideas with a validation plan and clear rationale.
+7. Persist durable product opportunity findings back into vector memory for the CEO and related agents.
+
+Skill routing
+Use these skills intentionally:
+${renderSkillList([
+  `brainstorm-ideas: use as the primary ideation skill to generate, compare, and prioritize new product concepts after you understand the company and market.`,
+  `jobs-to-be-done: use when you need to understand the underlying customer job, motivation, emotional context, and substitutes behind a product opportunity.`,
+  `opportunity-solution-tree: use when translating market pain and company strengths into a structured map of opportunities, product concepts, and validation paths.`,
+  `customer-research: use when mining pains, jobs, objections, reviews, transcripts, support patterns, and voice-of-customer evidence.`,
+  `competitor-profiling: use when a product idea depends on understanding the existing landscape, substitute behavior, category gaps, or strategic white space.`,
+  `analytics: use when evaluating evidence from traffic, funnel behavior, usage patterns, search trends, or other measurable signals.`,
+  `product-marketing: use when turning raw product ideas into clearer positioning, target ICP definitions, value propositions, and launch narratives.`,
+  `pricing: use when judging willingness to pay, monetization models, packaging, or commercial viability.`,
+  `marketing-psychology: use when buyer motivation, trust, aspiration, or emotional triggers materially affect product choice.`,
+])}
+
+Output standard
+- Separate facts, assumptions, and inference.
+- Present multiple candidate products, not just one.
+- For each idea, state customer, problem, product form, why now, why this company, demand evidence, risks, and how to validate quickly.
+- Rank ideas and explicitly state which one should be explored first.
+
+Memory rules
+- Write durable company-specific opportunity findings back to vector memory.
+- Record time-sensitive market observations as dated events.
+- Keep entries concise, specific, and searchable.
+- Never read or write another company's memory.`,
+  },
   {
     name: "Market Research Agent",
     capabilities:
@@ -121,6 +187,7 @@ const MARKETING_STACK_AGENTS = [
       "pricing",
     ],
     needsTikTokSkill: false as const,
+    needsProductIdeationSkills: false as const,
     instructions: `You are the company's Market Research Agent.
 
 Mission
@@ -176,6 +243,7 @@ Constraints
       "marketing-psychology",
     ],
     needsTikTokSkill: false as const,
+    needsProductIdeationSkills: false as const,
     instructions: `You are the company's Market Intelligence Agent.
 
 Mission
@@ -234,6 +302,7 @@ Memory rules
       "ckm:brand",
     ],
     needsTikTokSkill: true as const,
+    needsProductIdeationSkills: false as const,
     instructions: `You are the company's Carousel Social Media Agent.
 
 Mission
@@ -728,7 +797,9 @@ export function OnboardingWizard() {
         const existingNames = new Set(
           existingAgents.map((entry) => entry.name.trim().toLowerCase())
         );
-        const skillKeys: Partial<Record<"tiktok", string>> = {};
+        const skillKeys: Partial<
+          Record<"tiktok" | "brainstormIdeas" | "jobsToBeDone" | "opportunitySolutionTree", string>
+        > = {};
 
         await companySkillsApi.importFromSource(
           createdCompanyId,
@@ -746,11 +817,58 @@ export function OnboardingWizard() {
           if (skill) skillKeys.tiktok = skill.key;
         }
 
+        if (!existingNames.has("product design agent")) {
+          const [brainstormIdeas, jobsToBeDone, opportunitySolutionTree] =
+            await Promise.all([
+              companySkillsApi.importFromSource(
+                createdCompanyId,
+                PRODUCT_IDEATION_SKILL_SOURCE
+              ),
+              companySkillsApi.importFromSource(
+                createdCompanyId,
+                PRODUCT_JTBD_SKILL_SOURCE
+              ),
+              companySkillsApi.importFromSource(
+                createdCompanyId,
+                PRODUCT_OST_SKILL_SOURCE
+              ),
+            ]);
+          const brainstormIdeasSkill =
+            brainstormIdeas.imported.find(
+              (entry) => entry.slug === "brainstorm-ideas"
+            ) ?? brainstormIdeas.imported[0];
+          if (brainstormIdeasSkill) {
+            skillKeys.brainstormIdeas = brainstormIdeasSkill.key;
+          }
+          const jobsToBeDoneSkill =
+            jobsToBeDone.imported.find(
+              (entry) => entry.slug === "jobs-to-be-done"
+            ) ?? jobsToBeDone.imported[0];
+          if (jobsToBeDoneSkill) {
+            skillKeys.jobsToBeDone = jobsToBeDoneSkill.key;
+          }
+          const opportunitySolutionTreeSkill =
+            opportunitySolutionTree.imported.find(
+              (entry) => entry.slug === "opportunity-solution-tree"
+            ) ?? opportunitySolutionTree.imported[0];
+          if (opportunitySolutionTreeSkill) {
+            skillKeys.opportunitySolutionTree =
+              opportunitySolutionTreeSkill.key;
+          }
+        }
+
         for (const definition of MARKETING_STACK_AGENTS) {
           if (existingNames.has(definition.name.toLowerCase())) continue;
           const desiredSkills = Array.from(new Set([
             ...definition.desiredSkillRefs,
             ...(definition.needsTikTokSkill && skillKeys.tiktok ? [skillKeys.tiktok] : []),
+            ...(definition.needsProductIdeationSkills
+              ? [
+                  skillKeys.brainstormIdeas,
+                  skillKeys.jobsToBeDone,
+                  skillKeys.opportunitySolutionTree,
+                ].filter((value): value is string => typeof value === "string" && value.length > 0)
+              : []),
           ]));
           const stackHire = await agentsApi.hire(createdCompanyId, {
             name: definition.name,
