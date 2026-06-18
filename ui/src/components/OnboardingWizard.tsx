@@ -10,6 +10,7 @@ import { agentsApi } from "../api/agents";
 import { approvalsApi } from "../api/approvals";
 import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
+import { routinesApi } from "../api/routines";
 import { companySkillsApi } from "../api/companySkills";
 import { queryKeys } from "../lib/queryKeys";
 import { Dialog, DialogPortal } from "@/components/ui/dialog";
@@ -352,6 +353,94 @@ Constraints
 - Do not publish, schedule, or spend money without explicit authorization.
 - If an integration is unavailable, still deliver the full content package as a work product.
 - If the task is really a broad market question instead of content execution, defer research-heavy work to the Market Research or Market Intelligence Agent.`,
+  },
+] as const;
+
+const MARKETING_STACK_ROUTINES = [
+  {
+    title: "Product Design",
+    assigneeName: "Product Design Agent",
+    description: `Purpose
+Analyze the company's current products, assets, customer problems, distribution advantages, and market position, then propose new product opportunities worth launching next.
+
+Routing
+This routine must be owned by the Product Design Agent.
+
+Execution instructions
+1. Start with company memory first. Read vector memory using the current Paperclip company ID as user_id.
+2. Reconstruct the company's current offerings, strengths, customer pains, constraints, and prior findings from memory, company docs, and the onboarding research issue.
+3. Research the live market and competitor landscape online using current sources.
+4. Generate multiple new product ideas across software, hardware, services, physical goods, and hybrid offers where relevant.
+5. Use jobs-to-be-done, opportunity-solution-tree thinking, customer pain, differentiation, monetization, company fit, and validation speed to rank the ideas.
+6. Recommend the strongest ideas with:
+   - target customer
+   - problem
+   - product form
+   - why now
+   - why this company can win
+   - risks
+   - validation plan
+7. Persist durable opportunity findings back to vector memory with user_id equal to the company ID.
+
+Skill guidance
+- Primary: brainstorm-ideas
+- Supporting: jobs-to-be-done, opportunity-solution-tree, customer-research, competitor-profiling, analytics, product-marketing, pricing, marketing-psychology
+
+Output
+Produce a ranked product opportunity memo with at least three serious ideas and a clear recommendation for what to test first.`,
+  },
+  {
+    title: "Competitor Research",
+    assigneeName: "Market Research Agent",
+    description: `Purpose
+Continuously study the company's direct competitors, substitutes, market moves, positioning shifts, and whitespace so the company can sharpen positioning and strategic messaging.
+
+Routing
+This routine must be owned by the Market Research Agent.
+
+Execution instructions
+1. Read company memory and current positioning before starting external research.
+2. Identify the active competitor set, substitutes, adjacent alternatives, and emergent players.
+3. Review current websites, product surfaces, public launches, messaging, pricing, reviews, case studies, content, and proof points.
+4. Compare the company against competitors on ICP, product shape, positioning, pricing, trust signals, strengths, weaknesses, and likely buyer objections.
+5. Highlight where the company should reposition, differentiate harder, or avoid crowded claims.
+6. Record durable competitor facts and dated market changes back into vector memory using the company ID as user_id.
+
+Skill guidance
+- Primary: paperclipai/paperclip/market-research-agent
+- Supporting: competitor-profiling, competitors, customer-research, analytics, product-marketing, pricing
+
+Output
+Produce a competitor intelligence brief with a positioning adjustment section, risk section, and specific messaging or GTM recommendations.`,
+  },
+  {
+    title: "Content Creation",
+    assigneeName: "Carousel Social Media Agent",
+    description: `Purpose
+Create a platform-ready 4-slide carousel based on the company's products, goals, market context, and current strategic priorities.
+
+Routing
+This routine must be owned by the Carousel Social Media Agent.
+
+Execution instructions
+1. Read the latest company memory, product context, market intelligence, and current goals before generating content.
+2. Choose one strong audience-specific angle tied to company goals.
+3. Research current market conversation and competitor or creator patterns relevant to that angle.
+4. Generate multiple hooks, choose the best one, and justify it briefly.
+5. Produce a complete 4-slide carousel:
+   - slide 1: hook
+   - slide 2: insight/problem
+   - slide 3: solution/proof/value
+   - slide 4: CTA
+6. Also provide caption, visual direction, target platform, target audience, and one test variation.
+7. Keep output aligned with brand and current company strategy.
+
+Skill guidance
+- Primary: tiktok-app-marketing for TikTok-first or short-form social framing
+- Supporting: social, copywriting, content-strategy, ad-creative, image, video, marketing-psychology, ckm:brand
+
+Output
+Deliver the finished 4-slide content package, not just notes.`,
   },
 ] as const;
 
@@ -1029,6 +1118,51 @@ export function OnboardingWizard() {
           idempotencyKey: `company-onboarding-research:${createdCompanyId}`
         }, createdCompanyId);
         setCreatedResearchIssueId(issueId);
+      }
+
+      if (addMarketingStack) {
+        const [companyAgents, existingRoutines] = await Promise.all([
+          agentsApi.list(createdCompanyId),
+          routinesApi.list(createdCompanyId, { projectId }),
+        ]);
+        const agentByName = new Map(
+          companyAgents.map((entry) => [entry.name.trim().toLowerCase(), entry])
+        );
+        const existingRoutineTitles = new Set(
+          existingRoutines.map((entry) => entry.title.trim().toLowerCase())
+        );
+
+        for (const routineDefinition of MARKETING_STACK_ROUTINES) {
+          if (existingRoutineTitles.has(routineDefinition.title.toLowerCase())) {
+            continue;
+          }
+          const assignee = agentByName.get(
+            routineDefinition.assigneeName.toLowerCase()
+          );
+          if (!assignee) continue;
+
+          const routine = await routinesApi.create(createdCompanyId, {
+            title: routineDefinition.title,
+            description: routineDefinition.description,
+            assigneeAgentId: assignee.id,
+            projectId,
+            goalId,
+            priority: "high",
+            status: "active",
+            concurrencyPolicy: "coalesce_if_active",
+            catchUpPolicy: "skip_missed",
+          });
+          await routinesApi.createTrigger(routine.id, {
+            kind: "api",
+            label: "Manual run",
+            enabled: true,
+          });
+          existingRoutineTitles.add(routineDefinition.title.toLowerCase());
+        }
+
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.routines.list(createdCompanyId, { projectId }),
+        });
       }
 
       setSelectedCompanyId(createdCompanyId);
