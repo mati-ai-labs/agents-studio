@@ -65,11 +65,36 @@ import {
 type Step = 1 | 2 | 3 | 4;
 type AdapterType = string;
 
-const DEFAULT_TASK_DESCRIPTION = `You are the CEO. You set the direction for the company.
+const DEFAULT_TASK_TITLE = "Research the company and build its vector memory";
+const DEFAULT_TASK_DESCRIPTION =
+  "Deeply research the company, analyze every supplied source and document, and build a structured company knowledge base in vector memory.";
 
-- hire a founding engineer
-- write a hiring plan
-- break the roadmap into concrete tasks and start delegating work`;
+function buildCompanyResearchTaskDescription(input: {
+  companyId: string;
+  website: string;
+  importantLinks: string[];
+  documentNames: string[];
+}) {
+  const sources = [
+    input.website ? `Primary website: ${input.website}` : null,
+    ...input.importantLinks.map((link) => `Important link: ${link}`),
+    input.documentNames.length > 0
+      ? `Attached documents: ${input.documentNames.join(", ")}`
+      : null
+  ].filter(Boolean).join("\n");
+
+  return `Deeply research this company using every supplied source${sources ? " below" : ""}. Follow relevant links and identify the company's products, customers, market, positioning, team, business model, competitors, technology, operations, risks, and current priorities. Read every attached document and extract facts, decisions, terminology, and useful context.
+
+${sources || "No external sources were supplied. Start from the company name, mission, and available Paperclip context."}
+
+Persist the resulting knowledge through the vector-memory MCP. Use user_id="${input.companyId}" for every memory call; this must be the Paperclip company ID, never an agent ID, email, issue ID, or generic value. Store concise, independently useful facts with memory_remember using stable lowercase categories and keys. Record important decisions and dated findings with memory_record_event. Do not merely save raw pages or documents: synthesize them into meaningful, searchable company knowledge.
+
+When finished, comment on this issue with:
+- a structured company research summary
+- key products, customers, competitors, risks, and opportunities
+- the vector-memory categories and keys written
+- gaps or uncertain claims that require human confirmation`;
+}
 
 const LARRY_SKILL_SOURCE =
   "https://clawhub.ai/api/v1/skills/larry/file?path=SKILL.md&ownerHandle=olliewazza";
@@ -172,9 +197,7 @@ export function OnboardingWizard() {
   const [showMoreAdapters, setShowMoreAdapters] = useState(false);
 
   // Step 3
-  const [taskTitle, setTaskTitle] = useState(
-    "Hire your first engineer and create a hiring plan"
-  );
+  const [taskTitle, setTaskTitle] = useState(DEFAULT_TASK_TITLE);
   const [taskDescription, setTaskDescription] = useState(
     DEFAULT_TASK_DESCRIPTION
   );
@@ -201,6 +224,7 @@ export function OnboardingWizard() {
   const [createdAgentId, setCreatedAgentId] = useState<string | null>(null);
   const [createdProjectId, setCreatedProjectId] = useState<string | null>(null);
   const [createdIssueRef, setCreatedIssueRef] = useState<string | null>(null);
+  const [createdIssueId, setCreatedIssueId] = useState<string | null>(null);
   const [createdResearchIssueId, setCreatedResearchIssueId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -220,6 +244,7 @@ export function OnboardingWizard() {
     setCreatedProjectId(null);
     setCreatedAgentId(null);
     setCreatedIssueRef(null);
+    setCreatedIssueId(null);
     setCreatedResearchIssueId(null);
   }, [
     effectiveOnboardingOpen,
@@ -231,8 +256,24 @@ export function OnboardingWizard() {
   useEffect(() => {
     if (!effectiveOnboardingOpen || !createdCompanyId || createdCompanyPrefix) return;
     const company = companies.find((c) => c.id === createdCompanyId);
-    if (company) setCreatedCompanyPrefix(company.issuePrefix);
-  }, [effectiveOnboardingOpen, createdCompanyId, createdCompanyPrefix, companies]);
+    if (!company) return;
+    setCreatedCompanyPrefix(company.issuePrefix);
+    if (taskDescription === DEFAULT_TASK_DESCRIPTION) {
+      setTaskDescription(buildCompanyResearchTaskDescription({
+        companyId: company.id,
+        website: company.website ?? "",
+        importantLinks: company.importantLinks ?? [],
+        documentNames: companyDocuments.map((file) => file.name)
+      }));
+    }
+  }, [
+    effectiveOnboardingOpen,
+    createdCompanyId,
+    createdCompanyPrefix,
+    companies,
+    companyDocuments,
+    taskDescription
+  ]);
 
   // Resize textarea when step 3 is shown or description changes
   useEffect(() => {
@@ -354,7 +395,7 @@ export function OnboardingWizard() {
     setAdapterEnvLoading(false);
     setForceUnsetAnthropicApiKey(false);
     setUnsetAnthropicLoading(false);
-    setTaskTitle("Hire your first engineer and create a hiring plan");
+    setTaskTitle(DEFAULT_TASK_TITLE);
     setTaskDescription(DEFAULT_TASK_DESCRIPTION);
     setCreatedCompanyId(null);
     setCreatedCompanyPrefix(null);
@@ -362,6 +403,7 @@ export function OnboardingWizard() {
     setCreatedAgentId(null);
     setCreatedProjectId(null);
     setCreatedIssueRef(null);
+    setCreatedIssueId(null);
     setCreatedResearchIssueId(null);
   }
 
@@ -455,6 +497,13 @@ export function OnboardingWizard() {
       setCreatedCompanyId(company.id);
       setCreatedCompanyPrefix(company.issuePrefix);
       setSelectedCompanyId(company.id);
+      setTaskTitle(DEFAULT_TASK_TITLE);
+      setTaskDescription(buildCompanyResearchTaskDescription({
+        companyId: company.id,
+        website: companyWebsite.trim(),
+        importantLinks,
+        documentNames: companyDocuments.map((file) => file.name)
+      }));
       queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
 
       if (companyGoal.trim()) {
@@ -669,55 +718,33 @@ export function OnboardingWizard() {
       }
 
       let issueRef = createdIssueRef;
-      if (!issueRef) {
+      let issueId = createdIssueId;
+      if (!issueRef || !issueId) {
         const issue = await issuesApi.create(
           createdCompanyId,
-          buildOnboardingIssuePayload({
+          {
+            ...buildOnboardingIssuePayload({
             title: taskTitle,
             description: taskDescription,
             assigneeAgentId: createdAgentId,
             projectId,
             goalId
-          })
+            }),
+            priority: "high"
+          }
         );
+        issueId = issue.id;
         issueRef = issue.identifier ?? issue.id;
+        setCreatedIssueId(issue.id);
         setCreatedIssueRef(issueRef);
         queryClient.invalidateQueries({
           queryKey: queryKeys.issues.list(createdCompanyId)
         });
       }
 
-      let researchIssueId = createdResearchIssueId;
-      if (!researchIssueId && (companyWebsite.trim() || companyImportantLinks.trim() || companyDocuments.length > 0)) {
-        const importantLinks = companyImportantLinks
-          .split(/\r?\n/)
-          .map((entry) => entry.trim())
-          .filter(Boolean);
-        const sources = [
-          companyWebsite.trim() ? `Primary website: ${companyWebsite.trim()}` : null,
-          ...importantLinks.map((link) => `Important link: ${link}`),
-          companyDocuments.length > 0
-            ? `Attached documents: ${companyDocuments.map((file) => file.name).join(", ")}`
-            : null
-        ].filter(Boolean).join("\n");
-        const researchIssue = await issuesApi.create(createdCompanyId, {
-          title: "Research the company and build its vector memory",
-          description: `Deeply research this company using every source below. Follow relevant links, identify the company's product, customers, market, positioning, team, business model, competitors, technology, operations, risks, and current priorities. Read every attached document and extract facts, decisions, terminology, and useful context.
-
-${sources}
-
-Persist the resulting knowledge through the vector-memory MCP. The MCP is available in the deployed agent environment. Use user_id="${createdCompanyId}" for every call so this company's memory remains isolated. Store concise, independently useful facts with memory_remember using stable lowercase categories and keys. Record important decisions or dated findings with memory_record_event. Do not merely save raw documents: synthesize them into meaningful, searchable company knowledge. When finished, comment on this issue with a structured research summary and the memory categories/keys written.`,
-          assigneeAgentId: createdAgentId,
-          projectId,
-          ...(goalId ? { goalId } : {}),
-          status: "todo",
-          priority: "high"
-        });
-        researchIssueId = researchIssue.id;
-        setCreatedResearchIssueId(researchIssue.id);
-
+      if (createdResearchIssueId !== issueId) {
         for (const file of companyDocuments) {
-          await issuesApi.uploadAttachment(createdCompanyId, researchIssue.id, file);
+          await issuesApi.uploadAttachment(createdCompanyId, issueId, file);
         }
 
         await agentsApi.wakeup(createdAgentId, {
@@ -725,12 +752,13 @@ Persist the resulting knowledge through the vector-memory MCP. The MCP is availa
           triggerDetail: "system",
           reason: "Company onboarding research sources are ready for vector-memory ingestion.",
           payload: {
-            issueId: researchIssue.id,
+            issueId,
             companyId: createdCompanyId,
             vectorMemoryUserId: createdCompanyId
           },
           idempotencyKey: `company-onboarding-research:${createdCompanyId}`
         }, createdCompanyId);
+        setCreatedResearchIssueId(issueId);
       }
 
       setSelectedCompanyId(createdCompanyId);
