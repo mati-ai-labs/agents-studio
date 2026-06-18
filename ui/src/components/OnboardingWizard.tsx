@@ -10,6 +10,7 @@ import { agentsApi } from "../api/agents";
 import { approvalsApi } from "../api/approvals";
 import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
+import { companySkillsApi } from "../api/companySkills";
 import { queryKeys } from "../lib/queryKeys";
 import { Dialog, DialogPortal } from "@/components/ui/dialog";
 import {
@@ -56,7 +57,8 @@ import {
   Check,
   Loader2,
   ChevronDown,
-  X
+  X,
+  Upload
 } from "lucide-react";
 
 
@@ -68,6 +70,45 @@ const DEFAULT_TASK_DESCRIPTION = `You are the CEO. You set the direction for the
 - hire a founding engineer
 - write a hiring plan
 - break the roadmap into concrete tasks and start delegating work`;
+
+const LARRY_SKILL_SOURCE =
+  "https://clawhub.ai/api/v1/skills/larry/file?path=SKILL.md&ownerHandle=olliewazza";
+
+const MARKETING_STACK_AGENTS = [
+  {
+    name: "Market Research Agent",
+    capabilities:
+      "Researches current markets, competitors, customer segments, trends, pricing, and evidence-backed opportunities.",
+    instructions: `You are the company's Market Research Agent.
+
+Turn business questions into evidence-backed market research. Use current web sources, cite concrete evidence, compare competitors, identify customer segments, and surface market opportunities and risks. Read the company's website, important links, onboarding documents, and existing Paperclip context before researching. Produce structured reports that the CEO and Market Intelligence Agent can act on. Never invent companies, market figures, or sources.`,
+    skill: "market-research" as const,
+  },
+  {
+    name: "Market Intelligence Agent",
+    capabilities:
+      "Combines the company's PostgreSQL vector memory with current market evidence to estimate product demand and recommend positioning and priorities.",
+    instructions: `You are the company's Market Intelligence Agent.
+
+Your primary job is to gauge current demand for the products and services this company offers.
+
+Before analysis, query the vector-memory MCP using the Paperclip company ID supplied in task or runtime context as user_id. Use memory_search, memory_list, and memory_recall to understand the company's products, customers, positioning, evidence, documents, decisions, and constraints. Then research current market conditions: customer pain, search and social signals, competitor traction, spending intent, category growth, substitutes, pricing, geographic differences, and timing.
+
+Separate known facts, market evidence, assumptions, and inference. Score demand by product and segment, explain the evidence and confidence level, identify the strongest ICPs and channels, and recommend what to test next. Persist durable findings and dated demand signals back through memory_remember and memory_record_event with the same company-scoped user_id. Never read or write another company's memory.`,
+    skill: null,
+  },
+  {
+    name: "Carousel Social Media Agent",
+    capabilities:
+      "Creates research-driven social media carousels, tests hooks and CTAs, and improves content using engagement and conversion feedback.",
+    instructions: `You are the company's Carousel Social Media Agent.
+
+Use the Larry carousel marketing skill as your operating playbook. Turn company knowledge, market intelligence, and campaign requirements into strong multi-slide narratives for TikTok, Instagram, LinkedIn, and other suitable channels. Start with audience and competitor research, generate multiple hooks, create a coherent six-slide story, use platform-appropriate calls to action, and preserve brand consistency.
+
+Do not publish or spend money without explicit authorization. When integrations such as Postiz, image generation, or conversion tracking are unavailable, still produce the complete carousel brief, slide copy, image prompts, captions, and measurement plan as Paperclip work products.`,
+    skill: "larry" as const,
+  },
+] as const;
 
 export function OnboardingWizard() {
   const { onboardingOpen, onboardingOptions, closeOnboarding } = useDialog();
@@ -107,6 +148,10 @@ export function OnboardingWizard() {
   // Step 1
   const [companyName, setCompanyName] = useState("");
   const [companyGoal, setCompanyGoal] = useState("");
+  const [companyWebsite, setCompanyWebsite] = useState("");
+  const [companyImportantLinks, setCompanyImportantLinks] = useState("");
+  const [companyDocuments, setCompanyDocuments] = useState<File[]>([]);
+  const [addMarketingStack, setAddMarketingStack] = useState(false);
 
   // Step 2
   const [agentName, setAgentName] = useState("CEO");
@@ -154,6 +199,7 @@ export function OnboardingWizard() {
   const [createdAgentId, setCreatedAgentId] = useState<string | null>(null);
   const [createdProjectId, setCreatedProjectId] = useState<string | null>(null);
   const [createdIssueRef, setCreatedIssueRef] = useState<string | null>(null);
+  const [createdResearchIssueId, setCreatedResearchIssueId] = useState<string | null>(null);
 
   useEffect(() => {
     setRouteDismissed(false);
@@ -172,6 +218,7 @@ export function OnboardingWizard() {
     setCreatedProjectId(null);
     setCreatedAgentId(null);
     setCreatedIssueRef(null);
+    setCreatedResearchIssueId(null);
   }, [
     effectiveOnboardingOpen,
     effectiveOnboardingOptions.companyId,
@@ -290,6 +337,10 @@ export function OnboardingWizard() {
     setError(null);
     setCompanyName("");
     setCompanyGoal("");
+    setCompanyWebsite("");
+    setCompanyImportantLinks("");
+    setCompanyDocuments([]);
+    setAddMarketingStack(false);
     setAgentName("CEO");
     setAdapterType("claude_local");
     setModel("");
@@ -309,6 +360,7 @@ export function OnboardingWizard() {
     setCreatedAgentId(null);
     setCreatedProjectId(null);
     setCreatedIssueRef(null);
+    setCreatedResearchIssueId(null);
   }
 
   function handleClose() {
@@ -389,7 +441,15 @@ export function OnboardingWizard() {
     setLoading(true);
     setError(null);
     try {
-      const company = await companiesApi.create({ name: companyName.trim() });
+      const importantLinks = companyImportantLinks
+        .split(/\r?\n/)
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      const company = await companiesApi.create({
+        name: companyName.trim(),
+        website: companyWebsite.trim() || null,
+        importantLinks
+      });
       setCreatedCompanyId(company.id);
       setCreatedCompanyPrefix(company.issuePrefix);
       setSelectedCompanyId(company.id);
@@ -440,24 +500,92 @@ export function OnboardingWizard() {
         if (!result) return;
       }
 
-      const hire = await agentsApi.hire(createdCompanyId, {
-        name: agentName.trim(),
-        role: "ceo",
-        adapterType,
-        adapterConfig: buildAdapterConfig(),
-        runtimeConfig: buildNewAgentRuntimeConfig()
-      });
-      if (hire.approval) {
-        await approvalsApi.approve(
-          hire.approval.id,
-          "Approved during onboarding first-agent setup."
-        );
-        queryClient.invalidateQueries({
-          queryKey: queryKeys.approvals.list(createdCompanyId)
-        });
-      }
-      const agent = hire.agent;
+      const agent = createdAgentId
+        ? await agentsApi.get(createdAgentId, createdCompanyId)
+        : await (async () => {
+          const hire = await agentsApi.hire(createdCompanyId, {
+            name: agentName.trim(),
+            role: "ceo",
+            adapterType,
+            adapterConfig: buildAdapterConfig(),
+            runtimeConfig: buildNewAgentRuntimeConfig()
+          });
+          if (hire.approval) {
+            await approvalsApi.approve(
+              hire.approval.id,
+              "Approved during onboarding first-agent setup."
+            );
+            queryClient.invalidateQueries({
+              queryKey: queryKeys.approvals.list(createdCompanyId)
+            });
+          }
+          return hire.agent;
+        })();
       setCreatedAgentId(agent.id);
+
+      if (addMarketingStack) {
+        const existingAgents = await agentsApi.list(createdCompanyId);
+        const existingNames = new Set(
+          existingAgents.map((entry) => entry.name.trim().toLowerCase())
+        );
+        const skillKeys: Partial<Record<"market-research" | "larry", string>> = {};
+
+        if (!existingNames.has("market research agent")) {
+          const imported = await companySkillsApi.importFromSource(
+            createdCompanyId,
+            "skills/market-research-agent"
+          );
+          const skill = imported.imported.find(
+            (entry) => entry.slug === "market-research-agent"
+          ) ?? imported.imported[0];
+          if (skill) skillKeys["market-research"] = skill.key;
+        }
+
+        if (!existingNames.has("carousel social media agent")) {
+          const imported = await companySkillsApi.importFromSource(
+            createdCompanyId,
+            LARRY_SKILL_SOURCE
+          );
+          const skill = imported.imported.find(
+            (entry) => entry.slug === "tiktok-app-marketing"
+          ) ?? imported.imported[0];
+          if (skill) skillKeys.larry = skill.key;
+        }
+
+        for (const definition of MARKETING_STACK_AGENTS) {
+          if (existingNames.has(definition.name.toLowerCase())) continue;
+          const desiredSkill =
+            definition.skill === "market-research"
+              ? skillKeys["market-research"]
+              : definition.skill === "larry"
+                ? skillKeys.larry
+                : null;
+          const stackHire = await agentsApi.hire(createdCompanyId, {
+            name: definition.name,
+            role: "general",
+            reportsTo: agent.id,
+            capabilities: definition.capabilities,
+            adapterType,
+            adapterConfig: buildAdapterConfig(),
+            runtimeConfig: buildNewAgentRuntimeConfig(),
+            ...(desiredSkill ? { desiredSkills: [desiredSkill] } : {}),
+            instructionsBundle: {
+              entryFile: "AGENTS.md",
+              files: {
+                "AGENTS.md": definition.instructions
+              }
+            }
+          });
+          if (stackHire.approval) {
+            await approvalsApi.approve(
+              stackHire.approval.id,
+              "Approved during onboarding Marketing Stack setup."
+            );
+          }
+          existingNames.add(definition.name.toLowerCase());
+        }
+      }
+
       queryClient.invalidateQueries({
         queryKey: queryKeys.agents.list(createdCompanyId)
       });
@@ -566,6 +694,52 @@ export function OnboardingWizard() {
         queryClient.invalidateQueries({
           queryKey: queryKeys.issues.list(createdCompanyId)
         });
+      }
+
+      let researchIssueId = createdResearchIssueId;
+      if (!researchIssueId && (companyWebsite.trim() || companyImportantLinks.trim() || companyDocuments.length > 0)) {
+        const importantLinks = companyImportantLinks
+          .split(/\r?\n/)
+          .map((entry) => entry.trim())
+          .filter(Boolean);
+        const sources = [
+          companyWebsite.trim() ? `Primary website: ${companyWebsite.trim()}` : null,
+          ...importantLinks.map((link) => `Important link: ${link}`),
+          companyDocuments.length > 0
+            ? `Attached documents: ${companyDocuments.map((file) => file.name).join(", ")}`
+            : null
+        ].filter(Boolean).join("\n");
+        const researchIssue = await issuesApi.create(createdCompanyId, {
+          title: "Research the company and build its vector memory",
+          description: `Deeply research this company using every source below. Follow relevant links, identify the company's product, customers, market, positioning, team, business model, competitors, technology, operations, risks, and current priorities. Read every attached document and extract facts, decisions, terminology, and useful context.
+
+${sources}
+
+Persist the resulting knowledge through the vector-memory MCP. The MCP is available in the deployed agent environment. Use user_id="${createdCompanyId}" for every call so this company's memory remains isolated. Store concise, independently useful facts with memory_remember using stable lowercase categories and keys. Record important decisions or dated findings with memory_record_event. Do not merely save raw documents: synthesize them into meaningful, searchable company knowledge. When finished, comment on this issue with a structured research summary and the memory categories/keys written.`,
+          assigneeAgentId: createdAgentId,
+          projectId,
+          ...(goalId ? { goalId } : {}),
+          status: "todo",
+          priority: "high"
+        });
+        researchIssueId = researchIssue.id;
+        setCreatedResearchIssueId(researchIssue.id);
+
+        for (const file of companyDocuments) {
+          await issuesApi.uploadAttachment(createdCompanyId, researchIssue.id, file);
+        }
+
+        await agentsApi.wakeup(createdAgentId, {
+          source: "assignment",
+          triggerDetail: "system",
+          reason: "Company onboarding research sources are ready for vector-memory ingestion.",
+          payload: {
+            issueId: researchIssue.id,
+            companyId: createdCompanyId,
+            vectorMemoryUserId: createdCompanyId
+          },
+          idempotencyKey: `company-onboarding-research:${createdCompanyId}`
+        }, createdCompanyId);
       }
 
       setSelectedCompanyId(createdCompanyId);
@@ -706,6 +880,82 @@ export function OnboardingWizard() {
                       onChange={(e) => setCompanyGoal(e.target.value)}
                     />
                   </div>
+                  <div className="group">
+                    <label className="text-xs text-muted-foreground mb-1 block">
+                      Website (optional)
+                    </label>
+                    <input
+                      type="url"
+                      className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50"
+                      placeholder="https://acme.com"
+                      value={companyWebsite}
+                      onChange={(e) => setCompanyWebsite(e.target.value)}
+                    />
+                  </div>
+                  <div className="group">
+                    <label className="text-xs text-muted-foreground mb-1 block">
+                      Important links (optional, one per line)
+                    </label>
+                    <textarea
+                      className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50 resize-none min-h-[72px]"
+                      placeholder={"https://docs.acme.com\nhttps://linkedin.com/company/acme"}
+                      value={companyImportantLinks}
+                      onChange={(e) => setCompanyImportantLinks(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">
+                      Company documents (optional)
+                    </label>
+                    <label className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground">
+                      <Upload className="h-4 w-4" />
+                      Upload documents
+                      <input
+                        type="file"
+                        multiple
+                        className="hidden"
+                        accept=".pdf,.doc,.docx,.txt,.md,.csv,.ppt,.pptx,.xls,.xlsx,application/pdf,text/*"
+                        onChange={(event) => {
+                          const files = Array.from(event.target.files ?? []);
+                          setCompanyDocuments((current) => [...current, ...files]);
+                          event.target.value = "";
+                        }}
+                      />
+                    </label>
+                    {companyDocuments.length > 0 && (
+                      <div className="mt-2 space-y-1">
+                        {companyDocuments.map((file, index) => (
+                          <div key={`${file.name}-${file.size}-${index}`} className="flex items-center justify-between gap-2 text-xs">
+                            <span className="truncate text-muted-foreground">{file.name}</span>
+                            <button
+                              type="button"
+                              className="text-muted-foreground hover:text-foreground"
+                              onClick={() => setCompanyDocuments((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <label className="flex cursor-pointer items-start gap-3 rounded-md border border-border p-3 hover:bg-accent/40">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-4 w-4"
+                      checked={addMarketingStack}
+                      onChange={(event) => setAddMarketingStack(event.target.checked)}
+                    />
+                    <span>
+                      <span className="block text-sm font-medium">
+                        Add Marketing Stack
+                      </span>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">
+                        Adds Market Research, Market Intelligence, and Carousel
+                        Social Media agents. All three report directly to the CEO.
+                      </span>
+                    </span>
+                  </label>
                 </div>
               )}
 
@@ -1149,6 +1399,18 @@ export function OnboardingWizard() {
                       </div>
                       <Check className="h-4 w-4 text-green-500 shrink-0" />
                     </div>
+                    {addMarketingStack && (
+                      <div className="flex items-center gap-3 px-3 py-2.5">
+                        <Bot className="h-4 w-4 text-muted-foreground shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium">Marketing Stack</p>
+                          <p className="text-xs text-muted-foreground">
+                            Research, intelligence, and carousel social media
+                          </p>
+                        </div>
+                        <Check className="h-4 w-4 text-green-500 shrink-0" />
+                      </div>
+                    )}
                     <div className="flex items-center gap-3 px-3 py-2.5">
                       <Bot className="h-4 w-4 text-muted-foreground shrink-0" />
                       <div className="flex-1 min-w-0">

@@ -1057,6 +1057,7 @@ async function readUrlSkillImports(
     const parsed = new URL(url);
     if (parsed.protocol !== "https:") return false;
     const h = parsed.hostname.toLowerCase();
+    if (h === "clawhub.ai" || h === "www.clawhub.ai") return false;
     if (h.endsWith(".githubusercontent.com") || h === "gist.github.com") return false;
     const segments = parsed.pathname.split("/").filter(Boolean);
     return segments.length >= 2 && !parsed.pathname.endsWith(".md");

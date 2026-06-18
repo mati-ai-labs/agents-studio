@@ -16,6 +16,8 @@ const attachmentMaxBytesSchema = z
 export const createCompanySchema = z.object({
   name: z.string().min(1),
   description: z.string().optional().nullable(),
+  website: z.string().url().optional().nullable(),
+  importantLinks: z.array(z.string().url()).max(25).optional().default([]),
   budgetMonthlyCents: z.number().int().nonnegative().optional().default(0),
   attachmentMaxBytes: attachmentMaxBytesSchema.optional(),
 });

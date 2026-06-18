@@ -41,6 +41,8 @@ export const portabilityCompanyManifestEntrySchema = z.object({
   path: z.string().min(1),
   name: z.string().min(1),
   description: z.string().nullable(),
+  website: z.string().url().nullable().default(null),
+  importantLinks: z.array(z.string().url()).default([]),
   brandColor: z.string().nullable(),
   logoPath: z.string().nullable(),
   attachmentMaxBytes: z.number().int().min(1).max(MAX_COMPANY_ATTACHMENT_MAX_BYTES).nullable().default(null),

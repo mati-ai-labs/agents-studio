@@ -2520,6 +2520,10 @@ function buildManifestFromPackageFiles(
       path: resolvedCompanyPath,
       name: companyName,
       description: asString(companyFrontmatter.description),
+      website: asString(paperclipCompany.website),
+      importantLinks: Array.isArray(paperclipCompany.importantLinks)
+        ? paperclipCompany.importantLinks.filter((value): value is string => typeof value === "string")
+        : [],
       brandColor: asString(paperclipCompany.brandColor),
       logoPath: asString(paperclipCompany.logoPath) ?? asString(paperclipCompany.logo),
       attachmentMaxBytes:
@@ -3572,6 +3576,11 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
       {
         schema: "paperclip/v1",
         company: stripEmptyValues({
+          website: company.website ?? null,
+          importantLinks:
+            (company.importantLinks ?? []).length > 0
+              ? company.importantLinks
+              : undefined,
           brandColor: company.brandColor ?? null,
           logoPath: companyLogoPath,
           attachmentMaxBytes: company.attachmentMaxBytes,
@@ -4095,6 +4104,8 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
       const created = await companies.create({
         name: companyName,
         description: include.company ? (sourceManifest.company?.description ?? null) : null,
+        website: include.company ? (sourceManifest.company?.website ?? null) : null,
+        importantLinks: include.company ? (sourceManifest.company?.importantLinks ?? []) : [],
         brandColor: include.company ? (sourceManifest.company?.brandColor ?? null) : null,
         attachmentMaxBytes: include.company
           ? (sourceManifest.company?.attachmentMaxBytes ?? undefined)
@@ -4129,6 +4140,8 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         const updated = await companies.update(targetCompany.id, {
           name: sourceManifest.company.name,
           description: sourceManifest.company.description,
+          website: sourceManifest.company.website,
+          importantLinks: sourceManifest.company.importantLinks,
           brandColor: sourceManifest.company.brandColor,
           attachmentMaxBytes: sourceManifest.company.attachmentMaxBytes ?? undefined,
           requireBoardApprovalForNewAgents: sourceManifest.company.requireBoardApprovalForNewAgents,
