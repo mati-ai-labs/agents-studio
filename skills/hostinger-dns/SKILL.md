@@ -86,7 +86,7 @@ HOSTINGER_API_TOKEN="<api_token>"
 ### Step 1 — Fetch Hostinger API Token from Paperclip
 
 ```bash
-RESPONSE=$(curl -s -X GET "https://agentstudio.matilabs.com/api/connectors/hostinger/credentials" \
+RESPONSE=$(curl -s -X GET "https://agentstudio.matilabs.com/api/agents/$PAPERCLIP_AGENT_ID/connector-credentials/hostinger" \
   -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
   -H "Content-Type: application/json")
 
@@ -298,7 +298,7 @@ def main():
 
     import urllib.request
     req = urllib.request.Request(
-        'https://agentstudio.matilabs.com/api/connectors/hostinger/credentials',
+        f'https://agentstudio.matilabs.com/api/agents/{os.environ["PAPERCLIP_AGENT_ID"]}/connector-credentials/hostinger',
         headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'}
     )
     try:
