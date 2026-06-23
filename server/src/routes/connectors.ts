@@ -588,6 +588,136 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
   // -------------------------------------------------------------------------
   // POST /api/connectors/:type/configure — save manual credentials
   // -------------------------------------------------------------------------
+
+  // -------------------------------------------------------------------------
+  // GET /:agentId/connector-credentials/:type
+  //
+  // Agent-runtime credentials endpoint. Agents (actor.type === "agent") call
+  // this with their Bearer JWT to fetch decrypted credentials for connectors
+  // configured for their company. Returns the SAME response shape as the
+  // board-only endpoint, so the same skills work for both.
+  //
+  // Auth: assertCompanyAccess (works for board + agent). Agents are
+  // constrained to their own agentId in the URL.
+  // -------------------------------------------------------------------------
+  router.get("/:agentId/connector-credentials/:type", async (req: Request, res: Response) => {
+    assertAuthenticated(req);
+    try {
+      const requestedAgentId = typeof req.params.agentId === "string" ? req.params.agentId.trim() : "";
+      const type = typeof req.params.type === "string" ? req.params.type : "";
+      if (!requestedAgentId) {
+        res.status(400).json({ error: "agentId is required" });
+        return;
+      }
+      if (!type || type.trim().length === 0) {
+        res.status(400).json({ error: "Connector type is required" });
+        return;
+      }
+      if (!ALL_CONNECTOR_TYPES.includes(type as ConnectorType)) {
+        res.status(400).json({
+          error: "Invalid connector type. Allowed: " + ALL_CONNECTOR_TYPES.join(", "),
+        });
+        return;
+      }
+
+      // Agent can only fetch credentials for itself
+      if (req.actor.type === "agent") {
+        if (req.actor.agentId !== requestedAgentId) {
+          res.status(403).json({ error: "Agent can only fetch its own credentials" });
+          return;
+        }
+        if (!req.actor.companyId) {
+          res.status(400).json({ error: "Agent is missing companyId in actor context" });
+          return;
+        }
+        assertCompanyAccess(req, req.actor.companyId);
+      } else if (req.actor.type === "board") {
+        if (!req.query.companyId && Array.isArray(req.actor.companyIds) && req.actor.companyIds.length > 1) {
+          res.status(400).json({ error: "companyId query parameter is required when multiple companies are accessible" });
+          return;
+        }
+      }
+
+      // Resolve companyId
+      let companyId: string;
+      if (req.actor.type === "agent") {
+        companyId = req.actor.companyId as string;
+      } else {
+        companyId = await resolveCompanyId(req);
+      }
+
+      const connector = await registry.getByType(companyId, type as ConnectorType, null);
+      if (!connector) {
+        res.status(404).json({ error: "Connector not found" });
+        return;
+      }
+      if (connector.status !== "connected") {
+        res.status(409).json({ error: "Connector is " + connector.status, status: connector.status });
+        return;
+      }
+
+      // For agents we intentionally pass userId=null so the registry falls
+      // back to the company-level "legacy" credentials.
+      const credentials = await registry.getCredentialsAsync(companyId, type as ConnectorType, { userId: null });
+      if (!credentials) {
+        res.status(404).json({ error: "No credentials stored for this connector" });
+        return;
+      }
+
+      // AUDIT LOG
+      logger.info(
+        {
+          actor: "agent",
+          agentId: req.actor.type === "agent" ? req.actor.agentId : null,
+          runId: req.actor.type === "agent" ? req.actor.runId : null,
+          companyId,
+          connectorType: type,
+          ts: new Date().toISOString(),
+        },
+        "connector_credentials_fetched",
+      );
+
+      if (type === "aws") {
+        res.json({
+          type: "aws",
+          config: connector.config ?? {},
+          credentials: {
+            aws_access_key_id: credentials.accessToken,
+            aws_secret_access_key: credentials.refreshToken ?? "",
+            region: (connector.config?.region as string) ?? "us-east-1",
+            bucket_name: connector.config?.bucket_name ?? null,
+          },
+        });
+        return;
+      }
+      if (type === "hostinger") {
+        res.json({
+          type: "hostinger",
+          config: connector.config ?? {},
+          credentials: { api_token: credentials.accessToken },
+        });
+        return;
+      }
+      res.json({
+        type,
+        config: connector.config ?? {},
+        credentials: {
+          access_token: credentials.accessToken,
+          refresh_token: credentials.refreshToken,
+          expiry: credentials.expiry,
+        },
+      });
+    } catch (err) {
+      if (isMissingConnectorsTableError(err)) {
+        logger.warn({ err }, "Connector table missing; agent credentials unavailable");
+        res.status(503).json({ error: "Connectors storage is not initialized on this instance" });
+        return;
+      }
+      logger.error({ err }, "Failed to fetch agent connector credentials");
+      res.status(500).json({ error: "Internal error" });
+    }
+  });
+
   router.post("/:type/configure", async (req: Request, res: Response) => {
     assertAuthenticated(req);
     assertBoard(req);

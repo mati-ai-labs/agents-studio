@@ -39,9 +39,11 @@ executed via exec(). Replace `<...>` placeholders with actual values.
 ### Step 1 — Get AWS Credentials from Paperclip
 
 ```bash
-curl -s -X GET "https://agentstudio.matilabs.com/api/connectors/aws/credentials" \
+curl -s -X GET "https://agentstudio.matilabs.com/api/agents/$PAPERCLIP_AGENT_ID/connector-credentials/aws" \
   -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
   -H "Content-Type: application/json"
+# PAPERCLIP_AGENT_ID and PAPERCLIP_API_KEY are both injected into the agent
+# runtime env by Paperclip (see heartbeat.ts adapterConfig.env injection).
 ```
 
 Expected response:

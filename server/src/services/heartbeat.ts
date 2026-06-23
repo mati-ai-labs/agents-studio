@@ -7836,6 +7836,29 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           "local agent jwt secret missing or invalid; running without injected PAPERCLIP_API_KEY",
         );
       }
+      // Inject PAPERCLIP_API_KEY into agent.adapterConfig.env for ALL adapter
+      // types (not just Hermes). The env var is read by Claude/Codex/Cursor
+      // /Pi/OpenCode adapters when spawning the agent subprocess so they can
+      // call Paperclip API endpoints (e.g. connector credentials) from
+      // inside their own runtime. Do not clobber an explicitly-set value.
+      if (authToken) {
+        const existingAdapterConfig = (agent.adapterConfig ?? {}) as Record<string, unknown>;
+        const existingEnv =
+          typeof existingAdapterConfig.env === "object" && existingAdapterConfig.env !== null && !Array.isArray(existingAdapterConfig.env)
+            ? (existingAdapterConfig.env as Record<string, string>)
+            : {};
+        const explicitApiKey =
+          typeof existingEnv.PAPERCLIP_API_KEY === "string" && existingEnv.PAPERCLIP_API_KEY.trim().length > 0;
+        if (!explicitApiKey) {
+          agent.adapterConfig = {
+            ...existingAdapterConfig,
+            env: {
+              ...existingEnv,
+              PAPERCLIP_API_KEY: authToken,
+            },
+          };
+        }
+      }
       const adapterResult = await adapter.execute({
         runId: run.id,
         agent,
