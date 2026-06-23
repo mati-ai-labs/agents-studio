@@ -656,13 +656,14 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
         return;
       }
 
-      // For agents we intentionally pass userId=null so the registry falls
-      // back to the company-level "legacy" credentials.
-      const credentials = await registry.getCredentialsAsync(companyId, type as ConnectorType, { userId: null });
-      if (!credentials) {
+      // For agents: fetch credentials using company-wide lookup (any
+      // configured user's creds work since encryption is master-key based).
+      const lookup = await registry.getCredentialsForAgentAsync(companyId, type as ConnectorType);
+      if (!lookup) {
         res.status(404).json({ error: "No credentials stored for this connector" });
         return;
       }
+      const { credentials, sourceUserId } = lookup;
 
       // AUDIT LOG
       logger.info(
@@ -672,9 +673,10 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
           runId: req.actor.type === "agent" ? req.actor.runId : null,
           companyId,
           connectorType: type,
+          sourceUserId,
           ts: new Date().toISOString(),
         },
-        "connector_credentials_fetched",
+        "connector_credentials_fetched_by_agent",
       );
 
       if (type === "aws") {

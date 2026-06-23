@@ -299,9 +299,9 @@ export async function createApp(
   api.use(adapterRoutes());
   const connectorsRouter = connectorsRoutes(db);
   api.use("/connectors", connectorsRouter);
-  // Second mount: agent-runtime credentials endpoint lives at /api/agents/...
-  // so the route can be reached as /api/agents/:agentId/connector-credentials/:type.
-  api.use("/api/agents", connectorsRouter);
+  // Second mount: agent-runtime credentials endpoint. `api` is itself mounted
+  // at `/api`, so this resolves to /api/agents/:agentId/connector-credentials/:type.
+  api.use("/agents", connectorsRouter);
   api.use(chatRoutes(db));
   api.use(
     accessRoutes(db, {

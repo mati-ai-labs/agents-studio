@@ -157,6 +157,27 @@ function selectCredentialsForUser(
   return decoded.byUser[normalizedUserId] ?? decoded.legacy ?? null;
 }
 
+/**
+ * Pick credentials for an agent actor (no user context).
+ *
+ * The credential store is keyed per-user, but encryption uses the company
+ * master key (not per-user passwords), so any configured user's credentials
+ * can be safely decrypted and returned to a verified agent in the same
+ * company. We prefer the `legacy` (company-wide) entry, then the first
+ * configured `byUser` entry, and record which user was used for audit.
+ */
+function selectCredentialsForAgent(
+  encrypted: string | null | undefined,
+): { credentials: ConnectorCredentials | null; usedUserId: string | null } {
+  const decoded = readCredentialsStore(encrypted);
+  if (decoded.legacy) return { credentials: decoded.legacy, usedUserId: null };
+  const firstUserId = Object.keys(decoded.byUser)[0] ?? null;
+  if (firstUserId && decoded.byUser[firstUserId]) {
+    return { credentials: decoded.byUser[firstUserId], usedUserId: firstUserId };
+  }
+  return { credentials: null, usedUserId: null };
+}
+
 function readConfigStore(rawConfig: unknown): { byUser: Record<string, Record<string, unknown>>; legacy: Record<string, unknown> } {
   const root = toConfigObject(rawConfig);
   if (root[USER_SCOPED_MARKER] !== true) {
@@ -538,6 +559,22 @@ export function connectorRegistryService(db: Db) {
       const existing = await getByCompanyAndType(companyId, type);
       if (!existing?.credentialsEncrypted) return null;
       return selectCredentialsForUser(existing.credentialsEncrypted, opts?.userId);
+    },
+
+    /**
+     * Agent-scoped credential fetch. Picks any configured user's credentials
+     * for the company (encryption is master-key based, not per-user).
+     * Returns which user the credentials belong to for audit logging.
+     */
+    getCredentialsForAgentAsync: async (
+      companyId: string,
+      type: ConnectorType,
+    ): Promise<{ credentials: ConnectorCredentials; sourceUserId: string | null } | null> => {
+      const existing = await getByCompanyAndType(companyId, type);
+      if (!existing?.credentialsEncrypted) return null;
+      const result = selectCredentialsForAgent(existing.credentialsEncrypted);
+      if (!result.credentials) return null;
+      return { credentials: result.credentials, sourceUserId: result.usedUserId };
     },
 
     /**
