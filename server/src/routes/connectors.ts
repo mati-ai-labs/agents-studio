@@ -43,10 +43,10 @@ import { logger } from "../middleware/logger.js";
 // Types
 // ---------------------------------------------------------------------------
 
-type ConnectorType = "google_workspace" | "notion" | "linear" | "jira" | "github";
+type ConnectorType = "google_workspace" | "notion" | "linear" | "jira" | "github" | "aws" | "hostinger";
 const GOOGLE_CONNECTOR_TYPE: ConnectorType = "google_workspace";
 const OAUTH_CONNECTOR_TYPES: ConnectorType[] = ["google_workspace", "notion", "linear"];
-const MANUAL_CONNECTOR_TYPES: ConnectorType[] = ["jira", "github"];
+const MANUAL_CONNECTOR_TYPES: ConnectorType[] = ["jira", "github", "aws", "hostinger"];
 const ALL_CONNECTOR_TYPES: ConnectorType[] = [...OAUTH_CONNECTOR_TYPES, ...MANUAL_CONNECTOR_TYPES];
 const GOOGLE_OAUTH_SCOPES = [
   "openid",
@@ -503,6 +503,89 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
   });
 
   // -------------------------------------------------------------------------
+  // GET /api/connectors/:type/credentials — get decrypted credentials for agents
+  // Works for ALL connector types. Returns credentials decrypted server-side.
+  // EC2 is self-hosted so credentials never leave our infrastructure.
+  // -------------------------------------------------------------------------
+  router.get("/:type/credentials", async (req: Request, res: Response) => {
+    assertAuthenticated(req);
+    assertBoard(req);
+    try {
+      const companyId = await resolveCompanyId(req);
+      const userId = resolveActorUserId(req);
+      const type = req.params.type as string;
+
+      if (!type || type.trim().length === 0) {
+        res.status(400).json({ error: "Connector type is required" });
+        return;
+      }
+
+      const connector = await registry.getByType(companyId, type as ConnectorType, userId);
+      if (!connector) {
+        res.status(404).json({ error: "Connector not found" });
+        return;
+      }
+
+      if (connector.status !== "connected") {
+        res.status(409).json({ error: `Connector is ${connector.status}`, status: connector.status });
+        return;
+      }
+
+      const credentials = await registry.getCredentialsAsync(companyId, type as ConnectorType, { userId });
+      if (!credentials) {
+        res.status(404).json({ error: "No credentials stored for this connector" });
+        return;
+      }
+
+      // Return credentials formatted for the specific connector type
+      if (type === "aws") {
+        res.json({
+          type: "aws",
+          config: connector.config ?? {},
+          credentials: {
+            aws_access_key_id: credentials.accessToken,
+            aws_secret_access_key: credentials.refreshToken ?? "",
+            region: (connector.config?.region as string) ?? "us-east-1",
+            bucket_name: connector.config?.bucket_name ?? null,
+          },
+        });
+        return;
+      }
+
+      if (type === "hostinger") {
+        res.json({
+          type: "hostinger",
+          config: connector.config ?? {},
+          credentials: {
+            api_token: credentials.accessToken,
+          },
+        });
+        return;
+      }
+
+      // Default: OAuth-style credentials (google_workspace, notion, linear, jira, github, etc.)
+      res.json({
+        type,
+        config: connector.config ?? {},
+        credentials: {
+          access_token: credentials.accessToken,
+          refresh_token: credentials.refreshToken,
+          expiry: credentials.expiry,
+        },
+      });
+    } catch (err) {
+      if (isMissingConnectorsTableError(err)) {
+        logger.warn({ err }, "Connector table missing; credentials unavailable");
+        res.status(503).json({ error: "Connectors storage is not initialized on this instance" });
+        return;
+      }
+      logger.error({ err }, "Failed to get connector credentials");
+      res.status(500).json({ error: "Internal error" });
+    }
+  });
+
+
+  // -------------------------------------------------------------------------
   // POST /api/connectors/:type/configure — save manual credentials
   // -------------------------------------------------------------------------
   router.post("/:type/configure", async (req: Request, res: Response) => {
@@ -542,6 +625,96 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
             accessToken,
           },
           displayName: email,
+        });
+        res.json({
+          success: true,
+          connector: {
+            id: connector.id,
+            companyId: connector.companyId,
+            type: connector.type,
+            config: connector.config,
+            status: connector.status,
+            displayName: connector.displayName,
+            lastError: connector.lastError,
+            connectedAt: connector.connectedAt,
+            disconnectedAt: connector.disconnectedAt,
+            createdAt: connector.createdAt,
+            updatedAt: connector.updatedAt,
+          },
+        });
+        return;
+      }
+
+      // AWS manual configuration
+      if (type === "aws") {
+        const awsAccessKeyId = readNonEmptyString(payload.awsAccessKeyId);
+        const awsSecretAccessKey = readNonEmptyString(payload.awsSecretAccessKey);
+        const region = readNonEmptyString(payload.region) ?? "us-east-1";
+        const bucketName = readNonEmptyString(payload.bucketName);
+        if (!awsAccessKeyId || !awsSecretAccessKey || !bucketName) {
+          res.status(400).json({ error: "aws requires awsAccessKeyId, awsSecretAccessKey, and bucketName" });
+          return;
+        }
+        const existing = await registry.getByType(companyId, type, userId);
+        const connector = await registry.upsert({
+          companyId,
+          userId,
+          type,
+          status: "connected",
+          config: {
+            ...(existing?.config ?? {}),
+            region,
+            bucketName,
+            mcpEnabled: true,
+          },
+          credentials: {
+            accessToken: awsAccessKeyId,
+            refreshToken: awsSecretAccessKey,
+          },
+          displayName: bucketName,
+        });
+        res.json({
+          success: true,
+          connector: {
+            id: connector.id,
+            companyId: connector.companyId,
+            type: connector.type,
+            config: connector.config,
+            status: connector.status,
+            displayName: connector.displayName,
+            lastError: connector.lastError,
+            connectedAt: connector.connectedAt,
+            disconnectedAt: connector.disconnectedAt,
+            createdAt: connector.createdAt,
+            updatedAt: connector.updatedAt,
+          },
+        });
+        return;
+      }
+
+      // Hostinger manual configuration
+      if (type === "hostinger") {
+        const apiToken = readNonEmptyString(payload.apiToken);
+        const domain = readNonEmptyString(payload.domain);
+        if (!apiToken) {
+          res.status(400).json({ error: "hostinger requires apiToken" });
+          return;
+        }
+        const existing = await registry.getByType(companyId, type, userId);
+        const connector = await registry.upsert({
+          companyId,
+          userId,
+          type,
+          status: "connected",
+          config: {
+            ...(existing?.config ?? {}),
+            domain: domain ?? null,
+            mcpEnabled: true,
+          },
+          credentials: {
+            accessToken: apiToken,
+          },
+          displayName: domain ?? "Hostinger",
         });
         res.json({
           success: true,

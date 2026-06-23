@@ -9,7 +9,7 @@
 
 import { api } from "./client";
 
-export type ConnectorType = "google_workspace" | "notion" | "linear" | "jira" | "github";
+export type ConnectorType = "google_workspace" | "notion" | "linear" | "jira" | "github" | "aws" | "hostinger";
 export type ConnectorStatus = "disconnected" | "connecting" | "connected" | "error";
 
 export interface ConnectorRecord {
@@ -38,7 +38,15 @@ export interface InitiateOAuthResponse {
 export interface ConfigureConnectorInput {
   baseUrl?: string;
   email?: string;
-  accessToken: string;
+  accessToken?: string;
+  // AWS fields
+  awsAccessKeyId?: string;
+  awsSecretAccessKey?: string;
+  region?: string;
+  bucketName?: string;
+  // Hostinger fields
+  apiToken?: string;
+  domain?: string;
 }
 
 function withCompanyId(path: string, companyId?: string): string {

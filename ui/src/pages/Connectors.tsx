@@ -92,6 +92,20 @@ const CONNECTOR_META: Record<ConnectorType, {
     scopes: ["Repo read/write (as token allows)", "Pull requests", "Tasks"],
     mode: "manual",
   },
+  aws: {
+    name: "AWS S3",
+    description: "Provide AWS credentials so agents can deploy websites to S3 and manage cloud resources.",
+    icon: "S3",
+    scopes: ["S3 read/write", "STS session tokens", "Bucket management"],
+    mode: "manual",
+  },
+  hostinger: {
+    name: "Hostinger",
+    description: "Provide your Hostinger API token so agents can manage DNS records and hosting settings.",
+    icon: "H",
+    scopes: ["DNS management", "Domain records", "Hosting access"],
+    mode: "manual",
+  },
 };
 
 const STATUS_CONFIG: Record<ConnectorStatus, {
@@ -256,6 +270,12 @@ export function Connectors() {
   const [configBaseUrl, setConfigBaseUrl] = useState("");
   const [configEmail, setConfigEmail] = useState("");
   const [configAccessToken, setConfigAccessToken] = useState("");
+  const [configAwsAccessKey, setConfigAwsAccessKey] = useState("");
+  const [configAwsSecretKey, setConfigAwsSecretKey] = useState("");
+  const [configAwsRegion, setConfigAwsRegion] = useState("us-east-1");
+  const [configAwsBucketName, setConfigAwsBucketName] = useState("");
+  const [configHostingerToken, setConfigHostingerToken] = useState("");
+  const [configHostingerDomain, setConfigHostingerDomain] = useState("");
   const [isConfiguring, setIsConfiguring] = useState(false);
   const companyId = selectedCompany?.id ?? null;
 
@@ -366,7 +386,7 @@ export function Connectors() {
     return connectors.find((c) => c.type === type) ?? null;
   }
 
-  const connectorTypes: ConnectorType[] = ["google_workspace", "jira", "github", "notion", "linear"];
+  const connectorTypes: ConnectorType[] = ["google_workspace", "jira", "github", "notion", "linear", "aws", "hostinger"];
 
   function openConfigureDialog(type: ConnectorType) {
     const existing = getConnector(type);
@@ -375,6 +395,12 @@ export function Connectors() {
     setConfigBaseUrl(typeof existingConfig.baseUrl === "string" ? existingConfig.baseUrl : "");
     setConfigEmail(typeof existingConfig.email === "string" ? existingConfig.email : "");
     setConfigAccessToken("");
+    setConfigAwsAccessKey(typeof existingConfig.awsAccessKeyId === "string" ? existingConfig.awsAccessKeyId : "");
+    setConfigAwsSecretKey(typeof existingConfig.awsSecretAccessKey === "string" ? existingConfig.awsSecretAccessKey : "");
+    setConfigAwsRegion(typeof existingConfig.region === "string" ? existingConfig.region : "us-east-1");
+    setConfigAwsBucketName(typeof existingConfig.bucketName === "string" ? existingConfig.bucketName : "");
+    setConfigHostingerToken(typeof existingConfig.apiToken === "string" ? existingConfig.apiToken : "");
+    setConfigHostingerDomain(typeof existingConfig.domain === "string" ? existingConfig.domain : "");
   }
 
   async function handleConfigureSubmit() {
@@ -393,6 +419,18 @@ export function Connectors() {
           { accessToken: configAccessToken },
           companyId,
         );
+      } else if (configureDialogType === "aws") {
+        await connectorsApi.configure(
+          "aws",
+          { awsAccessKeyId: configAwsAccessKey, awsSecretAccessKey: configAwsSecretKey, region: configAwsRegion, bucketName: configAwsBucketName },
+          companyId,
+        );
+      } else if (configureDialogType === "hostinger") {
+        await connectorsApi.configure(
+          "hostinger",
+          { apiToken: configHostingerToken, domain: configHostingerDomain },
+          companyId,
+        );
       }
       pushToast({
         title: "Connector configured",
@@ -402,6 +440,11 @@ export function Connectors() {
       setConfigureDialogType(null);
       setConfigEmail("");
       setConfigAccessToken("");
+      setConfigAwsAccessKey("");
+      setConfigAwsSecretKey("");
+      setConfigAwsRegion("us-east-1");
+      setConfigAwsBucketName("");
+      setConfigHostingerToken("");
       await fetchConnectors();
     } catch (err) {
       pushToast({ title: "Failed to configure connector", body: String(err), tone: "error" });
@@ -493,6 +536,73 @@ export function Connectors() {
                 />
               </label>
             )}
+
+            {configureDialogType === "aws" && (
+              <>
+                <label className="block space-y-1">
+                  <span className="text-sm font-medium">AWS Access Key ID</span>
+                  <input
+                    className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none"
+                    value={configAwsAccessKey}
+                    onChange={(e) => setConfigAwsAccessKey(e.target.value)}
+                    placeholder="AKIA..."
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-sm font-medium">AWS Secret Access Key</span>
+                  <input
+                    className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none"
+                    type="password"
+                    value={configAwsSecretKey}
+                    onChange={(e) => setConfigAwsSecretKey(e.target.value)}
+                    placeholder="..."
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-sm font-medium">AWS Region</span>
+                  <input
+                    className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none"
+                    value={configAwsRegion}
+                    onChange={(e) => setConfigAwsRegion(e.target.value)}
+                    placeholder="us-east-1"
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-sm font-medium">S3 Bucket Name</span>
+                  <input
+                    className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none"
+                    value={configAwsBucketName}
+                    onChange={(e) => setConfigAwsBucketName(e.target.value)}
+                    placeholder="my-landing-page-bucket"
+                  />
+                </label>
+              </>
+            )}
+
+            {configureDialogType === "hostinger" && (
+              <>
+                <label className="block space-y-1">
+                  <span className="text-sm font-medium">Hostinger API Token</span>
+                  <input
+                    className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none"
+                    type="password"
+                    value={configHostingerToken}
+                    onChange={(e) => setConfigHostingerToken(e.target.value)}
+                    placeholder="..."
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-sm font-medium">Primary Domain</span>
+                  <input
+                    className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none"
+                    type="text"
+                    value={configHostingerDomain}
+                    onChange={(e) => setConfigHostingerDomain(e.target.value)}
+                    placeholder="mydomain.com"
+                  />
+                </label>
+              </>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setConfigureDialogType(null)}>
@@ -503,7 +613,9 @@ export function Connectors() {
               disabled={
                 isConfiguring ||
                 (configureDialogType === "jira" && (!configBaseUrl.trim() || !configEmail.trim())) ||
-                !configAccessToken.trim()
+                (configureDialogType === "github" && !configAccessToken.trim()) ||
+                (configureDialogType === "aws" && (!configAwsAccessKey.trim() || !configAwsSecretKey.trim() || !configAwsBucketName.trim())) ||
+                (configureDialogType === "hostinger" && (!configHostingerToken.trim() || !configHostingerDomain.trim()))
               }
             >
               {isConfiguring ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
