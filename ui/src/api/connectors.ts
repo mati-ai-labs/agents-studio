@@ -9,7 +9,7 @@
 
 import { api } from "./client";
 
-export type ConnectorType = "google_workspace" | "notion" | "linear" | "jira" | "github" | "aws" | "hostinger";
+export type ConnectorType = "google_workspace" | "notion" | "linear" | "jira" | "github" | "aws" | "hostinger" | "surge";
 export type ConnectorStatus = "disconnected" | "connecting" | "connected" | "error";
 
 export interface ConnectorRecord {
@@ -47,6 +47,9 @@ export interface ConfigureConnectorInput {
   // Hostinger fields
   apiToken?: string;
   domain?: string;
+  // Surge fields
+  token?: string;
+  default_domain?: string;
 }
 
 function withCompanyId(path: string, companyId?: string): string {

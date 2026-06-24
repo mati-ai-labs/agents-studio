@@ -106,6 +106,13 @@ const CONNECTOR_META: Record<ConnectorType, {
     scopes: ["DNS management", "Domain records", "Hosting access"],
     mode: "manual",
   },
+  surge: {
+    name: "Surge.sh",
+    description: "Provide your Surge.sh login token so agents can deploy static websites to the Surge CDN with one CLI command.",
+    icon: "⚡",
+    scopes: ["Static site deploy", "Custom domains", "CDN publish"],
+    mode: "manual",
+  },
 };
 
 const STATUS_CONFIG: Record<ConnectorStatus, {
@@ -276,6 +283,8 @@ export function Connectors() {
   const [configAwsBucketName, setConfigAwsBucketName] = useState("");
   const [configHostingerToken, setConfigHostingerToken] = useState("");
   const [configHostingerDomain, setConfigHostingerDomain] = useState("");
+  const [configSurgeToken, setConfigSurgeToken] = useState("");
+  const [configSurgeDomain, setConfigSurgeDomain] = useState("");
   const [isConfiguring, setIsConfiguring] = useState(false);
   const companyId = selectedCompany?.id ?? null;
 
@@ -386,7 +395,7 @@ export function Connectors() {
     return connectors.find((c) => c.type === type) ?? null;
   }
 
-  const connectorTypes: ConnectorType[] = ["google_workspace", "jira", "github", "notion", "linear", "aws", "hostinger"];
+  const connectorTypes: ConnectorType[] = ["google_workspace", "jira", "github", "notion", "linear", "aws", "hostinger", "surge"];
 
   function openConfigureDialog(type: ConnectorType) {
     const existing = getConnector(type);
@@ -401,6 +410,8 @@ export function Connectors() {
     setConfigAwsBucketName(typeof existingConfig.bucketName === "string" ? existingConfig.bucketName : "");
     setConfigHostingerToken(typeof existingConfig.apiToken === "string" ? existingConfig.apiToken : "");
     setConfigHostingerDomain(typeof existingConfig.domain === "string" ? existingConfig.domain : "");
+    setConfigSurgeToken("");
+    setConfigSurgeDomain(typeof existingConfig.default_domain === "string" ? existingConfig.default_domain : "");
   }
 
   async function handleConfigureSubmit() {
@@ -431,6 +442,12 @@ export function Connectors() {
           { apiToken: configHostingerToken, domain: configHostingerDomain },
           companyId,
         );
+      } else if (configureDialogType === "surge") {
+        await connectorsApi.configure(
+          "surge",
+          { token: configSurgeToken, default_domain: configSurgeDomain },
+          companyId,
+        );
       }
       pushToast({
         title: "Connector configured",
@@ -445,6 +462,8 @@ export function Connectors() {
       setConfigAwsRegion("us-east-1");
       setConfigAwsBucketName("");
       setConfigHostingerToken("");
+      setConfigSurgeToken("");
+      setConfigSurgeDomain("");
       await fetchConnectors();
     } catch (err) {
       pushToast({ title: "Failed to configure connector", body: String(err), tone: "error" });
@@ -603,6 +622,37 @@ export function Connectors() {
                 </label>
               </>
             )}
+
+            {configureDialogType === "surge" && (
+              <>
+                <label className="block space-y-1">
+                  <span className="text-sm font-medium">Surge.sh Login Token</span>
+                  <input
+                    className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none"
+                    type="password"
+                    value={configSurgeToken}
+                    onChange={(e) => setConfigSurgeToken(e.target.value)}
+                    placeholder="surge token output"
+                  />
+                  <span className="text-xs text-muted-foreground block">
+                    Generate via <code className="rounded bg-muted px-1 py-0.5">surge login &amp;&amp; surge token</code> on your local machine, then paste here.
+                  </span>
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-sm font-medium">Default Subdomain (optional)</span>
+                  <input
+                    className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none"
+                    type="text"
+                    value={configSurgeDomain}
+                    onChange={(e) => setConfigSurgeDomain(e.target.value)}
+                    placeholder="my-landing-page"
+                  />
+                  <span className="text-xs text-muted-foreground block">
+                    Will be published as <code className="rounded bg-muted px-1 py-0.5">{configSurgeDomain || "my-landing-page"}.surge.sh</code>.
+                  </span>
+                </label>
+              </>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setConfigureDialogType(null)}>
@@ -615,7 +665,8 @@ export function Connectors() {
                 (configureDialogType === "jira" && (!configBaseUrl.trim() || !configEmail.trim())) ||
                 (configureDialogType === "github" && !configAccessToken.trim()) ||
                 (configureDialogType === "aws" && (!configAwsAccessKey.trim() || !configAwsSecretKey.trim() || !configAwsBucketName.trim())) ||
-                (configureDialogType === "hostinger" && (!configHostingerToken.trim() || !configHostingerDomain.trim()))
+                (configureDialogType === "hostinger" && (!configHostingerToken.trim() || !configHostingerDomain.trim())) ||
+                (configureDialogType === "surge" && !configSurgeToken.trim())
               }
             >
               {isConfiguring ? <Loader2 className="h-4 w-4 animate-spin" /> : null}

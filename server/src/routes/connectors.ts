@@ -43,10 +43,10 @@ import { logger } from "../middleware/logger.js";
 // Types
 // ---------------------------------------------------------------------------
 
-type ConnectorType = "google_workspace" | "notion" | "linear" | "jira" | "github" | "aws" | "hostinger";
+type ConnectorType = "google_workspace" | "notion" | "linear" | "jira" | "github" | "aws" | "hostinger" | "surge";
 const GOOGLE_CONNECTOR_TYPE: ConnectorType = "google_workspace";
 const OAUTH_CONNECTOR_TYPES: ConnectorType[] = ["google_workspace", "notion", "linear"];
-const MANUAL_CONNECTOR_TYPES: ConnectorType[] = ["jira", "github", "aws", "hostinger"];
+const MANUAL_CONNECTOR_TYPES: ConnectorType[] = ["jira", "github", "aws", "hostinger", "surge"];
 const ALL_CONNECTOR_TYPES: ConnectorType[] = [...OAUTH_CONNECTOR_TYPES, ...MANUAL_CONNECTOR_TYPES];
 const GOOGLE_OAUTH_SCOPES = [
   "openid",
@@ -563,6 +563,18 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
         return;
       }
 
+      if (type === "surge") {
+        res.json({
+          type: "surge",
+          config: connector.config ?? {},
+          credentials: {
+            token: credentials.accessToken,
+            default_domain: (connector.config?.default_domain as string) ?? null,
+          },
+        });
+        return;
+      }
+
       // Default: OAuth-style credentials (google_workspace, notion, linear, jira, github, etc.)
       res.json({
         type,
@@ -697,6 +709,17 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
           type: "hostinger",
           config: connector.config ?? {},
           credentials: { api_token: credentials.accessToken },
+        });
+        return;
+      }
+      if (type === "surge") {
+        res.json({
+          type: "surge",
+          config: connector.config ?? {},
+          credentials: {
+            token: credentials.accessToken,
+            default_domain: (connector.config?.default_domain as string) ?? null,
+          },
         });
         return;
       }
@@ -847,6 +870,49 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
             accessToken: apiToken,
           },
           displayName: domain ?? "Hostinger",
+        });
+        res.json({
+          success: true,
+          connector: {
+            id: connector.id,
+            companyId: connector.companyId,
+            type: connector.type,
+            config: connector.config,
+            status: connector.status,
+            displayName: connector.displayName,
+            lastError: connector.lastError,
+            connectedAt: connector.connectedAt,
+            disconnectedAt: connector.disconnectedAt,
+            createdAt: connector.createdAt,
+            updatedAt: connector.updatedAt,
+          },
+        });
+        return;
+      }
+
+      // Surge manual configuration
+      if (type === "surge") {
+        const token = readNonEmptyString(payload.token);
+        const defaultDomain = readNonEmptyString(payload.default_domain ?? payload.defaultDomain);
+        if (!token) {
+          res.status(400).json({ error: "surge requires token" });
+          return;
+        }
+        const existing = await registry.getByType(companyId, type, userId);
+        const connector = await registry.upsert({
+          companyId,
+          userId,
+          type,
+          status: "connected",
+          config: {
+            ...(existing?.config ?? {}),
+            default_domain: defaultDomain ?? null,
+            mcpEnabled: true,
+          },
+          credentials: {
+            accessToken: token,
+          },
+          displayName: defaultDomain ?? "Surge.sh",
         });
         res.json({
           success: true,
