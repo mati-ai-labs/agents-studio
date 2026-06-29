@@ -113,6 +113,13 @@ const CONNECTOR_META: Record<ConnectorType, {
     scopes: ["Static site deploy", "Custom domains", "CDN publish"],
     mode: "manual",
   },
+  meta_ads: {
+    name: "Meta Ads",
+    description: "Connect a Meta (Facebook) Ads account so agents can read campaign performance, update budgets, and manage creatives through the Meta Ads MCP server.",
+    icon: "M",
+    scopes: ["ads_management", "ads_read", "business_management"],
+    mode: "oauth",
+  },
 };
 
 const STATUS_CONFIG: Record<ConnectorStatus, {
@@ -395,7 +402,7 @@ export function Connectors() {
     return connectors.find((c) => c.type === type) ?? null;
   }
 
-  const connectorTypes: ConnectorType[] = ["google_workspace", "jira", "github", "notion", "linear", "aws", "hostinger", "surge"];
+  const connectorTypes: ConnectorType[] = ["google_workspace", "jira", "github", "notion", "linear", "aws", "hostinger", "surge", "meta_ads"];
 
   function openConfigureDialog(type: ConnectorType) {
     const existing = getConnector(type);

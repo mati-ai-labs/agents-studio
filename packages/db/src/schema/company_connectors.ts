@@ -12,7 +12,7 @@ import { companies } from "./companies.js";
 /**
  * Supported connector types.
  */
-export type ConnectorType = "google_workspace" | "notion" | "linear" | "jira" | "github" | "aws" | "hostinger" | "surge";
+export type ConnectorType = "google_workspace" | "notion" | "linear" | "jira" | "github" | "aws" | "hostinger" | "surge" | "meta_ads";
 
 /**
  * Connector connection status.

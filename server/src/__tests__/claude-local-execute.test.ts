@@ -392,6 +392,86 @@ describe("claude execute", () => {
     }
   });
 
+  it("injects --mcp-config for Meta Ads when run-scoped MCP config is provided", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-exec-mcp-meta-ads-"));
+    const { workspace, commandPath, capturePath, restore } = await setupExecuteEnv(root);
+    try {
+      await execute({
+        runId: "run-mcp-config-meta-ads",
+        agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: {} },
+        runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: { PAPERCLIP_TEST_CAPTURE_PATH: capturePath },
+          promptTemplate: "Do work.",
+        },
+        context: {},
+        mcpConfig: {
+          metaAds: {
+            url: "https://mcp.facebook.com/ads",
+            accessToken: "meta-ads-access-token-for-test",
+          },
+        },
+        authToken: "tok",
+        onLog: async () => {},
+        onMeta: async () => {},
+      });
+      const captured = JSON.parse(await fs.readFile(capturePath, "utf-8")) as CapturePayload;
+      expect(captured.argv).toContain("--mcp-config");
+      expect(captured.mcpConfigContents ?? "").toContain("\"meta-ads\"");
+      expect(captured.mcpConfigContents ?? "").toContain("https://mcp.facebook.com/ads");
+      expect(captured.mcpConfigContents ?? "").toContain("Bearer meta-ads-access-token-for-test");
+      if (captured.mcpConfigFilePath) {
+        await expect(fs.stat(captured.mcpConfigFilePath)).rejects.toThrow();
+      }
+    } finally {
+      restore();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("injects a combined run-scoped MCP config when Meta Ads is combined with other connectors", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-exec-mcp-meta-ads-combined-"));
+    const { workspace, commandPath, capturePath, restore } = await setupExecuteEnv(root);
+    try {
+      await execute({
+        runId: "run-mcp-config-meta-ads-combined",
+        agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: {} },
+        runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: { PAPERCLIP_TEST_CAPTURE_PATH: capturePath },
+          promptTemplate: "Do work.",
+        },
+        context: {},
+        mcpConfig: {
+          googleWorkspace: {
+            url: "http://localhost:8080/mcp",
+            accessToken: "google-access-token-for-test",
+          },
+          metaAds: {
+            url: "https://mcp.facebook.com/ads",
+            accessToken: "meta-ads-access-token-for-test",
+          },
+        },
+        authToken: "tok",
+        onLog: async () => {},
+        onMeta: async () => {},
+      });
+      const captured = JSON.parse(await fs.readFile(capturePath, "utf-8")) as CapturePayload;
+      expect(captured.argv).toContain("--mcp-config");
+      expect(captured.mcpConfigContents ?? "").toContain("\"google-workspace\"");
+      expect(captured.mcpConfigContents ?? "").toContain("Bearer google-access-token-for-test");
+      expect(captured.mcpConfigContents ?? "").toContain("\"meta-ads\"");
+      expect(captured.mcpConfigContents ?? "").toContain("Bearer meta-ads-access-token-for-test");
+    } finally {
+      restore();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("auto-injects workspace .mcp-jira.json when present", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-exec-auto-jira-mcp-"));
     const { workspace, commandPath, capturePath, restore } = await setupExecuteEnv(root);

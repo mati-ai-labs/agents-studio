@@ -9,7 +9,7 @@
 
 import { api } from "./client";
 
-export type ConnectorType = "google_workspace" | "notion" | "linear" | "jira" | "github" | "aws" | "hostinger" | "surge";
+export type ConnectorType = "google_workspace" | "notion" | "linear" | "jira" | "github" | "aws" | "hostinger" | "surge" | "meta_ads";
 export type ConnectorStatus = "disconnected" | "connecting" | "connected" | "error";
 
 export interface ConnectorRecord {

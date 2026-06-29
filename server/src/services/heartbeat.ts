@@ -165,6 +165,7 @@ import { environmentRuntimeService } from "./environment-runtime.js";
 import { environmentRunOrchestrator } from "./environment-run-orchestrator.js";
 import { connectorRegistryService } from "./connector-registry.js";
 import { resolveGoogleWorkspaceMcpAccessToken } from "./google-workspace-mcp-auth.js";
+import { resolveMetaAdsMcpAccessToken } from "./meta-ads-mcp-auth.js";
 import type { PluginWorkerManager } from "./plugin-worker-manager.js";
 
 const MAX_LIVE_LOG_CHUNK_BYTES = 8 * 1024;
@@ -7804,9 +7805,46 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
               accessToken: githubAccessToken,
             }
           : null;
+
+      const metaAdsMcpEnabled =
+        runtimeConfig.enableMetaAdsMcp === undefined
+          ? true
+          : asBoolean(runtimeConfig.enableMetaAdsMcp, true);
+      const metaAdsMcpUrl =
+        readNonEmptyString(runtimeConfig.metaAdsMcpUrl) ??
+        readNonEmptyString(process.env.META_ADS_MCP_URL) ??
+        "https://mcp.facebook.com/ads";
+      const metaAdsMcpToken = metaAdsMcpEnabled
+        ? await resolveMetaAdsMcpAccessToken({
+            db,
+            companyId: agent.companyId,
+            userId: runRequestedByUserId,
+          })
+        : null;
+      if (
+        metaAdsMcpEnabled &&
+        metaAdsMcpToken?.reason &&
+        metaAdsMcpToken.reason !== "missing_credentials"
+      ) {
+        await onLog(
+          "stderr",
+          `[paperclip] Meta Ads MCP auth is unavailable (${metaAdsMcpToken.reason}).\n`,
+        );
+      }
+      const metaAdsConfig =
+        metaAdsMcpEnabled && metaAdsMcpToken?.accessToken
+          ? {
+              serverName:
+                readNonEmptyString(runtimeConfig.metaAdsMcpServerName) ??
+                "meta-ads",
+              url: metaAdsMcpUrl,
+              accessToken: metaAdsMcpToken.accessToken,
+            }
+          : null;
+
       const adapterMcpConfig = (
         googleWorkspaceMcpEnabled && googleWorkspaceMcpToken?.accessToken
-      ) || jiraConfig || githubConfig
+      ) || jiraConfig || githubConfig || metaAdsConfig
         ? {
             ...(googleWorkspaceMcpEnabled && googleWorkspaceMcpToken?.accessToken
               ? {
@@ -7818,6 +7856,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
               : {}),
             ...(jiraConfig ? { jira: jiraConfig } : {}),
             ...(githubConfig ? { github: githubConfig } : {}),
+            ...(metaAdsConfig ? { metaAds: metaAdsConfig } : {}),
           }
         : null;
 
