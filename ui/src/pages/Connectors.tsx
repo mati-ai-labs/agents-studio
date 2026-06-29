@@ -402,7 +402,9 @@ export function Connectors() {
     return connectors.find((c) => c.type === type) ?? null;
   }
 
-  const connectorTypes: ConnectorType[] = ["google_workspace", "jira", "github", "notion", "linear", "aws", "hostinger", "surge", "meta_ads"];
+  const connectorTypes: ConnectorType[] = [
+    "google_workspace", "jira", "github", "notion", "linear", "aws", "hostinger", "surge", "meta_ads",
+  ];
 
   function openConfigureDialog(type: ConnectorType) {
     const existing = getConnector(type);
