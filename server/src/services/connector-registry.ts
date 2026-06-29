@@ -497,6 +497,21 @@ export function connectorRegistryService(db: Db) {
 
       const credsState = readCredentialsStore(existing.credentialsEncrypted);
       if (!credsState.byUser[normalizedUserId]) {
+        // User has no stored credentials (e.g. OAuth never completed).
+        // If the connector is stuck in "connecting" limbo, reset it.
+        if (existing.status === "connecting") {
+          const rows = await db
+            .update(companyConnectors)
+            .set({
+              status: "disconnected" as ConnectorStatus,
+              lastError: null,
+              disconnectedAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(eq(companyConnectors.id, existing.id))
+            .returning();
+          return rows[0] ? projectRecordForUser(rows[0], normalizedUserId) : null;
+        }
         return projectRecordForUser(existing, normalizedUserId);
       }
       delete credsState.byUser[normalizedUserId];
