@@ -43,10 +43,10 @@ import { logger } from "../middleware/logger.js";
 // Types
 // ---------------------------------------------------------------------------
 
-type ConnectorType = "google_workspace" | "notion" | "linear" | "jira" | "github" | "aws" | "hostinger" | "surge" | "meta_ads";
+type ConnectorType = "google_workspace" | "notion" | "linear" | "jira" | "github" | "aws" | "hostinger" | "surge" | "meta_ads" | "slack";
 const GOOGLE_CONNECTOR_TYPE: ConnectorType = "google_workspace";
 const META_ADS_CONNECTOR_TYPE: ConnectorType = "meta_ads";
-const OAUTH_CONNECTOR_TYPES: ConnectorType[] = ["google_workspace", "notion", "linear", "meta_ads"];
+const OAUTH_CONNECTOR_TYPES: ConnectorType[] = ["google_workspace", "notion", "linear", "meta_ads", "slack"];
 const MANUAL_CONNECTOR_TYPES: ConnectorType[] = ["jira", "github", "aws", "hostinger", "surge"];
 const ALL_CONNECTOR_TYPES: ConnectorType[] = [...OAUTH_CONNECTOR_TYPES, ...MANUAL_CONNECTOR_TYPES];
 const GOOGLE_OAUTH_SCOPES = [
@@ -60,6 +60,13 @@ const META_ADS_OAUTH_SCOPES = [
   "ads_management",
   "ads_read",
   "business_management",
+] as const;
+const SLACK_OAUTH_SCOPES = [
+  "channels:read",
+  "channels:history",
+  "chat:write",
+  "users:read",
+  "team:read",
 ] as const;
 
 interface ConnectorOAuthConfig {
@@ -143,12 +150,25 @@ function getMetaAdsOAuthConfig(getBaseUrl: () => string): ConnectorOAuthConfig {
   };
 }
 
+function getSlackOAuthConfig(getBaseUrl: () => string): ConnectorOAuthConfig {
+  const baseUrl = getBaseUrl();
+  return {
+    clientId: process.env.SLACK_CLIENT_ID ?? "",
+    clientSecret: process.env.SLACK_CLIENT_SECRET ?? "",
+    redirectUri: `${baseUrl}/api/connectors/slack/callback`,
+    authorizationUrl: "https://slack.com/oauth/v2/authorize",
+    tokenUrl: "https://slack.com/api/oauth.v2.access",
+    scopes: [...SLACK_OAUTH_SCOPES],
+  };
+}
+
 function getOAuthConfig(type: ConnectorType, getBaseUrl: () => string): ConnectorOAuthConfig | null {
   switch (type) {
     case "google_workspace": return getGoogleOAuthConfig(getBaseUrl);
     case "notion": return getNotionOAuthConfig(getBaseUrl);
     case "linear": return getLinearOAuthConfig(getBaseUrl);
     case "meta_ads": return getMetaAdsOAuthConfig(getBaseUrl);
+    case "slack": return getSlackOAuthConfig(getBaseUrl);
     default: return null;
   }
 }
@@ -1126,6 +1146,12 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
           });
           return;
         }
+        if (type === "slack") {
+          res.status(503).json({
+            error: "Slack App credentials not configured — set SLACK_CLIENT_ID and SLACK_CLIENT_SECRET in your environment",
+          });
+          return;
+        }
         res.status(503).json({ error: `OAuth not configured for ${type}` });
         return;
       }
@@ -1159,6 +1185,17 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
           state,
           provider: "meta_ads",
           scopes: [...META_ADS_OAUTH_SCOPES],
+          next_step: "redirect",
+        });
+        return;
+      }
+      if (type === "slack") {
+        res.json({
+          authorizationUrl: authUrl,
+          authUrl,
+          state,
+          provider: "slack",
+          scopes: [...SLACK_OAUTH_SCOPES],
           next_step: "redirect",
         });
         return;

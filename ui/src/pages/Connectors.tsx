@@ -120,6 +120,13 @@ const CONNECTOR_META: Record<ConnectorType, {
     scopes: ["ads_management", "ads_read", "business_management"],
     mode: "oauth",
   },
+  slack: {
+    name: "Slack",
+    description: "Connect a Slack workspace so agents can read channels, send messages, and collaborate through Slack.",
+    icon: "#",
+    scopes: ["channels:read", "channels:history", "chat:write", "users:read", "team:read"],
+    mode: "oauth",
+  },
 };
 
 const STATUS_CONFIG: Record<ConnectorStatus, {
@@ -403,7 +410,7 @@ export function Connectors() {
   }
 
   const connectorTypes: ConnectorType[] = [
-    "google_workspace", "jira", "github", "notion", "linear", "aws", "hostinger", "surge", "meta_ads",
+    "google_workspace", "jira", "github", "notion", "linear", "aws", "hostinger", "surge", "meta_ads", "slack",
   ];
 
   function openConfigureDialog(type: ConnectorType) {
