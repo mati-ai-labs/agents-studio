@@ -11,7 +11,6 @@ import { approvalsApi } from "../api/approvals";
 import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
 import { routinesApi } from "../api/routines";
-import { companySkillsApi } from "../api/companySkills";
 import { queryKeys } from "../lib/queryKeys";
 import { Dialog, DialogPortal } from "@/components/ui/dialog";
 import {
@@ -47,6 +46,10 @@ import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
 import { DEFAULT_OPENCODE_LOCAL_MODEL, isValidOpenCodeModelId } from "@paperclipai/adapter-opencode-local";
 import { resolveRouteOnboardingOptions } from "../lib/onboarding-route";
+import {
+  registerMarketingStackAgents,
+  startMarketingStackImport,
+} from "../lib/marketing-stack-import";
 import { AsciiArtAnimation } from "./AsciiArtAnimation";
 import {
   Building2,
@@ -431,15 +434,6 @@ function buildCompanyResearchTaskDescription(input: {
   );
 }
 
-const LARRY_SKILL_SOURCE =
-  "https://clawhub.ai/api/v1/skills/larry/file?path=SKILL.md&ownerHandle=olliewazza";
-const MARKETING_SKILLS_SOURCE = "coreyhaines31/marketingskills";
-const PRODUCT_IDEATION_SKILL_SOURCE =
-  "borghei/Claude-Skills/brainstorm-ideas";
-const PRODUCT_JTBD_SKILL_SOURCE =
-  "deanpeters/Product-Manager-Skills/jobs-to-be-done";
-const PRODUCT_OST_SKILL_SOURCE =
-  "deanpeters/Product-Manager-Skills/opportunity-solution-tree";
 const MARKET_RESEARCH_SKILL_KEY =
   "paperclipai/paperclip/market-research-agent";
 
@@ -1139,6 +1133,9 @@ export function OnboardingWizard() {
       setCreatedCompanyId(company.id);
       setCreatedCompanyPrefix(company.issuePrefix);
       setSelectedCompanyId(company.id);
+      if (addMarketingStack) {
+        void startMarketingStackImport(company.id);
+      }
       setTaskTitle(DEFAULT_TASK_TITLE.replaceAll("{{company_name}}", company.name));
       setTaskDescription(buildCompanyResearchTaskDescription({
         companyId: company.id,
@@ -1218,106 +1215,51 @@ export function OnboardingWizard() {
 
       if (addMarketingStack) {
         const existingAgents = await agentsApi.list(createdCompanyId);
-        const existingNames = new Set(
-          existingAgents.map((entry) => entry.name.trim().toLowerCase())
+        const agentByName = new Map(
+          existingAgents.map((entry) => [entry.name.trim().toLowerCase(), entry])
         );
-        const skillKeys: Partial<
-          Record<"tiktok" | "brainstormIdeas" | "jobsToBeDone" | "opportunitySolutionTree", string>
-        > = {};
-
-        await companySkillsApi.importFromSource(
-          createdCompanyId,
-          MARKETING_SKILLS_SOURCE
-        );
-
-        if (!existingNames.has("carousel social media agent")) {
-          const imported = await companySkillsApi.importFromSource(
-            createdCompanyId,
-            LARRY_SKILL_SOURCE
-          );
-          const skill = imported.imported.find(
-            (entry) => entry.slug === "tiktok-app-marketing"
-          ) ?? imported.imported[0];
-          if (skill) skillKeys.tiktok = skill.key;
-        }
-
-        if (!existingNames.has("product design agent")) {
-          const [brainstormIdeas, jobsToBeDone, opportunitySolutionTree] =
-            await Promise.all([
-              companySkillsApi.importFromSource(
-                createdCompanyId,
-                PRODUCT_IDEATION_SKILL_SOURCE
-              ),
-              companySkillsApi.importFromSource(
-                createdCompanyId,
-                PRODUCT_JTBD_SKILL_SOURCE
-              ),
-              companySkillsApi.importFromSource(
-                createdCompanyId,
-                PRODUCT_OST_SKILL_SOURCE
-              ),
-            ]);
-          const brainstormIdeasSkill =
-            brainstormIdeas.imported.find(
-              (entry) => entry.slug === "brainstorm-ideas"
-            ) ?? brainstormIdeas.imported[0];
-          if (brainstormIdeasSkill) {
-            skillKeys.brainstormIdeas = brainstormIdeasSkill.key;
-          }
-          const jobsToBeDoneSkill =
-            jobsToBeDone.imported.find(
-              (entry) => entry.slug === "jobs-to-be-done"
-            ) ?? jobsToBeDone.imported[0];
-          if (jobsToBeDoneSkill) {
-            skillKeys.jobsToBeDone = jobsToBeDoneSkill.key;
-          }
-          const opportunitySolutionTreeSkill =
-            opportunitySolutionTree.imported.find(
-              (entry) => entry.slug === "opportunity-solution-tree"
-            ) ?? opportunitySolutionTree.imported[0];
-          if (opportunitySolutionTreeSkill) {
-            skillKeys.opportunitySolutionTree =
-              opportunitySolutionTreeSkill.key;
-          }
-        }
-
+        const marketingStackAgentLinks = [];
         for (const definition of MARKETING_STACK_AGENTS) {
-          if (existingNames.has(definition.name.toLowerCase())) continue;
-          const desiredSkills = Array.from(new Set([
-            ...definition.desiredSkillRefs,
-            ...(definition.needsTikTokSkill && skillKeys.tiktok ? [skillKeys.tiktok] : []),
-            ...(definition.needsProductIdeationSkills
-              ? [
-                  skillKeys.brainstormIdeas,
-                  skillKeys.jobsToBeDone,
-                  skillKeys.opportunitySolutionTree,
-                ].filter((value): value is string => typeof value === "string" && value.length > 0)
-              : []),
-          ]));
-          const stackHire = await agentsApi.hire(createdCompanyId, {
-            name: definition.name,
-            role: "general",
-            reportsTo: agent.id,
-            capabilities: definition.capabilities,
-            adapterType,
-            adapterConfig: buildAdapterConfig(),
-            runtimeConfig: buildNewAgentRuntimeConfig(),
-            ...(desiredSkills.length > 0 ? { desiredSkills } : {}),
-            instructionsBundle: {
-              entryFile: "AGENTS.md",
-              files: {
-                "AGENTS.md": definition.instructions
+          const nameKey = definition.name.trim().toLowerCase();
+          let stackAgent = agentByName.get(nameKey);
+          if (!stackAgent) {
+            const stackHire = await agentsApi.hire(createdCompanyId, {
+              name: definition.name,
+              role: "general",
+              reportsTo: agent.id,
+              capabilities: definition.capabilities,
+              adapterType,
+              adapterConfig: buildAdapterConfig(),
+              runtimeConfig: buildNewAgentRuntimeConfig(),
+              instructionsBundle: {
+                entryFile: "AGENTS.md",
+                files: {
+                  "AGENTS.md": definition.instructions
+                }
               }
+            });
+            if (stackHire.approval) {
+              await approvalsApi.approve(
+                stackHire.approval.id,
+                "Approved during onboarding Marketing Stack setup."
+              );
             }
-          });
-          if (stackHire.approval) {
-            await approvalsApi.approve(
-              stackHire.approval.id,
-              "Approved during onboarding Marketing Stack setup."
-            );
+            stackAgent = stackHire.agent;
+            agentByName.set(nameKey, stackAgent);
           }
-          existingNames.add(definition.name.toLowerCase());
+
+          marketingStackAgentLinks.push({
+            agentId: stackAgent.id,
+            desiredSkillRefs: definition.desiredSkillRefs,
+            skillSlugs: [
+              ...(definition.needsTikTokSkill ? ["tiktok-app-marketing"] : []),
+              ...(definition.needsProductIdeationSkills
+                ? ["brainstorm-ideas", "jobs-to-be-done", "opportunity-solution-tree"]
+                : []),
+            ],
+          });
         }
+        registerMarketingStackAgents(createdCompanyId, marketingStackAgentLinks);
       }
 
       queryClient.invalidateQueries({

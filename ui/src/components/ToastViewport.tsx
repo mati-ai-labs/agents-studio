@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "@/lib/router";
-import { X } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import {
   useToastActions,
   useToastState,
@@ -48,7 +48,11 @@ function AnimatedToast({
       )}
     >
       <div className="flex items-start gap-3 px-3 py-2.5">
-        <span className={cn("mt-1 h-2 w-2 shrink-0 rounded-full", toneDotClasses[toast.tone])} />
+        {toast.isLoading ? (
+          <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
+        ) : (
+          <span className={cn("mt-1 h-2 w-2 shrink-0 rounded-full", toneDotClasses[toast.tone])} />
+        )}
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold leading-5">{toast.title}</p>
           {toast.body && (
@@ -56,7 +60,18 @@ function AnimatedToast({
               {toast.body}
             </p>
           )}
-          {toast.action && (
+          {toast.action?.onClick ? (
+            <button
+              type="button"
+              onClick={() => {
+                toast.action?.onClick?.();
+                onDismiss(toast.id);
+              }}
+              className="mt-2 inline-flex text-xs font-medium underline underline-offset-4 hover:opacity-90"
+            >
+              {toast.action.label}
+            </button>
+          ) : toast.action?.href ? (
             <Link
               to={toast.action.href}
               onClick={() => onDismiss(toast.id)}
@@ -64,7 +79,7 @@ function AnimatedToast({
             >
               {toast.action.label}
             </Link>
-          )}
+          ) : null}
         </div>
         <button
           type="button"
@@ -85,21 +100,37 @@ export function ToastViewport() {
 
   if (toasts.length === 0) return null;
 
+  const topToasts = toasts.filter((toast) => toast.placement === "top");
+  const bottomToasts = toasts.filter((toast) => toast.placement === "bottom");
+
+  const renderStack = (stack: typeof toasts, placement: "top" | "bottom") => {
+    if (stack.length === 0) return null;
+    return (
+      <aside
+        aria-live="polite"
+        aria-atomic="false"
+        className={cn(
+          "pointer-events-none fixed z-[120] w-full max-w-sm px-1",
+          placement === "top" ? "top-3 right-3" : "bottom-3 left-3",
+        )}
+      >
+        <ol className={cn("flex w-full gap-2", placement === "top" ? "flex-col" : "flex-col-reverse")}>
+          {stack.map((toast) => (
+            <AnimatedToast
+              key={toast.id}
+              toast={toast}
+              onDismiss={dismissToast}
+            />
+          ))}
+        </ol>
+      </aside>
+    );
+  };
+
   return (
-    <aside
-      aria-live="polite"
-      aria-atomic="false"
-      className="pointer-events-none fixed bottom-3 left-3 z-[120] w-full max-w-sm px-1"
-    >
-      <ol className="flex w-full flex-col-reverse gap-2">
-        {toasts.map((toast) => (
-          <AnimatedToast
-            key={toast.id}
-            toast={toast}
-            onDismiss={dismissToast}
-          />
-        ))}
-      </ol>
-    </aside>
+    <>
+      {renderStack(topToasts, "top")}
+      {renderStack(bottomToasts, "bottom")}
+    </>
   );
 }
