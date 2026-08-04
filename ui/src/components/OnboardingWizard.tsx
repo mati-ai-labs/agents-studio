@@ -67,11 +67,362 @@ import {
 type Step = 1 | 2 | 3 | 4;
 type AdapterType = string;
 
-const DEFAULT_TASK_TITLE = "Research the company and build its vector memory";
-const DEFAULT_TASK_DESCRIPTION =
-  "Deeply research the company, analyze every supplied source and document, and build a structured company knowledge base in vector memory.";
+const DEFAULT_TASK_TITLE = "{{company_name}} Innovation Intelligence Report";
+const DEFAULT_TASK_DESCRIPTION = "";
+
+const INNOVATION_INTELLIGENCE_TASK_PROMPT = `## Company Innovation Intelligence Report
+
+# Target Company Website: {{company_website}}
+
+You are the Lead Innovation Strategy Agent operating inside an AI-native venture studio.
+
+Your responsibility is to deeply analyze this company, understand its business model and operational structure, identify how AI and agentic systems may disrupt its market, and propose high-leverage AI-powered innovation opportunities that can help the company defend and expand its market position.
+
+Your output should feel like a strategic innovation report prepared by an elite AI innovation studio and venture builder.
+
+Complete the following phases sequentially.
+
+***
+
+# PHASE 1 — Company Intelligence Scan
+
+Research the target company thoroughly.
+
+Analyze:
+
+- What the company does
+- How they make money
+- Their core products/services
+- Their pricing and monetization structure
+- Their business model
+- Their customer acquisition model
+- Their go-to-market strategy
+- Their delivery model
+- Their operational workflows
+- Their technology stack (if inferable)
+- Their team structure (if inferable)
+- Their strategic positioning in the market
+
+Map how the company currently delivers value to customers.
+
+Identify:
+
+- Core differentiators
+- Strengths
+- Weaknesses
+- Operational bottlenecks
+- Areas of inefficiency
+- Dependency risks
+- Workflow friction points
+
+Then summarize the company’s business model in plain language.
+
+***
+
+# PHASE 2 — Customer & Market Segmentation
+
+Identify and clearly define:
+
+- Core customer segments
+- Revenue-driving customer profiles
+- Primary operating modes
+
+Examples:
+
+- B2B
+- B2C
+- Enterprise
+- SMB
+- Marketplace
+- SaaS
+- Services
+- Subscription
+- Usage-based
+- Transactional
+- Hybrid models
+
+For each segment explain:
+
+- Who they serve
+- What problem they solve
+- Why customers buy from them
+- How important this segment is to revenue
+- The level of defensibility of that segment in the AI era
+
+Then identify:
+
+- Which customer segments are most vulnerable to AI disruption
+- Which segments are most valuable long-term
+- Which segments the company should expand into
+
+***
+
+# PHASE 3 — Moat & Competitive Positioning Analysis
+
+Identify the company’s core moat(s).
+
+Analyze:
+
+- Distribution advantages
+- Brand trust
+- Existing customer relationships
+- Proprietary data
+- Workflow lock-in
+- Operational excellence
+- Network effects
+- Industry expertise
+- Community advantages
+- Regulatory positioning
+- Technology differentiation
+
+Then answer:
+
+- Which moats strengthen in the AI era?
+- Which moats weaken in the AI era?
+- Which moats become commoditized due to AI?
+- What new moats should the company build now?
+
+***
+
+# PHASE 4 — AI-Era Risk Mapping
+
+Given the current wave of AI transformation and agentic innovation, identify the top risks this company faces if it fails to innovate aggressively.
+
+Think across:
+
+## Operational Risks
+
+- Manual workflows
+- Human-heavy execution
+- Inefficient coordination
+- Slow delivery systems
+- Poor internal knowledge management
+- Scalability bottlenecks
+
+## Market Risks
+
+- Pricing compression
+- AI commoditization
+- Lower barriers to entry
+- Faster competitors
+- Customer expectation shifts
+
+## Competitive Risks
+
+- AI-native entrants
+- Agentic platforms
+- Vertical AI startups
+- Workflow automation products
+- AI copilots replacing service layers
+
+## Strategic Risks
+
+- Failure to adapt
+- Weak AI positioning
+- Lack of proprietary data strategy
+- Failure to build distribution
+- Dependence on outdated workflows
+
+Be highly specific to this company and industry.
+
+Do not provide generic AI commentary.
+
+***
+
+# PHASE 5 — Emerging Startup Threat Landscape
+
+Research emerging startups, recently funded ventures, and AI-native companies operating in this company’s space.
+
+Identify:
+
+- Startup name
+- Funding stage (if available)
+- What they are building
+- Which workflow or market segment they are attacking
+- Why their approach matters
+- Why they are dangerous to incumbent companies
+- What AI or agentic advantage they possess
+
+Then explain:
+
+- How these startups could disrupt the target company
+- Which parts of the company are most exposed
+- Which market segments are most vulnerable
+- Which future customer expectations these startups are creating
+
+***
+
+# PHASE 6 — AI Innovation Opportunity Map
+
+Generate a prioritized list of the TOP 10 AI-powered innovation opportunities for this company.
+
+Split them into two categories:
+
+***
+
+## A. Internal Innovation Opportunities
+
+(Operational optimization using AI and agentic systems)
+
+Examples:
+
+- AI sales agents
+- AI operations copilots
+- AI customer support systems
+- AI workflow orchestration
+- AI marketing automation
+- AI reporting and analytics
+- AI knowledge management
+- AI employee copilots
+- AI onboarding systems
+- AI recruiting agents
+- AI customer success systems
+
+For each opportunity include:
+
+- Problem being solved
+- Workflow impact
+- Cost reduction potential
+- Speed improvement potential
+- Scalability impact
+- Estimated implementation complexity
+- Strategic importance
+
+***
+
+## B. External Innovation Opportunities
+
+(New products, services, features, or revenue streams)
+
+Examples:
+
+- AI-native SaaS products
+- Customer-facing copilots
+- Agentic workflow platforms
+- AI-powered marketplaces
+- AI subscriptions
+- AI-enabled premium services
+- Data intelligence products
+- AI advisory systems
+- Industry-specific AI assistants
+- AI automation platforms
+
+For each opportunity include:
+
+- Revenue potential
+- Strategic alignment
+- Market demand
+- Competitive advantage
+- Long-term defensibility
+- Why the company is uniquely positioned to win
+- Risks of not pursuing it
+
+***
+
+# PHASE 7 — Prioritized Strategic Recommendations
+
+From all opportunities identified above, select:
+
+# TOP 3 INTERNAL INNOVATIONS
+
+For each provide:
+
+- Why this is high leverage
+- ROI potential
+- Ease of execution
+- Expected operational impact
+- Strategic urgency
+- Recommended implementation roadmap
+- Short-term wins vs long-term value
+
+***
+
+# TOP 3 EXTERNAL INNOVATIONS
+
+For each provide:
+
+- Why this is a meaningful market opportunity
+- Revenue expansion potential
+- Strategic defensibility
+- AI-native differentiation potential
+- Alignment with the company’s current strengths
+- Why this matters now
+- Risks of waiting too long
+
+***
+
+# PHASE 8 — Strategic Urgency Brief
+
+Write a concise but high-conviction executive brief explaining:
+
+- Why this company must innovate now
+- Which startup threats matter most
+- Which customer expectations are changing fastest
+- What happens if the company delays AI adoption
+- Which innovation bets are the most strategically important
+- Which opportunities could create entirely new revenue categories
+- Which opportunities could become future company-defining products
+
+This section should read like a venture-backed strategic transformation memo.
+
+***
+
+# FINAL DELIVERABLE FORMAT
+
+Structure the final report in this exact order:
+
+1. Executive Summary
+2. Company Intelligence Overview
+3. Customer & Market Segmentation
+4. Moat & Competitive Positioning
+5. AI Risk Mapping
+6. Emerging Startup Threat Landscape
+7. Top 10 AI Innovation Opportunities
+8. Top 3 Internal Innovation Recommendations
+9. Top 3 External Innovation Recommendations
+10. Strategic Urgency Brief
+11. Final Strategic Conclusion & Next Steps
+
+***
+
+# OUTPUT QUALITY REQUIREMENTS
+
+The output must:
+
+- Be highly strategic and specific
+- Avoid generic AI buzzwords
+- Focus on real workflows and business leverage
+- Think like a venture studio, not a consultant
+- Focus on transformation, defensibility, and new revenue creation
+- Tie recommendations directly to competitive pressure and market shifts
+- Prioritize innovation opportunities with real business outcomes
+
+The report should feel sophisticated enough to present directly to:
+
+- CEOs
+- PE firms
+- Search funds
+- Venture partners
+- Strategy teams
+- Corporate innovation groups
+
+***
+
+# NEXT PHASE (DO NOT EXECUTE YET)
+
+Once this report is complete, the next phase will involve:
+
+- Creating product concepts
+- Designing AI-native workflows
+- Creating UI/UX prototypes
+- Building landing pages
+- Developing GTM messaging
+- Creating investor-style opportunity decks
+- Designing technical architecture concepts
+- Creating implementation roadmaps`;
 
 function buildCompanyResearchTaskDescription(input: {
+  companyName: string;
   companyId: string;
   website: string;
   importantLinks: string[];
@@ -85,15 +436,26 @@ function buildCompanyResearchTaskDescription(input: {
       : null
   ].filter(Boolean).join("\n");
 
-  return `Deeply research this company using every supplied source${sources ? " below" : ""}. Follow relevant links and identify the company's products, customers, market, positioning, team, business model, competitors, technology, operations, risks, and current priorities. Read every attached document and extract facts, decisions, terminology, and useful context.
+  const reportPrompt = INNOVATION_INTELLIGENCE_TASK_PROMPT
+    .replaceAll("{{company_name}}", input.companyName)
+    .replaceAll(
+      "{{company_website}}",
+      input.website || "No website supplied; infer from the company context and available sources."
+    );
 
-${sources || "No external sources were supplied. Start from the company name, mission, and available Paperclip context."}
+  return `${reportPrompt}
+
+## Onboarding execution context
+
+Read the company knowledge base and vector memory before forming conclusions. Use the current Paperclip company ID as user_id for every vector-memory call: ${input.companyId}. Never use an agent ID, email, issue ID, run ID, or generic placeholder as user_id.
+
+Read every supplied source and attachment${sources ? ` listed below:\n\n${sources}` : ". No external sources were supplied beyond the company context."}
 
 Persist the resulting knowledge through the vector-memory MCP. Use user_id="${input.companyId}" for every memory call; this must be the Paperclip company ID, never an agent ID, email, issue ID, or generic value. Store concise, independently useful facts with memory_remember using stable lowercase categories and keys. Record important decisions and dated findings with memory_record_event. Do not merely save raw pages or documents: synthesize them into meaningful, searchable company knowledge.
 
 When finished, comment on this issue with:
-- a structured company research summary
-- key products, customers, competitors, risks, and opportunities
+- confirmation that all eight phases were completed
+- the final report in the exact eleven-section order requested above
 - the vector-memory categories and keys written
 - gaps or uncertain claims that require human confirmation`;
 }
@@ -568,7 +930,11 @@ export function OnboardingWizard() {
     if (!company) return;
     setCreatedCompanyPrefix(company.issuePrefix);
     if (taskDescription === DEFAULT_TASK_DESCRIPTION) {
+      if (taskTitle === DEFAULT_TASK_TITLE) {
+        setTaskTitle(`${company.name} Innovation Intelligence Report`);
+      }
       setTaskDescription(buildCompanyResearchTaskDescription({
+        companyName: company.name,
         companyId: company.id,
         website: company.website ?? "",
         importantLinks: company.importantLinks ?? [],
@@ -581,7 +947,8 @@ export function OnboardingWizard() {
     createdCompanyPrefix,
     companies,
     companyDocuments,
-    taskDescription
+    taskDescription,
+    taskTitle
   ]);
 
   // Resize textarea when step 3 is shown or description changes
@@ -806,8 +1173,9 @@ export function OnboardingWizard() {
       setCreatedCompanyId(company.id);
       setCreatedCompanyPrefix(company.issuePrefix);
       setSelectedCompanyId(company.id);
-      setTaskTitle(DEFAULT_TASK_TITLE);
+      setTaskTitle(`${company.name} Innovation Intelligence Report`);
       setTaskDescription(buildCompanyResearchTaskDescription({
+        companyName: company.name,
         companyId: company.id,
         website: companyWebsite.trim(),
         importantLinks,
