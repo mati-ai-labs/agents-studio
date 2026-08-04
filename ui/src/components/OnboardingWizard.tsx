@@ -12,6 +12,7 @@ import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
 import { routinesApi } from "../api/routines";
 import { companySkillsApi } from "../api/companySkills";
+import { useToastActions } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 import { Dialog, DialogPortal } from "@/components/ui/dialog";
 import {
@@ -447,6 +448,7 @@ Deliver the finished 4-slide content package, not just notes.`,
 export function OnboardingWizard() {
   const { onboardingOpen, onboardingOptions, closeOnboarding } = useDialog();
   const { companies, setSelectedCompanyId, loading: companiesLoading } = useCompany();
+  const { pushToast } = useToastActions();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const location = useLocation();
@@ -1056,6 +1058,16 @@ export function OnboardingWizard() {
     setLoading(true);
     setError(null);
     try {
+      let marketingStackAgents: Awaited<ReturnType<typeof agentsApi.list>> | null = null;
+      let researchAssigneeId = createdAgentId;
+      if (addMarketingStack) {
+        marketingStackAgents = await agentsApi.list(createdCompanyId);
+        const marketResearchAgent = marketingStackAgents.find(
+          (entry) => entry.name.trim().toLowerCase() === "market research agent"
+        );
+        if (marketResearchAgent) researchAssigneeId = marketResearchAgent.id;
+      }
+
       let goalId = createdCompanyGoalId;
       if (!goalId) {
         const goals = await goalsApi.list(createdCompanyId);
@@ -1085,7 +1097,7 @@ export function OnboardingWizard() {
             ...buildOnboardingIssuePayload({
             title: taskTitle,
             description: taskDescription,
-            assigneeAgentId: createdAgentId,
+            assigneeAgentId: researchAssigneeId,
             projectId,
             goalId
             }),
@@ -1106,7 +1118,7 @@ export function OnboardingWizard() {
           await issuesApi.uploadAttachment(createdCompanyId, issueId, file);
         }
 
-        await agentsApi.wakeup(createdAgentId, {
+        await agentsApi.wakeup(researchAssigneeId, {
           source: "assignment",
           triggerDetail: "system",
           reason: "Company onboarding research sources are ready for vector-memory ingestion.",
@@ -1122,7 +1134,7 @@ export function OnboardingWizard() {
 
       if (addMarketingStack) {
         const [companyAgents, existingRoutines] = await Promise.all([
-          agentsApi.list(createdCompanyId),
+          marketingStackAgents ?? agentsApi.list(createdCompanyId),
           routinesApi.list(createdCompanyId, { projectId }),
         ]);
         const agentByName = new Map(
@@ -1166,6 +1178,22 @@ export function OnboardingWizard() {
       }
 
       setSelectedCompanyId(createdCompanyId);
+      pushToast({
+        title: "Your company is ready ✨",
+        body: addMarketingStack
+          ? "Your research agent is already working through the company sources, and your Marketing Stack is set up."
+          : "Your research agent is already working through the company sources and building its knowledge base.",
+        tone: "success",
+        ttlMs: 8000,
+        action: issueRef
+          ? {
+              label: "Open research task",
+              href: createdCompanyPrefix
+                ? `/${createdCompanyPrefix}/issues/${issueRef}`
+                : `/issues/${issueRef}`,
+            }
+          : undefined,
+      });
       reset();
       closeOnboarding();
       navigate(
