@@ -12,7 +12,6 @@ import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
 import { routinesApi } from "../api/routines";
 import { companySkillsApi } from "../api/companySkills";
-import { useToastActions } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 import { Dialog, DialogPortal } from "@/components/ui/dialog";
 import {
@@ -68,9 +67,7 @@ type Step = 1 | 2 | 3 | 4;
 type AdapterType = string;
 
 const DEFAULT_TASK_TITLE = "{{company_name}} Innovation Intelligence Report";
-const DEFAULT_TASK_DESCRIPTION = "";
-
-const INNOVATION_INTELLIGENCE_TASK_PROMPT = `## Company Innovation Intelligence Report
+const DEFAULT_TASK_DESCRIPTION = `## Company Innovation Intelligence Report
 
 # Target Company Website: {{company_website}}
 
@@ -419,45 +416,19 @@ Once this report is complete, the next phase will involve:
 - Developing GTM messaging
 - Creating investor-style opportunity decks
 - Designing technical architecture concepts
-- Creating implementation roadmaps`;
+- Creating implementation roadmaps
+`;
 
 function buildCompanyResearchTaskDescription(input: {
-  companyName: string;
   companyId: string;
   website: string;
   importantLinks: string[];
   documentNames: string[];
 }) {
-  const sources = [
-    input.website ? `Primary website: ${input.website}` : null,
-    ...input.importantLinks.map((link) => `Important link: ${link}`),
-    input.documentNames.length > 0
-      ? `Attached documents: ${input.documentNames.join(", ")}`
-      : null
-  ].filter(Boolean).join("\n");
-
-  const reportPrompt = INNOVATION_INTELLIGENCE_TASK_PROMPT
-    .replaceAll("{{company_name}}", input.companyName)
-    .replaceAll(
-      "{{company_website}}",
-      input.website || "No website supplied; infer from the company context and available sources."
-    );
-
-  return `${reportPrompt}
-
-## Onboarding execution context
-
-Read the company knowledge base and vector memory before forming conclusions. Use the current Paperclip company ID as user_id for every vector-memory call: ${input.companyId}. Never use an agent ID, email, issue ID, run ID, or generic placeholder as user_id.
-
-Read every supplied source and attachment${sources ? ` listed below:\n\n${sources}` : ". No external sources were supplied beyond the company context."}
-
-Persist the resulting knowledge through the vector-memory MCP. Use user_id="${input.companyId}" for every memory call; this must be the Paperclip company ID, never an agent ID, email, issue ID, or generic value. Store concise, independently useful facts with memory_remember using stable lowercase categories and keys. Record important decisions and dated findings with memory_record_event. Do not merely save raw pages or documents: synthesize them into meaningful, searchable company knowledge.
-
-When finished, comment on this issue with:
-- confirmation that all eight phases were completed
-- the final report in the exact eleven-section order requested above
-- the vector-memory categories and keys written
-- gaps or uncertain claims that require human confirmation`;
+  return DEFAULT_TASK_DESCRIPTION.replaceAll(
+    "{{company_website}}",
+    input.website || "No website supplied; infer from the company context and available sources."
+  );
 }
 
 const LARRY_SKILL_SOURCE =
@@ -810,7 +781,6 @@ Deliver the finished 4-slide content package, not just notes.`,
 export function OnboardingWizard() {
   const { onboardingOpen, onboardingOptions, closeOnboarding } = useDialog();
   const { companies, setSelectedCompanyId, loading: companiesLoading } = useCompany();
-  const { pushToast } = useToastActions();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const location = useLocation();
@@ -930,11 +900,8 @@ export function OnboardingWizard() {
     if (!company) return;
     setCreatedCompanyPrefix(company.issuePrefix);
     if (taskDescription === DEFAULT_TASK_DESCRIPTION) {
-      if (taskTitle === DEFAULT_TASK_TITLE) {
-        setTaskTitle(`${company.name} Innovation Intelligence Report`);
-      }
+      setTaskTitle(DEFAULT_TASK_TITLE.replaceAll("{{company_name}}", company.name));
       setTaskDescription(buildCompanyResearchTaskDescription({
-        companyName: company.name,
         companyId: company.id,
         website: company.website ?? "",
         importantLinks: company.importantLinks ?? [],
@@ -947,8 +914,7 @@ export function OnboardingWizard() {
     createdCompanyPrefix,
     companies,
     companyDocuments,
-    taskDescription,
-    taskTitle
+    taskDescription
   ]);
 
   // Resize textarea when step 3 is shown or description changes
@@ -1172,9 +1138,9 @@ export function OnboardingWizard() {
       });
       setCreatedCompanyId(company.id);
       setCreatedCompanyPrefix(company.issuePrefix);
-      setTaskTitle(`${company.name} Innovation Intelligence Report`);
+      setSelectedCompanyId(company.id);
+      setTaskTitle(DEFAULT_TASK_TITLE.replaceAll("{{company_name}}", company.name));
       setTaskDescription(buildCompanyResearchTaskDescription({
-        companyName: company.name,
         companyId: company.id,
         website: companyWebsite.trim(),
         importantLinks,
@@ -1425,16 +1391,6 @@ export function OnboardingWizard() {
     setLoading(true);
     setError(null);
     try {
-      let marketingStackAgents: Awaited<ReturnType<typeof agentsApi.list>> | null = null;
-      let researchAssigneeId = createdAgentId;
-      if (addMarketingStack) {
-        marketingStackAgents = await agentsApi.list(createdCompanyId);
-        const marketResearchAgent = marketingStackAgents.find(
-          (entry) => entry.name.trim().toLowerCase() === "market research agent"
-        );
-        if (marketResearchAgent) researchAssigneeId = marketResearchAgent.id;
-      }
-
       let goalId = createdCompanyGoalId;
       if (!goalId) {
         const goals = await goalsApi.list(createdCompanyId);
@@ -1464,7 +1420,7 @@ export function OnboardingWizard() {
             ...buildOnboardingIssuePayload({
             title: taskTitle,
             description: taskDescription,
-            assigneeAgentId: researchAssigneeId,
+            assigneeAgentId: createdAgentId,
             projectId,
             goalId
             }),
@@ -1485,7 +1441,7 @@ export function OnboardingWizard() {
           await issuesApi.uploadAttachment(createdCompanyId, issueId, file);
         }
 
-        await agentsApi.wakeup(researchAssigneeId, {
+        await agentsApi.wakeup(createdAgentId, {
           source: "assignment",
           triggerDetail: "system",
           reason: "Company onboarding research sources are ready for vector-memory ingestion.",
@@ -1501,7 +1457,7 @@ export function OnboardingWizard() {
 
       if (addMarketingStack) {
         const [companyAgents, existingRoutines] = await Promise.all([
-          marketingStackAgents ?? agentsApi.list(createdCompanyId),
+          agentsApi.list(createdCompanyId),
           routinesApi.list(createdCompanyId, { projectId }),
         ]);
         const agentByName = new Map(
@@ -1545,22 +1501,6 @@ export function OnboardingWizard() {
       }
 
       setSelectedCompanyId(createdCompanyId);
-      pushToast({
-        title: "Your company is ready ✨",
-        body: addMarketingStack
-          ? "Your research agent is already working through the company sources, and your Marketing Stack is set up."
-          : "Your research agent is already working through the company sources and building its knowledge base.",
-        tone: "success",
-        ttlMs: 8000,
-        action: issueRef
-          ? {
-              label: "Open research task",
-              href: createdCompanyPrefix
-                ? `/${createdCompanyPrefix}/issues/${issueRef}`
-                : `/issues/${issueRef}`,
-            }
-          : undefined,
-      });
       reset();
       closeOnboarding();
       navigate(
