@@ -1172,7 +1172,6 @@ export function OnboardingWizard() {
       });
       setCreatedCompanyId(company.id);
       setCreatedCompanyPrefix(company.issuePrefix);
-      setSelectedCompanyId(company.id);
       setTaskTitle(`${company.name} Innovation Intelligence Report`);
       setTaskDescription(buildCompanyResearchTaskDescription({
         companyName: company.name,
