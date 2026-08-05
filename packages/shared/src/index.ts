@@ -1062,6 +1062,13 @@ export {
 } from "./routine-variables.js";
 
 export {
+  MARKETING_INNOVATION_WORKFLOW_DESCRIPTION,
+  MARKETING_INNOVATION_WORKFLOW_TITLE,
+  buildMarketingInnovationWorkflowVariables,
+  type MarketingInnovationWorkflowContext,
+} from "./marketing-stack.js";
+
+export {
   paperclipConfigSchema,
   configMetaSchema,
   llmConfigSchema,

@@ -1,6 +1,11 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { AdapterEnvironmentTestResult } from "@paperclipai/shared";
+import {
+  MARKETING_INNOVATION_WORKFLOW_DESCRIPTION,
+  MARKETING_INNOVATION_WORKFLOW_TITLE,
+  buildMarketingInnovationWorkflowVariables,
+  type AdapterEnvironmentTestResult,
+} from "@paperclipai/shared";
 import { useLocation, useNavigate, useParams } from "@/lib/router";
 import { useDialog } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
@@ -770,6 +775,18 @@ Skill guidance
 Output
 Deliver the finished 4-slide content package, not just notes.`,
   },
+  {
+    title: MARKETING_INNOVATION_WORKFLOW_TITLE,
+    assigneeName: "Market Research Agent",
+    description: MARKETING_INNOVATION_WORKFLOW_DESCRIPTION,
+    trigger: {
+      kind: "webhook" as const,
+      label: "Innovation launch pack webhook",
+      enabled: true,
+      signingMode: "bearer" as const,
+    },
+    workflowVariables: true as const,
+  },
 ] as const;
 
 export function OnboardingWizard() {
@@ -1400,7 +1417,7 @@ export function OnboardingWizard() {
       if (addMarketingStack) {
         const [companyAgents, existingRoutines] = await Promise.all([
           agentsApi.list(createdCompanyId),
-          routinesApi.list(createdCompanyId, { projectId }),
+          routinesApi.list(createdCompanyId),
         ]);
         const agentByName = new Map(
           companyAgents.map((entry) => [entry.name.trim().toLowerCase(), entry])
@@ -1418,6 +1435,21 @@ export function OnboardingWizard() {
           );
           if (!assignee) continue;
 
+          const companyRecord = companies.find((entry) => entry.id === createdCompanyId);
+          const onboardingImportantLinks = companyImportantLinks
+            .split(/\r?\n/)
+            .map((entry) => entry.trim())
+            .filter(Boolean);
+          const workflowVariables = "workflowVariables" in routineDefinition && routineDefinition.workflowVariables
+            ? buildMarketingInnovationWorkflowVariables({
+                companyId: createdCompanyId,
+                companyName: companyRecord?.name ?? companyName.trim(),
+                website: companyRecord?.website ?? companyWebsite.trim(),
+                importantLinks: companyRecord?.importantLinks ?? onboardingImportantLinks,
+                documentNames: companyDocuments.map((file) => file.name),
+              })
+            : undefined;
+
           const routine = await routinesApi.create(createdCompanyId, {
             title: routineDefinition.title,
             description: routineDefinition.description,
@@ -1428,12 +1460,12 @@ export function OnboardingWizard() {
             status: "active",
             concurrencyPolicy: "coalesce_if_active",
             catchUpPolicy: "skip_missed",
+            ...(workflowVariables ? { variables: workflowVariables } : {}),
           });
-          await routinesApi.createTrigger(routine.id, {
-            kind: "api",
-            label: "Manual run",
-            enabled: true,
-          });
+          const trigger = "trigger" in routineDefinition && routineDefinition.trigger
+            ? routineDefinition.trigger
+            : { kind: "api" as const, label: "Manual run", enabled: true };
+          await routinesApi.createTrigger(routine.id, trigger);
           existingRoutineTitles.add(routineDefinition.title.toLowerCase());
         }
 
