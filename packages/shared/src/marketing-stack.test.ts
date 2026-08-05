@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   MARKETING_INNOVATION_WORKFLOW_DESCRIPTION,
   MARKETING_INNOVATION_WORKFLOW_TITLE,
+  buildMarketingInnovationWorkflowContent,
   buildMarketingInnovationWorkflowVariables,
 } from "./marketing-stack.js";
 
@@ -35,5 +36,24 @@ describe("marketing innovation workflow template", () => {
       uploaded_documents: "brief.pdf",
     });
     expect(variables.every((variable) => variable.required)).toBe(true);
+  });
+
+  it("materializes the saved workflow content for a company", () => {
+    const content = buildMarketingInnovationWorkflowContent({
+      companyId: "company-123",
+      companyName: "Acme",
+      website: "https://acme.example",
+      importantLinks: ["https://acme.example/about"],
+      documentNames: ["brief.pdf"],
+    });
+
+    expect(content.title).toBe("Acme Innovation Report + Venture Launch Pack");
+    expect(content.description).toContain("# Acme Innovation Report + Venture Launch Pack");
+    expect(content.description).toContain("- Company ID: company-123");
+    expect(content.description).toContain("- Company website: https://acme.example");
+    expect(content.description).toContain("https://acme.example/about");
+    expect(content.description).toContain("brief.pdf");
+    expect(content.description).not.toContain("{{company_name}}");
+    expect(content.description).not.toContain("{{company_id}}");
   });
 });

@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   MARKETING_INNOVATION_WORKFLOW_DESCRIPTION,
   MARKETING_INNOVATION_WORKFLOW_TITLE,
-  buildMarketingInnovationWorkflowVariables,
+  buildMarketingInnovationWorkflowContent,
   type AdapterEnvironmentTestResult,
 } from "@paperclipai/shared";
 import { useLocation, useNavigate, useParams } from "@/lib/router";
@@ -785,7 +785,7 @@ Deliver the finished 4-slide content package, not just notes.`,
       enabled: true,
       signingMode: "bearer" as const,
     },
-    workflowVariables: true as const,
+    materializeForCompany: true as const,
   },
 ] as const;
 
@@ -1425,9 +1425,29 @@ export function OnboardingWizard() {
         const existingRoutineTitles = new Set(
           existingRoutines.map((entry) => entry.title.trim().toLowerCase())
         );
+        const companyRecord = companies.find((entry) => entry.id === createdCompanyId);
+        const onboardingImportantLinks = companyImportantLinks
+          .split(/\r?\n/)
+          .map((entry) => entry.trim())
+          .filter(Boolean);
+        const companyContext = {
+          companyId: createdCompanyId,
+          companyName: companyRecord?.name ?? companyName.trim(),
+          website: companyRecord?.website ?? companyWebsite.trim(),
+          importantLinks: companyRecord?.importantLinks ?? onboardingImportantLinks,
+          documentNames: companyDocuments.map((file) => file.name),
+        };
 
         for (const routineDefinition of MARKETING_STACK_ROUTINES) {
-          if (existingRoutineTitles.has(routineDefinition.title.toLowerCase())) {
+          const materializedContent = "materializeForCompany" in routineDefinition && routineDefinition.materializeForCompany
+            ? buildMarketingInnovationWorkflowContent(companyContext)
+            : null;
+          const routineTitle = materializedContent?.title ?? routineDefinition.title;
+          const routineDescription = materializedContent?.description ?? routineDefinition.description;
+          if (
+            existingRoutineTitles.has(routineTitle.toLowerCase())
+            || existingRoutineTitles.has(routineDefinition.title.toLowerCase())
+          ) {
             continue;
           }
           const assignee = agentByName.get(
@@ -1435,24 +1455,9 @@ export function OnboardingWizard() {
           );
           if (!assignee) continue;
 
-          const companyRecord = companies.find((entry) => entry.id === createdCompanyId);
-          const onboardingImportantLinks = companyImportantLinks
-            .split(/\r?\n/)
-            .map((entry) => entry.trim())
-            .filter(Boolean);
-          const workflowVariables = "workflowVariables" in routineDefinition && routineDefinition.workflowVariables
-            ? buildMarketingInnovationWorkflowVariables({
-                companyId: createdCompanyId,
-                companyName: companyRecord?.name ?? companyName.trim(),
-                website: companyRecord?.website ?? companyWebsite.trim(),
-                importantLinks: companyRecord?.importantLinks ?? onboardingImportantLinks,
-                documentNames: companyDocuments.map((file) => file.name),
-              })
-            : undefined;
-
           const routine = await routinesApi.create(createdCompanyId, {
-            title: routineDefinition.title,
-            description: routineDefinition.description,
+            title: routineTitle,
+            description: routineDescription,
             assigneeAgentId: assignee.id,
             projectId,
             goalId,
@@ -1460,13 +1465,12 @@ export function OnboardingWizard() {
             status: "active",
             concurrencyPolicy: "coalesce_if_active",
             catchUpPolicy: "skip_missed",
-            ...(workflowVariables ? { variables: workflowVariables } : {}),
           });
           const trigger = "trigger" in routineDefinition && routineDefinition.trigger
             ? routineDefinition.trigger
             : { kind: "api" as const, label: "Manual run", enabled: true };
           await routinesApi.createTrigger(routine.id, trigger);
-          existingRoutineTitles.add(routineDefinition.title.toLowerCase());
+          existingRoutineTitles.add(routineTitle.toLowerCase());
         }
 
         queryClient.invalidateQueries({

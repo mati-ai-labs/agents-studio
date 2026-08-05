@@ -1064,6 +1064,7 @@ export {
 export {
   MARKETING_INNOVATION_WORKFLOW_DESCRIPTION,
   MARKETING_INNOVATION_WORKFLOW_TITLE,
+  buildMarketingInnovationWorkflowContent,
   buildMarketingInnovationWorkflowVariables,
   type MarketingInnovationWorkflowContext,
 } from "./marketing-stack.js";

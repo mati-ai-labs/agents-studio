@@ -4,9 +4,8 @@ export const MARKETING_INNOVATION_WORKFLOW_TITLE =
   "{{company_name}} Innovation Report + Venture Launch Pack";
 
 /**
- * The cross-company marketing-stack workflow. Keep the company fields as
- * placeholders: Paperclip resolves their per-company defaults at run time and
- * webhook callers can provide an explicit run override when needed.
+ * The reusable marketing-stack workflow template. On creation, callers should
+ * materialize the company placeholders with buildMarketingInnovationWorkflowContent.
  */
 export const MARKETING_INNOVATION_WORKFLOW_DESCRIPTION = `# {{company_name}} Innovation Report + Venture Launch Pack
 
@@ -216,6 +215,21 @@ function displayList(values: readonly string[] | null | undefined, fallback: str
   return entries.length > 0 ? entries.join("\n") : fallback;
 }
 
+function workflowPlaceholderValues(context: MarketingInnovationWorkflowContext) {
+  return Object.fromEntries(
+    buildMarketingInnovationWorkflowVariables(context).map((variable) => [
+      variable.name,
+      variable.defaultValue == null ? "" : String(variable.defaultValue),
+    ]),
+  );
+}
+
+function materializeWorkflowTemplate(template: string, values: Record<string, string>) {
+  return template.replace(/\{\{([A-Za-z][A-Za-z0-9_]*)\}\}/g, (placeholder, name) => (
+    values[name] ?? placeholder
+  ));
+}
+
 export function buildMarketingInnovationWorkflowVariables(
   context: MarketingInnovationWorkflowContext,
 ): RoutineVariable[] {
@@ -261,4 +275,14 @@ export function buildMarketingInnovationWorkflowVariables(
       options: [],
     },
   ];
+}
+
+export function buildMarketingInnovationWorkflowContent(
+  context: MarketingInnovationWorkflowContext,
+) {
+  const values = workflowPlaceholderValues(context);
+  return {
+    title: materializeWorkflowTemplate(MARKETING_INNOVATION_WORKFLOW_TITLE, values),
+    description: materializeWorkflowTemplate(MARKETING_INNOVATION_WORKFLOW_DESCRIPTION, values),
+  };
 }
