@@ -29,6 +29,7 @@ import {
 import type { WorkspaceOperationRecorder } from "./workspace-operations.js";
 import { readExecutionWorkspaceConfig } from "./execution-workspaces.js";
 import { readProjectWorkspaceRuntimeConfig } from "./project-workspace-runtime-config.js";
+import { previewLeaseService } from "./previews.js";
 
 export function resolveShell(): string {
   const fallback = process.platform === "win32" ? "sh" : "/bin/sh";
@@ -1552,7 +1553,13 @@ function resolveRuntimeServiceReuseIdentity(input: {
   reuseKey: string | null;
 } {
   const serviceName = asString(input.service.name, "service");
-  const lifecycle = asString(input.service.lifecycle, "shared") === "ephemeral" ? "ephemeral" : "shared";
+  const expose = parseObject(input.service.expose);
+  const isPaperclipPreview = asString(expose.type, "") === "paperclip_preview";
+  const lifecycle = isPaperclipPreview
+    ? "shared"
+    : asString(input.service.lifecycle, "shared") === "ephemeral"
+      ? "ephemeral"
+      : "shared";
   const command = asString(input.service.command, "");
   const serviceCwdTemplate = asString(input.service.cwd, ".");
   const portConfig = parseObject(input.service.port);
@@ -1690,7 +1697,12 @@ function resolveServiceScopeId(input: {
   scopeType: "project_workspace" | "execution_workspace" | "run" | "agent";
   scopeId: string | null;
 } {
-  const scopeTypeRaw = asString(input.service.reuseScope, input.service.lifecycle === "shared" ? "project_workspace" : "run");
+  const expose = parseObject(input.service.expose);
+  const isPaperclipPreview = asString(expose.type, "") === "paperclip_preview";
+  const scopeTypeRaw = asString(
+    input.service.reuseScope,
+    isPaperclipPreview || input.service.lifecycle === "shared" ? "project_workspace" : "run",
+  );
   const scopeType =
     scopeTypeRaw === "project_workspace" ||
     scopeTypeRaw === "execution_workspace" ||
@@ -1742,6 +1754,19 @@ async function waitForReadiness(input: {
     await delay(intervalMs);
   }
   throw new Error(`Readiness check failed for ${input.url}: ${lastError}`);
+}
+
+async function isLocalPortListening(port: number) {
+  return await new Promise<boolean>((resolve) => {
+    const socket = net.createConnection({ host: "127.0.0.1", port });
+    const finish = (healthy: boolean) => {
+      socket.destroy();
+      resolve(healthy);
+    };
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+    socket.setTimeout(1_000, () => finish(false));
+  });
 }
 
 async function isRuntimeServiceUrlHealthy(url: string | null) {
@@ -1820,6 +1845,86 @@ async function persistRuntimeServiceRecord(db: Db | undefined, record: RuntimeSe
         updatedAt: values.updatedAt,
       },
     });
+}
+
+async function attachPaperclipPreviewLease(input: {
+  db?: Db;
+  record: RuntimeServiceRecord;
+  service: Record<string, unknown>;
+}) {
+  const expose = parseObject(input.service.expose);
+  if (asString(expose.type, "") !== "paperclip_preview") return input.record;
+
+  input.record.lifecycle = "shared";
+  input.record.stopPolicy = {
+    ...input.record.stopPolicy,
+    type: "manual",
+    paperclipPreview: true,
+  };
+  await persistRuntimeServiceRecord(input.db, input.record);
+
+  if (!input.db || input.record.status !== "running") return input.record;
+  const lease = await previewLeaseService(input.db).createForRuntimeService({
+    companyId: input.record.companyId,
+    runtimeServiceId: input.record.id,
+  });
+  input.record.url = lease.url;
+  input.record.stopPolicy = {
+    ...input.record.stopPolicy,
+    previewLeaseId: lease.id,
+  };
+  await persistRuntimeServiceRecord(input.db, input.record);
+  await touchLocalServiceRegistryRecord(input.record.serviceKey, {
+    runtimeServiceId: input.record.id,
+    url: lease.url,
+    lastSeenAt: input.record.lastUsedAt,
+  });
+  return input.record;
+}
+
+export async function pinRuntimeServiceForPreview(input: {
+  db: Db;
+  runtimeServiceId: string;
+  previewUrl?: string | null;
+}) {
+  const record = runtimeServicesById.get(input.runtimeServiceId);
+  if (record) {
+    record.lifecycle = "shared";
+    record.stopPolicy = {
+      ...record.stopPolicy,
+      type: "manual",
+      paperclipPreview: true,
+    };
+    if (input.previewUrl) record.url = input.previewUrl;
+    clearIdleTimer(record);
+    await persistRuntimeServiceRecord(input.db, record);
+    await touchLocalServiceRegistryRecord(record.serviceKey, {
+      runtimeServiceId: record.id,
+      ...(input.previewUrl ? { url: input.previewUrl } : {}),
+      lastSeenAt: record.lastUsedAt,
+    });
+    return;
+  }
+
+  const existing = await input.db
+    .select({ id: workspaceRuntimeServices.id, stopPolicy: workspaceRuntimeServices.stopPolicy })
+    .from(workspaceRuntimeServices)
+    .where(eq(workspaceRuntimeServices.id, input.runtimeServiceId))
+    .then((rows) => rows[0] ?? null);
+  if (!existing) return;
+  await input.db
+    .update(workspaceRuntimeServices)
+    .set({
+      lifecycle: "shared",
+      stopPolicy: {
+        ...parseObject(existing.stopPolicy),
+        type: "manual",
+        paperclipPreview: true,
+      },
+      ...(input.previewUrl ? { url: input.previewUrl } : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(workspaceRuntimeServices.id, input.runtimeServiceId));
 }
 
 async function findStoppedRuntimeServiceReuseCandidate(input: {
@@ -2002,12 +2107,20 @@ async function startLocalRuntimeService(input: {
   }
 
   const expose = parseObject(input.service.expose);
+  const isPaperclipPreview = asString(expose.type, "") === "paperclip_preview";
   const readiness = parseObject(input.service.readiness);
-  const urlTemplate =
-    asString(expose.urlTemplate, "") ||
-    asString(readiness.urlTemplate, "");
+  const exposeUrlTemplate = asString(expose.urlTemplate, "");
+  const readinessUrlTemplate = asString(readiness.urlTemplate, "");
+  const urlTemplate = isPaperclipPreview ? "" : exposeUrlTemplate || readinessUrlTemplate;
   const url = urlTemplate ? renderTemplate(urlTemplate, templateData) : null;
-  const stopPolicy = parseObject(input.service.stopPolicy);
+  const readinessUrl = readinessUrlTemplate
+    ? renderTemplate(readinessUrlTemplate, templateData)
+    : isPaperclipPreview
+      ? null
+      : url;
+  const stopPolicy = isPaperclipPreview
+    ? { ...parseObject(input.service.stopPolicy), type: "manual", paperclipPreview: true }
+    : parseObject(input.service.stopPolicy);
   const serviceKey = createLocalServiceKey({
     profileKind: "workspace-runtime",
     serviceName,
@@ -2107,7 +2220,7 @@ async function startLocalRuntimeService(input: {
 
   try {
     await Promise.race([
-      waitForReadiness({ service: input.service, url }),
+      waitForReadiness({ service: input.service, url: readinessUrl }),
       spawnErrorPromise,
     ]);
   } catch (err) {
@@ -2416,6 +2529,7 @@ export async function ensureRuntimeServicesForRun(input: {
             lastSeenAt: existing.lastUsedAt,
           });
           await persistRuntimeServiceRecord(input.db, existing);
+          await attachPaperclipPreviewLease({ db: input.db, record: existing, service });
           acquiredServiceIds.push(existing.id);
           refs.push(toRuntimeServiceRef(existing, { reused: true }));
           continue;
@@ -2438,6 +2552,7 @@ export async function ensureRuntimeServicesForRun(input: {
       });
       registerRuntimeService(input.db, record);
       await persistRuntimeServiceRecord(input.db, record);
+      await attachPaperclipPreviewLease({ db: input.db, record, service });
       acquiredServiceIds.push(record.id);
       refs.push(toRuntimeServiceRef(record));
     }
@@ -2503,6 +2618,7 @@ export async function startRuntimeServicesForWorkspaceControl(input: {
           lastSeenAt: existing.lastUsedAt,
         });
         await persistRuntimeServiceRecord(input.db, existing);
+        await attachPaperclipPreviewLease({ db: input.db, record: existing, service });
         refs.push(toRuntimeServiceRef(existing, { reused: true }));
         continue;
       }
@@ -2528,6 +2644,7 @@ export async function startRuntimeServicesForWorkspaceControl(input: {
     });
     registerRuntimeService(input.db, record);
     await persistRuntimeServiceRecord(input.db, record);
+    await attachPaperclipPreviewLease({ db: input.db, record, service });
     refs.push(toRuntimeServiceRef(record));
   }
 
@@ -2689,7 +2806,11 @@ export async function reconcilePersistedRuntimeServicesOnStartup(db: Db) {
     });
     if (adoptedRecord) {
       const adoptedUrl = adoptedRecord.url ?? row.url ?? null;
-      if (!(await isRuntimeServiceUrlHealthy(adoptedUrl))) {
+      const paperclipPreview = parseObject(row.stopPolicy).paperclipPreview === true;
+      const healthy = paperclipPreview && row.port
+        ? await isLocalPortListening(row.port)
+        : await isRuntimeServiceUrlHealthy(adoptedUrl);
+      if (!healthy) {
         await removeLocalServiceRegistryRecord(adoptedRecord.serviceKey);
       } else {
         const record: RuntimeServiceRecord = {

@@ -623,6 +623,9 @@ export type {
   PluginWebhookDeliveryRecord,
   QuotaWindow,
   ProviderQuotaResult,
+  CreatePreviewLease,
+  PreviewLease,
+  PreviewLeaseStatus,
 } from "./types/index.js";
 export { COMPANY_SEARCH_SCOPES } from "./types/index.js";
 export {
@@ -698,6 +701,7 @@ export {
   type UpdateCompany,
   type UpdateCompanyBranding,
   type UpsertIssueFeedbackVote,
+  createPreviewLeaseSchema,
   environmentDriverSchema,
   environmentStatusSchema,
   environmentLeaseStatusSchema,

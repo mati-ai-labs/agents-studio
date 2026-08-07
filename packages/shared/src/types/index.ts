@@ -333,6 +333,7 @@ export type {
   UserCompanyAccessResponse,
 } from "./access.js";
 export type { QuotaWindow, ProviderQuotaResult } from "./quota.js";
+export type { CreatePreviewLease, PreviewLease, PreviewLeaseStatus } from "./preview.js";
 export type {
   CompanyPortabilityInclude,
   CompanyPortabilityEnvInput,

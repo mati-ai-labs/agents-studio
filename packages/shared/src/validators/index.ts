@@ -349,6 +349,11 @@ export {
 } from "./asset.js";
 
 export {
+  createPreviewLeaseSchema,
+  type CreatePreviewLease,
+} from "./preview.js";
+
+export {
   createCompanyInviteSchema,
   createOpenClawInvitePromptSchema,
   acceptInviteSchema,
