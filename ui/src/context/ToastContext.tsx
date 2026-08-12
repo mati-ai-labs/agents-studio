@@ -10,10 +10,12 @@ import {
 } from "react";
 
 export type ToastTone = "info" | "success" | "warn" | "error";
+export type ToastPlacement = "top" | "bottom";
 
 export interface ToastAction {
   label: string;
-  href: string;
+  href?: string;
+  onClick?: () => void;
 }
 
 export interface ToastInput {
@@ -24,6 +26,9 @@ export interface ToastInput {
   tone?: ToastTone;
   ttlMs?: number;
   action?: ToastAction;
+  placement?: ToastPlacement;
+  persistent?: boolean;
+  isLoading?: boolean;
 }
 
 export interface ToastItem {
@@ -33,6 +38,9 @@ export interface ToastItem {
   tone: ToastTone;
   ttlMs: number;
   action?: ToastAction;
+  placement: ToastPlacement;
+  persistent: boolean;
+  isLoading: boolean;
   createdAt: number;
 }
 
@@ -106,7 +114,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       const tone = input.tone ?? "info";
       const ttlMs = normalizeTtl(input.ttlMs, tone);
       const dedupeKey =
-        input.dedupeKey ?? input.id ?? `${tone}|${input.title}|${input.body ?? ""}|${input.action?.href ?? ""}`;
+        input.dedupeKey
+        ?? input.id
+        ?? `${tone}|${input.title}|${input.body ?? ""}|${input.action?.href ?? ""}|${input.action?.label ?? ""}`;
 
       for (const [key, ts] of dedupeRef.current.entries()) {
         if (now - ts > DEDUPE_MAX_AGE_MS) {
@@ -131,6 +141,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           tone,
           ttlMs,
           action: input.action,
+          placement: input.placement ?? "bottom",
+          persistent: input.persistent ?? false,
+          isLoading: input.isLoading ?? false,
           createdAt: now,
         };
 
@@ -138,10 +151,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         return [nextToast, ...withoutCurrent].slice(0, MAX_TOASTS);
       });
 
-      const timeout = window.setTimeout(() => {
-        dismissToast(id);
-      }, ttlMs);
-      timersRef.current.set(id, timeout);
+      if (!input.persistent) {
+        const timeout = window.setTimeout(() => {
+          dismissToast(id);
+        }, ttlMs);
+        timersRef.current.set(id, timeout);
+      }
       return id;
     },
     [clearTimer, dismissToast],

@@ -43,10 +43,11 @@ import { logger } from "../middleware/logger.js";
 // Types
 // ---------------------------------------------------------------------------
 
-type ConnectorType = "google_workspace" | "notion" | "linear" | "jira" | "github";
+type ConnectorType = "google_workspace" | "notion" | "linear" | "jira" | "github" | "aws" | "hostinger" | "surge" | "meta_ads" | "slack";
 const GOOGLE_CONNECTOR_TYPE: ConnectorType = "google_workspace";
-const OAUTH_CONNECTOR_TYPES: ConnectorType[] = ["google_workspace", "notion", "linear"];
-const MANUAL_CONNECTOR_TYPES: ConnectorType[] = ["jira", "github"];
+const META_ADS_CONNECTOR_TYPE: ConnectorType = "meta_ads";
+const OAUTH_CONNECTOR_TYPES: ConnectorType[] = ["google_workspace", "notion", "linear", "meta_ads", "slack"];
+const MANUAL_CONNECTOR_TYPES: ConnectorType[] = ["jira", "github", "aws", "hostinger", "surge"];
 const ALL_CONNECTOR_TYPES: ConnectorType[] = [...OAUTH_CONNECTOR_TYPES, ...MANUAL_CONNECTOR_TYPES];
 const GOOGLE_OAUTH_SCOPES = [
   "openid",
@@ -54,6 +55,18 @@ const GOOGLE_OAUTH_SCOPES = [
   "profile",
   "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/drive.readonly",
+] as const;
+const META_ADS_OAUTH_SCOPES = [
+  "ads_management",
+  "ads_read",
+  "business_management",
+] as const;
+const SLACK_OAUTH_SCOPES = [
+  "channels:read",
+  "channels:history",
+  "chat:write",
+  "users:read",
+  "team:read",
 ] as const;
 
 interface ConnectorOAuthConfig {
@@ -125,11 +138,37 @@ function getLinearOAuthConfig(getBaseUrl: () => string): ConnectorOAuthConfig {
   };
 }
 
+function getMetaAdsOAuthConfig(getBaseUrl: () => string): ConnectorOAuthConfig {
+  const baseUrl = getBaseUrl();
+  return {
+    clientId: process.env.META_ADS_APP_ID ?? "",
+    clientSecret: process.env.META_ADS_APP_SECRET ?? "",
+    redirectUri: `${baseUrl}/api/connectors/meta_ads/callback`,
+    authorizationUrl: "https://www.facebook.com/v18.0/dialog/oauth",
+    tokenUrl: "https://graph.facebook.com/v18.0/oauth/access_token",
+    scopes: [...META_ADS_OAUTH_SCOPES],
+  };
+}
+
+function getSlackOAuthConfig(getBaseUrl: () => string): ConnectorOAuthConfig {
+  const baseUrl = getBaseUrl();
+  return {
+    clientId: process.env.SLACK_CLIENT_ID ?? "",
+    clientSecret: process.env.SLACK_CLIENT_SECRET ?? "",
+    redirectUri: `${baseUrl}/api/connectors/slack/callback`,
+    authorizationUrl: "https://slack.com/oauth/v2/authorize",
+    tokenUrl: "https://slack.com/api/oauth.v2.access",
+    scopes: [...SLACK_OAUTH_SCOPES],
+  };
+}
+
 function getOAuthConfig(type: ConnectorType, getBaseUrl: () => string): ConnectorOAuthConfig | null {
   switch (type) {
     case "google_workspace": return getGoogleOAuthConfig(getBaseUrl);
     case "notion": return getNotionOAuthConfig(getBaseUrl);
     case "linear": return getLinearOAuthConfig(getBaseUrl);
+    case "meta_ads": return getMetaAdsOAuthConfig(getBaseUrl);
+    case "slack": return getSlackOAuthConfig(getBaseUrl);
     default: return null;
   }
 }
@@ -158,6 +197,13 @@ function buildAuthorizationUrl(
     params.set("access_type", "offline");
     params.set("prompt", "consent");
     params.set("include_granted_scopes", "false");
+  }
+  if (type === META_ADS_CONNECTOR_TYPE) {
+    // Meta's OAuth dialog does not accept PKCE params. Strip the PKCE
+    // code_challenge / code_challenge_method — Meta authenticates by
+    // app secret (passed in the token exchange) rather than verifier.
+    params.delete("code_challenge");
+    params.delete("code_challenge_method");
   }
   return `${config.authorizationUrl}?${params.toString()}`;
 }
@@ -276,6 +322,96 @@ async function exchangeCodeForTokens(
   };
 }
 
+/**
+ * Meta Ads uses a GET-based token endpoint (no PKCE, no separate refresh
+ * token). The returned short-lived token is exchanged for a long-lived token
+ * via `fb_exchange_token` immediately after the initial code exchange so the
+ * connector stores the long-lived value.
+ */
+async function exchangeMetaAdsCodeForTokens(
+  config: ConnectorOAuthConfig,
+  code: string,
+): Promise<{ accessToken: string; refreshToken?: string; expiry?: number }> {
+  const params = new URLSearchParams({
+    client_id: config.clientId,
+    client_secret: config.clientSecret,
+    redirect_uri: config.redirectUri,
+    code,
+  });
+  const url = `${config.tokenUrl}?${params.toString()}`;
+
+  const response = await fetch(url, { method: "GET" });
+  if (!response.ok) {
+    const error = await response.text();
+    logger.error({ error, status: response.status }, "Meta Ads token exchange failed");
+    throw badRequest(`Meta Ads token exchange failed: ${response.status}`);
+  }
+
+  const shortLived = (await response.json()) as {
+    access_token?: string;
+    token_type?: string;
+    expires_in?: number;
+  };
+  const shortToken = typeof shortLived.access_token === "string" ? shortLived.access_token.trim() : "";
+  if (!shortToken) {
+    logger.error({ payload: shortLived }, "Meta Ads token exchange returned no access_token");
+    throw badRequest("Meta Ads token exchange returned no access_token");
+  }
+
+  // Upgrade short-lived token to long-lived via fb_exchange_token. If the
+  // upgrade fails we still persist the short-lived token so the user can
+  // re-auth; the MCP resolver will detect the missing expiry and skip
+  // injection until a fresh connect is performed.
+  const exchangeParams = new URLSearchParams({
+    grant_type: "fb_exchange_token",
+    client_id: config.clientId,
+    client_secret: config.clientSecret,
+    fb_exchange_token: shortToken,
+  });
+  const exchangeUrl = `${config.tokenUrl}?${exchangeParams.toString()}`;
+  try {
+    const exchangeResp = await fetch(exchangeUrl, { method: "GET" });
+    if (exchangeResp.ok) {
+      const longLived = (await exchangeResp.json()) as {
+        access_token?: string;
+        expires_in?: number;
+      };
+      const longToken = typeof longLived.access_token === "string" ? longLived.access_token.trim() : "";
+      if (longToken) {
+        const expiry = typeof longLived.expires_in === "number" && longLived.expires_in > 0
+          ? Date.now() + longLived.expires_in * 1_000
+          : Date.now() + 60 * 24 * 60 * 60 * 1_000; // ~60 days default
+        return {
+          accessToken: longToken,
+          // Meta has no separate refresh_token; reuse the long-lived token so
+          // the connector registry's credential shape stays consistent.
+          refreshToken: longToken,
+          expiry,
+        };
+      }
+    } else {
+      const errorBody = await exchangeResp.text().catch(() => "");
+      logger.warn(
+        { status: exchangeResp.status, body: errorBody.slice(0, 1_000) },
+        "Meta Ads fb_exchange_token upgrade failed — persisting short-lived token",
+      );
+    }
+  } catch (err) {
+    logger.warn(
+      { error: err instanceof Error ? err.message : String(err) },
+      "Meta Ads fb_exchange_token upgrade threw — persisting short-lived token",
+    );
+  }
+
+  return {
+    accessToken: shortToken,
+    refreshToken: shortToken,
+    expiry: typeof shortLived.expires_in === "number" && shortLived.expires_in > 0
+      ? Date.now() + shortLived.expires_in * 1_000
+      : undefined,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Route factory
 // ---------------------------------------------------------------------------
@@ -387,8 +523,11 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
         return;
       }
 
-      // Exchange code for tokens
-      const tokens = await exchangeCodeForTokens(config, code, verifier);
+      // Exchange code for tokens. Meta Ads uses a GET-based endpoint with no
+      // PKCE; everything else uses the standard POST + code_verifier flow.
+      const tokens = connectorType === META_ADS_CONNECTOR_TYPE
+        ? await exchangeMetaAdsCodeForTokens(config, code)
+        : await exchangeCodeForTokens(config, code, verifier);
 
       // Try to fetch user info for display name
       let displayName: string | undefined;
@@ -503,8 +642,246 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
   });
 
   // -------------------------------------------------------------------------
+  // GET /api/connectors/:type/credentials — get decrypted credentials for agents
+  // Works for ALL connector types. Returns credentials decrypted server-side.
+  // EC2 is self-hosted so credentials never leave our infrastructure.
+  // -------------------------------------------------------------------------
+  router.get("/:type/credentials", async (req: Request, res: Response) => {
+    assertAuthenticated(req);
+    assertBoard(req);
+    try {
+      const companyId = await resolveCompanyId(req);
+      const userId = resolveActorUserId(req);
+      const type = req.params.type as string;
+
+      if (!type || type.trim().length === 0) {
+        res.status(400).json({ error: "Connector type is required" });
+        return;
+      }
+
+      const connector = await registry.getByType(companyId, type as ConnectorType, userId);
+      if (!connector) {
+        res.status(404).json({ error: "Connector not found" });
+        return;
+      }
+
+      if (connector.status !== "connected") {
+        res.status(409).json({ error: `Connector is ${connector.status}`, status: connector.status });
+        return;
+      }
+
+      const credentials = await registry.getCredentialsAsync(companyId, type as ConnectorType, { userId });
+      if (!credentials) {
+        res.status(404).json({ error: "No credentials stored for this connector" });
+        return;
+      }
+
+      // Return credentials formatted for the specific connector type
+      if (type === "aws") {
+        res.json({
+          type: "aws",
+          config: connector.config ?? {},
+          credentials: {
+            aws_access_key_id: credentials.accessToken,
+            aws_secret_access_key: credentials.refreshToken ?? "",
+            region: (connector.config?.region as string) ?? "us-east-1",
+            bucket_name: connector.config?.bucket_name ?? null,
+          },
+        });
+        return;
+      }
+
+      if (type === "hostinger") {
+        res.json({
+          type: "hostinger",
+          config: connector.config ?? {},
+          credentials: {
+            api_token: credentials.accessToken,
+          },
+        });
+        return;
+      }
+
+      if (type === "surge") {
+        res.json({
+          type: "surge",
+          config: connector.config ?? {},
+          credentials: {
+            token: credentials.accessToken,
+            default_domain: (connector.config?.default_domain as string) ?? null,
+          },
+        });
+        return;
+      }
+
+      // Default: OAuth-style credentials (google_workspace, notion, linear, jira, github, etc.)
+      res.json({
+        type,
+        config: connector.config ?? {},
+        credentials: {
+          access_token: credentials.accessToken,
+          refresh_token: credentials.refreshToken,
+          expiry: credentials.expiry,
+        },
+      });
+    } catch (err) {
+      if (isMissingConnectorsTableError(err)) {
+        logger.warn({ err }, "Connector table missing; credentials unavailable");
+        res.status(503).json({ error: "Connectors storage is not initialized on this instance" });
+        return;
+      }
+      logger.error({ err }, "Failed to get connector credentials");
+      res.status(500).json({ error: "Internal error" });
+    }
+  });
+
+
+  // -------------------------------------------------------------------------
   // POST /api/connectors/:type/configure — save manual credentials
   // -------------------------------------------------------------------------
+
+  // -------------------------------------------------------------------------
+  // GET /:agentId/connector-credentials/:type
+  //
+  // Agent-runtime credentials endpoint. Agents (actor.type === "agent") call
+  // this with their Bearer JWT to fetch decrypted credentials for connectors
+  // configured for their company. Returns the SAME response shape as the
+  // board-only endpoint, so the same skills work for both.
+  //
+  // Auth: assertCompanyAccess (works for board + agent). Agents are
+  // constrained to their own agentId in the URL.
+  // -------------------------------------------------------------------------
+  router.get("/:agentId/connector-credentials/:type", async (req: Request, res: Response) => {
+    assertAuthenticated(req);
+    try {
+      const requestedAgentId = typeof req.params.agentId === "string" ? req.params.agentId.trim() : "";
+      const type = typeof req.params.type === "string" ? req.params.type : "";
+      if (!requestedAgentId) {
+        res.status(400).json({ error: "agentId is required" });
+        return;
+      }
+      if (!type || type.trim().length === 0) {
+        res.status(400).json({ error: "Connector type is required" });
+        return;
+      }
+      if (!ALL_CONNECTOR_TYPES.includes(type as ConnectorType)) {
+        res.status(400).json({
+          error: "Invalid connector type. Allowed: " + ALL_CONNECTOR_TYPES.join(", "),
+        });
+        return;
+      }
+
+      // Agent can only fetch credentials for itself
+      if (req.actor.type === "agent") {
+        if (req.actor.agentId !== requestedAgentId) {
+          res.status(403).json({ error: "Agent can only fetch its own credentials" });
+          return;
+        }
+        if (!req.actor.companyId) {
+          res.status(400).json({ error: "Agent is missing companyId in actor context" });
+          return;
+        }
+        assertCompanyAccess(req, req.actor.companyId);
+      } else if (req.actor.type === "board") {
+        if (!req.query.companyId && Array.isArray(req.actor.companyIds) && req.actor.companyIds.length > 1) {
+          res.status(400).json({ error: "companyId query parameter is required when multiple companies are accessible" });
+          return;
+        }
+      }
+
+      // Resolve companyId
+      let companyId: string;
+      if (req.actor.type === "agent") {
+        companyId = req.actor.companyId as string;
+      } else {
+        companyId = await resolveCompanyId(req);
+      }
+
+      const connector = await registry.getByType(companyId, type as ConnectorType, null);
+      if (!connector) {
+        res.status(404).json({ error: "Connector not found" });
+        return;
+      }
+      if (connector.status !== "connected") {
+        res.status(409).json({ error: "Connector is " + connector.status, status: connector.status });
+        return;
+      }
+
+      // For agents: fetch credentials using company-wide lookup (any
+      // configured user's creds work since encryption is master-key based).
+      const lookup = await registry.getCredentialsForAgentAsync(companyId, type as ConnectorType);
+      if (!lookup) {
+        res.status(404).json({ error: "No credentials stored for this connector" });
+        return;
+      }
+      const { credentials, sourceUserId } = lookup;
+
+      // AUDIT LOG
+      logger.info(
+        {
+          actor: "agent",
+          agentId: req.actor.type === "agent" ? req.actor.agentId : null,
+          runId: req.actor.type === "agent" ? req.actor.runId : null,
+          companyId,
+          connectorType: type,
+          sourceUserId,
+          ts: new Date().toISOString(),
+        },
+        "connector_credentials_fetched_by_agent",
+      );
+
+      if (type === "aws") {
+        res.json({
+          type: "aws",
+          config: connector.config ?? {},
+          credentials: {
+            aws_access_key_id: credentials.accessToken,
+            aws_secret_access_key: credentials.refreshToken ?? "",
+            region: (connector.config?.region as string) ?? "us-east-1",
+            bucket_name: connector.config?.bucket_name ?? null,
+          },
+        });
+        return;
+      }
+      if (type === "hostinger") {
+        res.json({
+          type: "hostinger",
+          config: connector.config ?? {},
+          credentials: { api_token: credentials.accessToken },
+        });
+        return;
+      }
+      if (type === "surge") {
+        res.json({
+          type: "surge",
+          config: connector.config ?? {},
+          credentials: {
+            token: credentials.accessToken,
+            default_domain: (connector.config?.default_domain as string) ?? null,
+          },
+        });
+        return;
+      }
+      res.json({
+        type,
+        config: connector.config ?? {},
+        credentials: {
+          access_token: credentials.accessToken,
+          refresh_token: credentials.refreshToken,
+          expiry: credentials.expiry,
+        },
+      });
+    } catch (err) {
+      if (isMissingConnectorsTableError(err)) {
+        logger.warn({ err }, "Connector table missing; agent credentials unavailable");
+        res.status(503).json({ error: "Connectors storage is not initialized on this instance" });
+        return;
+      }
+      logger.error({ err }, "Failed to fetch agent connector credentials");
+      res.status(500).json({ error: "Internal error" });
+    }
+  });
+
   router.post("/:type/configure", async (req: Request, res: Response) => {
     assertAuthenticated(req);
     assertBoard(req);
@@ -542,6 +919,139 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
             accessToken,
           },
           displayName: email,
+        });
+        res.json({
+          success: true,
+          connector: {
+            id: connector.id,
+            companyId: connector.companyId,
+            type: connector.type,
+            config: connector.config,
+            status: connector.status,
+            displayName: connector.displayName,
+            lastError: connector.lastError,
+            connectedAt: connector.connectedAt,
+            disconnectedAt: connector.disconnectedAt,
+            createdAt: connector.createdAt,
+            updatedAt: connector.updatedAt,
+          },
+        });
+        return;
+      }
+
+      // AWS manual configuration
+      if (type === "aws") {
+        const awsAccessKeyId = readNonEmptyString(payload.awsAccessKeyId);
+        const awsSecretAccessKey = readNonEmptyString(payload.awsSecretAccessKey);
+        const region = readNonEmptyString(payload.region) ?? "us-east-1";
+        const bucketName = readNonEmptyString(payload.bucketName);
+        if (!awsAccessKeyId || !awsSecretAccessKey || !bucketName) {
+          res.status(400).json({ error: "aws requires awsAccessKeyId, awsSecretAccessKey, and bucketName" });
+          return;
+        }
+        const existing = await registry.getByType(companyId, type, userId);
+        const connector = await registry.upsert({
+          companyId,
+          userId,
+          type,
+          status: "connected",
+          config: {
+            ...(existing?.config ?? {}),
+            region,
+            bucketName,
+            mcpEnabled: true,
+          },
+          credentials: {
+            accessToken: awsAccessKeyId,
+            refreshToken: awsSecretAccessKey,
+          },
+          displayName: bucketName,
+        });
+        res.json({
+          success: true,
+          connector: {
+            id: connector.id,
+            companyId: connector.companyId,
+            type: connector.type,
+            config: connector.config,
+            status: connector.status,
+            displayName: connector.displayName,
+            lastError: connector.lastError,
+            connectedAt: connector.connectedAt,
+            disconnectedAt: connector.disconnectedAt,
+            createdAt: connector.createdAt,
+            updatedAt: connector.updatedAt,
+          },
+        });
+        return;
+      }
+
+      // Hostinger manual configuration
+      if (type === "hostinger") {
+        const apiToken = readNonEmptyString(payload.apiToken);
+        const domain = readNonEmptyString(payload.domain);
+        if (!apiToken) {
+          res.status(400).json({ error: "hostinger requires apiToken" });
+          return;
+        }
+        const existing = await registry.getByType(companyId, type, userId);
+        const connector = await registry.upsert({
+          companyId,
+          userId,
+          type,
+          status: "connected",
+          config: {
+            ...(existing?.config ?? {}),
+            domain: domain ?? null,
+            mcpEnabled: true,
+          },
+          credentials: {
+            accessToken: apiToken,
+          },
+          displayName: domain ?? "Hostinger",
+        });
+        res.json({
+          success: true,
+          connector: {
+            id: connector.id,
+            companyId: connector.companyId,
+            type: connector.type,
+            config: connector.config,
+            status: connector.status,
+            displayName: connector.displayName,
+            lastError: connector.lastError,
+            connectedAt: connector.connectedAt,
+            disconnectedAt: connector.disconnectedAt,
+            createdAt: connector.createdAt,
+            updatedAt: connector.updatedAt,
+          },
+        });
+        return;
+      }
+
+      // Surge manual configuration
+      if (type === "surge") {
+        const token = readNonEmptyString(payload.token);
+        const defaultDomain = readNonEmptyString(payload.default_domain ?? payload.defaultDomain);
+        if (!token) {
+          res.status(400).json({ error: "surge requires token" });
+          return;
+        }
+        const existing = await registry.getByType(companyId, type, userId);
+        const connector = await registry.upsert({
+          companyId,
+          userId,
+          type,
+          status: "connected",
+          config: {
+            ...(existing?.config ?? {}),
+            default_domain: defaultDomain ?? null,
+            mcpEnabled: true,
+          },
+          credentials: {
+            accessToken: token,
+          },
+          displayName: defaultDomain ?? "Surge.sh",
         });
         res.json({
           success: true,
@@ -630,6 +1140,18 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
 
       const config = getOAuthConfig(type, getBaseUrl);
       if (!config?.clientId) {
+        if (type === META_ADS_CONNECTOR_TYPE) {
+          res.status(503).json({
+            error: "Meta Ads App credentials not configured — set META_ADS_APP_ID and META_ADS_APP_SECRET in your environment",
+          });
+          return;
+        }
+        if (type === "slack") {
+          res.status(503).json({
+            error: "Slack App credentials not configured — set SLACK_CLIENT_ID and SLACK_CLIENT_SECRET in your environment",
+          });
+          return;
+        }
         res.status(503).json({ error: `OAuth not configured for ${type}` });
         return;
       }
@@ -652,6 +1174,28 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
           state,
           provider: "gworkspace",
           scopes: [...GOOGLE_OAUTH_SCOPES],
+          next_step: "redirect",
+        });
+        return;
+      }
+      if (type === META_ADS_CONNECTOR_TYPE) {
+        res.json({
+          authorizationUrl: authUrl,
+          authUrl,
+          state,
+          provider: "meta_ads",
+          scopes: [...META_ADS_OAUTH_SCOPES],
+          next_step: "redirect",
+        });
+        return;
+      }
+      if (type === "slack") {
+        res.json({
+          authorizationUrl: authUrl,
+          authUrl,
+          state,
+          provider: "slack",
+          scopes: [...SLACK_OAUTH_SCOPES],
           next_step: "redirect",
         });
         return;

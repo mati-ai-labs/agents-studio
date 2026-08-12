@@ -20,6 +20,8 @@ export const companiesApi = {
   create: (data: {
     name: string;
     description?: string | null;
+    website?: string | null;
+    importantLinks?: string[];
     budgetMonthlyCents?: number;
   }) =>
     api.post<Company>("/companies", data),
@@ -30,6 +32,8 @@ export const companiesApi = {
         Company,
         | "name"
         | "description"
+        | "website"
+        | "importantLinks"
         | "status"
         | "budgetMonthlyCents"
         | "attachmentMaxBytes"

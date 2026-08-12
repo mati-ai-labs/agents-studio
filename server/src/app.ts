@@ -43,6 +43,7 @@ import { adapterRoutes } from "./routes/adapters.js";
 import { pluginUiStaticRoutes } from "./routes/plugin-ui-static.js";
 import { connectorsRoutes } from "./routes/connectors.js";
 import { chatRoutes } from "./routes/chat.js";
+import { previewApiRoutes, previewProxyRoutes } from "./routes/previews.js";
 import { applyUiBranding } from "./ui-branding.js";
 import { logger } from "./middleware/logger.js";
 import { DEFAULT_LOCAL_PLUGIN_DIR, pluginLoader } from "./services/plugin-loader.js";
@@ -297,11 +298,13 @@ export async function createApp(
     ),
   );
   api.use(adapterRoutes());
-  api.use(
-    "/connectors",
-    connectorsRoutes(db),
-  );
+  const connectorsRouter = connectorsRoutes(db);
+  api.use("/connectors", connectorsRouter);
+  // Second mount: agent-runtime credentials endpoint. `api` is itself mounted
+  // at `/api`, so this resolves to /api/agents/:agentId/connector-credentials/:type.
+  api.use("/agents", connectorsRouter);
   api.use(chatRoutes(db));
+  api.use(previewApiRoutes(db));
   api.use(
     accessRoutes(db, {
       deploymentMode: opts.deploymentMode,
@@ -310,6 +313,7 @@ export async function createApp(
       allowedHostnames: opts.allowedHostnames,
     }),
   );
+  app.use("/preview", previewProxyRoutes(db));
   app.use("/api", api);
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "API route not found" });

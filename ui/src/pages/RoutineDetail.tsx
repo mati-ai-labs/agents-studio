@@ -107,9 +107,14 @@ function isRoutineTab(value: string | null): value is RoutineTab {
   return value !== null && routineTabs.includes(value as RoutineTab);
 }
 
-function getRoutineTabFromSearch(search: string): RoutineTab {
+function getRoutineTabFromSearch(search: string, options?: { hideTriggers?: boolean }): RoutineTab {
   const tab = new URLSearchParams(search).get("tab");
-  return isRoutineTab(tab) ? tab : "triggers";
+  if (options?.hideTriggers && tab === "triggers") return "runs";
+  if (isRoutineTab(tab)) {
+    if (options?.hideTriggers && tab === "triggers") return "runs";
+    return tab;
+  }
+  return options?.hideTriggers ? "runs" : "triggers";
 }
 
 function formatActivityDetailValue(value: unknown): string {
@@ -280,6 +285,7 @@ export function RoutineDetail() {
   const navigate = useNavigate();
   const location = useLocation();
   const { pushToast } = useToastActions();
+  const isWorkflowView = location.pathname.includes("/workflows/");
   const hydratedRoutineIdRef = useRef<string | null>(null);
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null);
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
@@ -314,7 +320,10 @@ export function RoutineDetail() {
     catchUpPolicy: "skip_missed",
     variables: [],
   });
-  const activeTab = useMemo(() => getRoutineTabFromSearch(location.search), [location.search]);
+  const activeTab = useMemo(
+    () => getRoutineTabFromSearch(location.search, { hideTriggers: isWorkflowView }),
+    [isWorkflowView, location.search],
+  );
 
   const { data: routine, isLoading, error } = useQuery({
     queryKey: queryKeys.routines.detail(routineId!),
@@ -414,7 +423,7 @@ export function RoutineDetail() {
 
   useEffect(() => {
     if (!routine) return;
-    setBreadcrumbs([{ label: "Recurring Jobs", href: "/routines" }, { label: routine.title }]);
+    setBreadcrumbs([{ label: "Workflows", href: isWorkflowView ? "/workflows" : "/routines" }, { label: routine.title }]);
     if (!routineDefaults) return;
 
     const changedRoutine = hydratedRoutineIdRef.current !== routine.id;
@@ -422,7 +431,7 @@ export function RoutineDetail() {
       setEditDraft(routineDefaults);
       hydratedRoutineIdRef.current = routine.id;
     }
-  }, [routine, routineDefaults, isEditDirty, setBreadcrumbs]);
+  }, [routine, routineDefaults, isEditDirty, isWorkflowView, setBreadcrumbs]);
 
   useEffect(() => {
     autoResizeTextarea(titleInputRef.current);
@@ -443,8 +452,10 @@ export function RoutineDetail() {
 
   const setActiveTab = (value: string) => {
     if (!routineId || !isRoutineTab(value)) return;
+    if (isWorkflowView && value === "triggers") return;
     const params = new URLSearchParams(location.search);
-    if (value === "triggers") {
+    const defaultTab: RoutineTab = isWorkflowView ? "runs" : "triggers";
+    if (value === defaultTab) {
       params.delete("tab");
     } else {
       params.set("tab", value);
@@ -1069,10 +1080,12 @@ export function RoutineDetail() {
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-3">
         <TabsList variant="line" className="w-full justify-start gap-1">
-          <TabsTrigger value="triggers" className="gap-1.5">
-            <Clock3 className="h-3.5 w-3.5" />
-            Triggers
-          </TabsTrigger>
+          {!isWorkflowView ? (
+            <TabsTrigger value="triggers" className="gap-1.5">
+              <Clock3 className="h-3.5 w-3.5" />
+              Triggers
+            </TabsTrigger>
+          ) : null}
           <TabsTrigger value="runs" className="gap-1.5">
             <Play className="h-3.5 w-3.5" />
             Runs
@@ -1088,84 +1101,86 @@ export function RoutineDetail() {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="triggers" className="space-y-4">
-          {/* Add trigger form */}
-          <div className="rounded-lg border border-border p-4 space-y-3">
-            <p className="text-sm font-medium">Add trigger</p>
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label className="text-xs">Kind</Label>
-                <Select value={newTrigger.kind} onValueChange={(kind) => setNewTrigger((current) => ({ ...current, kind }))}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {triggerKinds.map((kind) => (
-                      <SelectItem key={kind} value={kind} disabled={kind === "webhook"}>
-                        {kind}{kind === "webhook" ? " — COMING SOON" : ""}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {newTrigger.kind === "schedule" && (
-                <div className="md:col-span-2 space-y-1.5">
-                  <Label className="text-xs">Schedule</Label>
-                  <ScheduleEditor
-                    value={newTrigger.cronExpression}
-                    onChange={(cronExpression) => setNewTrigger((current) => ({ ...current, cronExpression }))}
-                  />
+        {!isWorkflowView ? (
+          <TabsContent value="triggers" className="space-y-4">
+            {/* Add trigger form */}
+            <div className="rounded-lg border border-border p-4 space-y-3">
+              <p className="text-sm font-medium">Add trigger</p>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Kind</Label>
+                  <Select value={newTrigger.kind} onValueChange={(kind) => setNewTrigger((current) => ({ ...current, kind }))}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {triggerKinds.map((kind) => (
+                        <SelectItem key={kind} value={kind} disabled={kind === "webhook"}>
+                          {kind}{kind === "webhook" ? " — COMING SOON" : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-              )}
-              {newTrigger.kind === "webhook" && (
-                <>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">Signing mode</Label>
-                    <Select value={newTrigger.signingMode} onValueChange={(signingMode) => setNewTrigger((current) => ({ ...current, signingMode }))}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {signingModes.map((mode) => (
-                          <SelectItem key={mode} value={mode}>{mode}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">{signingModeDescriptions[newTrigger.signingMode]}</p>
+                {newTrigger.kind === "schedule" && (
+                  <div className="md:col-span-2 space-y-1.5">
+                    <Label className="text-xs">Schedule</Label>
+                    <ScheduleEditor
+                      value={newTrigger.cronExpression}
+                      onChange={(cronExpression) => setNewTrigger((current) => ({ ...current, cronExpression }))}
+                    />
                   </div>
-                  {!SIGNING_MODES_WITHOUT_REPLAY_WINDOW.has(newTrigger.signingMode) && (
+                )}
+                {newTrigger.kind === "webhook" && (
+                  <>
                     <div className="space-y-1.5">
-                      <Label className="text-xs">Replay window (seconds)</Label>
-                      <Input value={newTrigger.replayWindowSec} onChange={(event) => setNewTrigger((current) => ({ ...current, replayWindowSec: event.target.value }))} />
+                      <Label className="text-xs">Signing mode</Label>
+                      <Select value={newTrigger.signingMode} onValueChange={(signingMode) => setNewTrigger((current) => ({ ...current, signingMode }))}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {signingModes.map((mode) => (
+                            <SelectItem key={mode} value={mode}>{mode}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">{signingModeDescriptions[newTrigger.signingMode]}</p>
                     </div>
-                  )}
-                </>
-              )}
+                    {!SIGNING_MODES_WITHOUT_REPLAY_WINDOW.has(newTrigger.signingMode) && (
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">Replay window (seconds)</Label>
+                        <Input value={newTrigger.replayWindowSec} onChange={(event) => setNewTrigger((current) => ({ ...current, replayWindowSec: event.target.value }))} />
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+              <div className="flex items-center justify-end">
+                <Button size="sm" onClick={() => createTrigger.mutate()} disabled={createTrigger.isPending}>
+                  {createTrigger.isPending ? "Adding..." : "Add trigger"}
+                </Button>
+              </div>
             </div>
-            <div className="flex items-center justify-end">
-              <Button size="sm" onClick={() => createTrigger.mutate()} disabled={createTrigger.isPending}>
-                {createTrigger.isPending ? "Adding..." : "Add trigger"}
-              </Button>
-            </div>
-          </div>
 
-          {/* Existing triggers */}
-          {routine.triggers.length === 0 ? (
-            <p className="text-xs text-muted-foreground">No triggers configured yet.</p>
-          ) : (
-            <div className="space-y-3">
-              {routine.triggers.map((trigger) => (
-                <TriggerEditor
-                  key={trigger.id}
-                  trigger={trigger}
-                  onSave={(id, patch) => updateTrigger.mutate({ id, patch })}
-                  onRotate={(id) => rotateTrigger.mutate(id)}
-                  onDelete={(id) => deleteTrigger.mutate(id)}
-                />
-              ))}
-            </div>
-          )}
-        </TabsContent>
+            {/* Existing triggers */}
+            {routine.triggers.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No triggers configured yet.</p>
+            ) : (
+              <div className="space-y-3">
+                {routine.triggers.map((trigger) => (
+                  <TriggerEditor
+                    key={trigger.id}
+                    trigger={trigger}
+                    onSave={(id, patch) => updateTrigger.mutate({ id, patch })}
+                    onRotate={(id) => rotateTrigger.mutate(id)}
+                    onDelete={(id) => deleteTrigger.mutate(id)}
+                  />
+                ))}
+              </div>
+            )}
+          </TabsContent>
+        ) : null}
 
         <TabsContent value="runs" className="space-y-4">
           {hasLiveRun && activeIssueId && routine && (

@@ -13,6 +13,7 @@ import {
   mergeCoalescedContextSnapshot,
   prioritizeProjectWorkspaceCandidatesForRun,
   parseSessionCompactionPolicy,
+  resolveEffectiveProjectId,
   resolveRuntimeSessionParamsForWorkspace,
   stripWorkspaceRuntimeFromExecutionRunConfig,
   shouldResetTaskSessionForWake,
@@ -58,6 +59,24 @@ function buildAgent(adapterType: string, runtimeConfig: Record<string, unknown> 
     updatedAt: new Date(),
   } as unknown as typeof agents.$inferSelect;
 }
+
+describe("resolveEffectiveProjectId", () => {
+  it("uses the linked project workspace when the issue row is missing project_id", () => {
+    expect(resolveEffectiveProjectId({
+      issueProjectId: null,
+      projectWorkspaceProjectId: "project-from-workspace",
+      contextProjectId: null,
+    })).toBe("project-from-workspace");
+  });
+
+  it("preserves the issue project when all references are present", () => {
+    expect(resolveEffectiveProjectId({
+      issueProjectId: "project-from-issue",
+      projectWorkspaceProjectId: "project-from-workspace",
+      contextProjectId: "project-from-context",
+    })).toBe("project-from-issue");
+  });
+});
 
 describe("resolveRuntimeSessionParamsForWorkspace", () => {
   it("migrates fallback workspace sessions to project workspace when project cwd becomes available", () => {

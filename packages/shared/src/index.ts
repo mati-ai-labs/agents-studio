@@ -623,6 +623,9 @@ export type {
   PluginWebhookDeliveryRecord,
   QuotaWindow,
   ProviderQuotaResult,
+  CreatePreviewLease,
+  PreviewLease,
+  PreviewLeaseStatus,
 } from "./types/index.js";
 export { COMPANY_SEARCH_SCOPES } from "./types/index.js";
 export {
@@ -698,6 +701,7 @@ export {
   type UpdateCompany,
   type UpdateCompanyBranding,
   type UpsertIssueFeedbackVote,
+  createPreviewLeaseSchema,
   environmentDriverSchema,
   environmentStatusSchema,
   environmentLeaseStatusSchema,
@@ -1060,6 +1064,14 @@ export {
   stringifyRoutineVariableValue,
   syncRoutineVariablesWithTemplate,
 } from "./routine-variables.js";
+
+export {
+  MARKETING_INNOVATION_WORKFLOW_DESCRIPTION,
+  MARKETING_INNOVATION_WORKFLOW_TITLE,
+  buildMarketingInnovationWorkflowContent,
+  buildMarketingInnovationWorkflowVariables,
+  type MarketingInnovationWorkflowContext,
+} from "./marketing-stack.js";
 
 export {
   paperclipConfigSchema,

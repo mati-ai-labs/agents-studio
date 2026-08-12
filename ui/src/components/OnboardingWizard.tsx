@@ -1,6 +1,11 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { AdapterEnvironmentTestResult } from "@paperclipai/shared";
+import {
+  MARKETING_INNOVATION_WORKFLOW_DESCRIPTION,
+  MARKETING_INNOVATION_WORKFLOW_TITLE,
+  buildMarketingInnovationWorkflowContent,
+  type AdapterEnvironmentTestResult,
+} from "@paperclipai/shared";
 import { useLocation, useNavigate, useParams } from "@/lib/router";
 import { useDialog } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
@@ -10,6 +15,7 @@ import { agentsApi } from "../api/agents";
 import { approvalsApi } from "../api/approvals";
 import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
+import { routinesApi } from "../api/routines";
 import { queryKeys } from "../lib/queryKeys";
 import { Dialog, DialogPortal } from "@/components/ui/dialog";
 import {
@@ -45,6 +51,14 @@ import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
 import { DEFAULT_OPENCODE_LOCAL_MODEL, isValidOpenCodeModelId } from "@paperclipai/adapter-opencode-local";
 import { resolveRouteOnboardingOptions } from "../lib/onboarding-route";
+import {
+  registerMarketingStackAgents,
+  startMarketingStackImport,
+} from "../lib/marketing-stack-import";
+import productDesignAgentInstructions from "./marketing-stack-prompts/product-design.AGENTS.md?raw";
+import marketResearchAgentInstructions from "./marketing-stack-prompts/market-research.AGENTS.md?raw";
+import marketIntelligenceAgentInstructions from "./marketing-stack-prompts/market-intelligence.AGENTS.md?raw";
+import carouselSocialAgentInstructions from "./marketing-stack-prompts/carousel-social.AGENTS.md?raw";
 import { AsciiArtAnimation } from "./AsciiArtAnimation";
 import {
   Building2,
@@ -56,18 +70,730 @@ import {
   Check,
   Loader2,
   ChevronDown,
-  X
+  X,
+  Upload
 } from "lucide-react";
 
 
 type Step = 1 | 2 | 3 | 4;
 type AdapterType = string;
 
-const DEFAULT_TASK_DESCRIPTION = `You are the CEO. You set the direction for the company.
+const DEFAULT_TASK_TITLE = "{{company_name}} Innovation Intelligence Report";
+const DEFAULT_TASK_DESCRIPTION = `## Company Innovation Intelligence Report
 
-- hire a founding engineer
-- write a hiring plan
-- break the roadmap into concrete tasks and start delegating work`;
+# Target Company Website: {{company_website}}
+
+You are the Lead Innovation Strategy Agent operating inside an AI-native venture studio.
+
+Your responsibility is to deeply analyze this company, understand its business model and operational structure, identify how AI and agentic systems may disrupt its market, and propose high-leverage AI-powered innovation opportunities that can help the company defend and expand its market position.
+
+Your output should feel like a strategic innovation report prepared by an elite AI innovation studio and venture builder.
+
+Complete the following phases sequentially.
+
+***
+
+# PHASE 1 — Company Intelligence Scan
+
+Research the target company thoroughly.
+
+Analyze:
+
+- What the company does
+- How they make money
+- Their core products/services
+- Their pricing and monetization structure
+- Their business model
+- Their customer acquisition model
+- Their go-to-market strategy
+- Their delivery model
+- Their operational workflows
+- Their technology stack (if inferable)
+- Their team structure (if inferable)
+- Their strategic positioning in the market
+
+Map how the company currently delivers value to customers.
+
+Identify:
+
+- Core differentiators
+- Strengths
+- Weaknesses
+- Operational bottlenecks
+- Areas of inefficiency
+- Dependency risks
+- Workflow friction points
+
+Then summarize the company’s business model in plain language.
+
+***
+
+# PHASE 2 — Customer & Market Segmentation
+
+Identify and clearly define:
+
+- Core customer segments
+- Revenue-driving customer profiles
+- Primary operating modes
+
+Examples:
+
+- B2B
+- B2C
+- Enterprise
+- SMB
+- Marketplace
+- SaaS
+- Services
+- Subscription
+- Usage-based
+- Transactional
+- Hybrid models
+
+For each segment explain:
+
+- Who they serve
+- What problem they solve
+- Why customers buy from them
+- How important this segment is to revenue
+- The level of defensibility of that segment in the AI era
+
+Then identify:
+
+- Which customer segments are most vulnerable to AI disruption
+- Which segments are most valuable long-term
+- Which segments the company should expand into
+
+***
+
+# PHASE 3 — Moat & Competitive Positioning Analysis
+
+Identify the company’s core moat(s).
+
+Analyze:
+
+- Distribution advantages
+- Brand trust
+- Existing customer relationships
+- Proprietary data
+- Workflow lock-in
+- Operational excellence
+- Network effects
+- Industry expertise
+- Community advantages
+- Regulatory positioning
+- Technology differentiation
+
+Then answer:
+
+- Which moats strengthen in the AI era?
+- Which moats weaken in the AI era?
+- Which moats become commoditized due to AI?
+- What new moats should the company build now?
+
+***
+
+# PHASE 4 — AI-Era Risk Mapping
+
+Given the current wave of AI transformation and agentic innovation, identify the top risks this company faces if it fails to innovate aggressively.
+
+Think across:
+
+## Operational Risks
+
+- Manual workflows
+- Human-heavy execution
+- Inefficient coordination
+- Slow delivery systems
+- Poor internal knowledge management
+- Scalability bottlenecks
+
+## Market Risks
+
+- Pricing compression
+- AI commoditization
+- Lower barriers to entry
+- Faster competitors
+- Customer expectation shifts
+
+## Competitive Risks
+
+- AI-native entrants
+- Agentic platforms
+- Vertical AI startups
+- Workflow automation products
+- AI copilots replacing service layers
+
+## Strategic Risks
+
+- Failure to adapt
+- Weak AI positioning
+- Lack of proprietary data strategy
+- Failure to build distribution
+- Dependence on outdated workflows
+
+Be highly specific to this company and industry.
+
+Do not provide generic AI commentary.
+
+***
+
+# PHASE 5 — Emerging Startup Threat Landscape
+
+Research emerging startups, recently funded ventures, and AI-native companies operating in this company’s space.
+
+Identify:
+
+- Startup name
+- Funding stage (if available)
+- What they are building
+- Which workflow or market segment they are attacking
+- Why their approach matters
+- Why they are dangerous to incumbent companies
+- What AI or agentic advantage they possess
+
+Then explain:
+
+- How these startups could disrupt the target company
+- Which parts of the company are most exposed
+- Which market segments are most vulnerable
+- Which future customer expectations these startups are creating
+
+***
+
+# PHASE 6 — AI Innovation Opportunity Map
+
+Generate a prioritized list of the TOP 10 AI-powered innovation opportunities for this company.
+
+Split them into two categories:
+
+***
+
+## A. Internal Innovation Opportunities
+
+(Operational optimization using AI and agentic systems)
+
+Examples:
+
+- AI sales agents
+- AI operations copilots
+- AI customer support systems
+- AI workflow orchestration
+- AI marketing automation
+- AI reporting and analytics
+- AI knowledge management
+- AI employee copilots
+- AI onboarding systems
+- AI recruiting agents
+- AI customer success systems
+
+For each opportunity include:
+
+- Problem being solved
+- Workflow impact
+- Cost reduction potential
+- Speed improvement potential
+- Scalability impact
+- Estimated implementation complexity
+- Strategic importance
+
+***
+
+## B. External Innovation Opportunities
+
+(New products, services, features, or revenue streams)
+
+Examples:
+
+- AI-native SaaS products
+- Customer-facing copilots
+- Agentic workflow platforms
+- AI-powered marketplaces
+- AI subscriptions
+- AI-enabled premium services
+- Data intelligence products
+- AI advisory systems
+- Industry-specific AI assistants
+- AI automation platforms
+
+For each opportunity include:
+
+- Revenue potential
+- Strategic alignment
+- Market demand
+- Competitive advantage
+- Long-term defensibility
+- Why the company is uniquely positioned to win
+- Risks of not pursuing it
+
+***
+
+# PHASE 7 — Prioritized Strategic Recommendations
+
+From all opportunities identified above, select:
+
+# TOP 3 INTERNAL INNOVATIONS
+
+For each provide:
+
+- Why this is high leverage
+- ROI potential
+- Ease of execution
+- Expected operational impact
+- Strategic urgency
+- Recommended implementation roadmap
+- Short-term wins vs long-term value
+
+***
+
+# TOP 3 EXTERNAL INNOVATIONS
+
+For each provide:
+
+- Why this is a meaningful market opportunity
+- Revenue expansion potential
+- Strategic defensibility
+- AI-native differentiation potential
+- Alignment with the company’s current strengths
+- Why this matters now
+- Risks of waiting too long
+
+***
+
+# PHASE 8 — Strategic Urgency Brief
+
+Write a concise but high-conviction executive brief explaining:
+
+- Why this company must innovate now
+- Which startup threats matter most
+- Which customer expectations are changing fastest
+- What happens if the company delays AI adoption
+- Which innovation bets are the most strategically important
+- Which opportunities could create entirely new revenue categories
+- Which opportunities could become future company-defining products
+
+This section should read like a venture-backed strategic transformation memo.
+
+***
+
+# FINAL DELIVERABLE FORMAT
+
+Structure the final report in this exact order:
+
+1. Executive Summary
+2. Company Intelligence Overview
+3. Customer & Market Segmentation
+4. Moat & Competitive Positioning
+5. AI Risk Mapping
+6. Emerging Startup Threat Landscape
+7. Top 10 AI Innovation Opportunities
+8. Top 3 Internal Innovation Recommendations
+9. Top 3 External Innovation Recommendations
+10. Strategic Urgency Brief
+11. Final Strategic Conclusion & Next Steps
+
+***
+
+# OUTPUT QUALITY REQUIREMENTS
+
+The output must:
+
+- Be highly strategic and specific
+- Avoid generic AI buzzwords
+- Focus on real workflows and business leverage
+- Think like a venture studio, not a consultant
+- Focus on transformation, defensibility, and new revenue creation
+- Tie recommendations directly to competitive pressure and market shifts
+- Prioritize innovation opportunities with real business outcomes
+
+The report should feel sophisticated enough to present directly to:
+
+- CEOs
+- PE firms
+- Search funds
+- Venture partners
+- Strategy teams
+- Corporate innovation groups
+
+***
+
+# NEXT PHASE (DO NOT EXECUTE YET)
+
+Once this report is complete, the next phase will involve:
+
+- Creating product concepts
+- Designing AI-native workflows
+- Creating UI/UX prototypes
+- Building landing pages
+- Developing GTM messaging
+- Creating investor-style opportunity decks
+- Designing technical architecture concepts
+- Creating implementation roadmaps
+`;
+
+function buildCompanyResearchTaskDescription(input: {
+  companyId: string;
+  website: string;
+  importantLinks: string[];
+  documentNames: string[];
+}) {
+  return DEFAULT_TASK_DESCRIPTION.replaceAll(
+    "{{company_website}}",
+    input.website || "No website supplied; infer from the company context and available sources."
+  );
+}
+
+const MARKETING_STACK_AGENT_METADATA = [
+  {
+    name: "Product Design Agent",
+    capabilities:
+      "Reads the company's knowledge base and vector memory, studies the market, and proposes new product opportunities across software, hardware, services, and physical products.",
+  },
+  {
+    name: "Market Research Agent",
+    capabilities:
+      "Researches current markets, competitors, customer segments, trends, pricing, and evidence-backed opportunities.",
+  },
+  {
+    name: "Market Intelligence Agent",
+    capabilities:
+      "Combines the company's PostgreSQL vector memory with current market evidence to estimate product demand and recommend positioning and priorities.",
+  },
+  {
+    name: "Carousel Social Media Agent",
+    capabilities:
+      "Creates research-driven social media carousels, tests hooks and CTAs, and improves content using engagement and conversion feedback.",
+  },
+] as const;
+
+/**
+ * These are the canonical Marketing Stack agent bundles. They are copied from
+ * the working Etiq company agents so onboarding uses the same detailed
+ * AGENTS.md instructions and the same skill wiring everywhere.
+ */
+const ETIQ_MARKETING_STACK_AGENT_CONFIG: Record<
+  string,
+  { instructions: string; desiredSkillRefs: readonly string[] }
+> = {
+  "Product Design Agent": {
+    instructions: productDesignAgentInstructions,
+    desiredSkillRefs: [
+      "paperclipai/paperclip/caveman",
+      "paperclipai/paperclip/product-design",
+      "paperclipai/paperclip/market-research-agent",
+      "paperclipai/paperclip/para-memory-files",
+      "paperclipai/paperclip/git-guardrails-claude-code",
+      "paperclipai/paperclip/diagnose",
+      "paperclipai/paperclip/grill-me",
+      "paperclipai/paperclip/grill-with-docs",
+      "paperclipai/paperclip/handoff",
+      "paperclipai/paperclip/paperclip",
+      "paperclipai/paperclip/paperclip-converting-plans-to-tasks",
+      "paperclipai/paperclip/triage",
+      "paperclipai/paperclip/zoom-out",
+      "paperclipai/paperclip/minimax-web-search",
+      "coreyhaines31/marketingskills/competitor-profiling",
+      "coreyhaines31/marketingskills/product-marketing",
+      "coreyhaines31/marketingskills/analytics",
+      "coreyhaines31/marketingskills/marketing-psychology",
+      "coreyhaines31/marketingskills/prospecting",
+      "coreyhaines31/marketingskills/marketing-ideas",
+    ],
+  },
+  "Market Research Agent": {
+    instructions: marketResearchAgentInstructions,
+    desiredSkillRefs: [
+      "paperclipai/paperclip/caveman",
+      "paperclipai/paperclip/ckm-banner-design",
+      "paperclipai/paperclip/ckm-brand",
+      "paperclipai/paperclip/ckm-design",
+      "paperclipai/paperclip/ckm-design-system",
+      "paperclipai/paperclip/ckm-slides",
+      "paperclipai/paperclip/ckm-ui-styling",
+      "paperclipai/paperclip/diagnose",
+      "paperclipai/paperclip/diagnose-why-work-stopped",
+      "paperclipai/paperclip/edit-article",
+      "paperclipai/paperclip/git-guardrails-claude-code",
+      "paperclipai/paperclip/gmail",
+      "paperclipai/paperclip/google-workspace-mcp",
+      "paperclipai/paperclip/granola",
+      "paperclipai/paperclip/grill-me",
+      "paperclipai/paperclip/grill-with-docs",
+      "paperclipai/paperclip/handoff",
+      "paperclipai/paperclip/improve-codebase-architecture",
+      "paperclipai/paperclip/jira",
+      "paperclipai/paperclip/market-research-agent",
+      "paperclipai/paperclip/migrate-to-shoehorn",
+      "paperclipai/paperclip/minimax-web-search",
+      "paperclipai/paperclip/obsidian-vault",
+      "paperclipai/paperclip/paperclip",
+      "paperclipai/paperclip/paperclip-converting-plans-to-tasks",
+      "paperclipai/paperclip/paperclip-create-agent",
+      "paperclipai/paperclip/paperclip-create-plugin",
+      "paperclipai/paperclip/paperclip-dev",
+      "paperclipai/paperclip/para-memory-files",
+      "paperclipai/paperclip/prototype",
+      "paperclipai/paperclip/quickbooks",
+      "paperclipai/paperclip/scaffold-exercises",
+      "paperclipai/paperclip/setup-matt-pocock-skills",
+      "paperclipai/paperclip/setup-pre-commit",
+      "paperclipai/paperclip/sibyl-memory",
+      "paperclipai/paperclip/tdd",
+      "paperclipai/paperclip/teach",
+      "paperclipai/paperclip/team-organiser",
+      "paperclipai/paperclip/terminal-bench-loop",
+      "paperclipai/paperclip/to-issues",
+      "paperclipai/paperclip/to-prd",
+      "paperclipai/paperclip/triage",
+      "paperclipai/paperclip/ui-ux-pro-max",
+      "paperclipai/paperclip/vector-memory",
+      "paperclipai/paperclip/write-a-skill",
+      "paperclipai/paperclip/zoom-out",
+      "coreyhaines31/marketingskills/ai-seo",
+      "coreyhaines31/marketingskills/ab-testing",
+      "coreyhaines31/marketingskills/co-marketing",
+      "coreyhaines31/marketingskills/analytics",
+      "coreyhaines31/marketingskills/competitors",
+      "coreyhaines31/marketingskills/competitor-profiling",
+      "coreyhaines31/marketingskills/content-strategy",
+      "coreyhaines31/marketingskills/marketing-ideas",
+      "coreyhaines31/marketingskills/marketing-psychology",
+      "coreyhaines31/marketingskills/product-marketing",
+      "coreyhaines31/marketingskills/prospecting",
+      "coreyhaines31/marketingskills/social",
+    ],
+  },
+  "Market Intelligence Agent": {
+    instructions: marketIntelligenceAgentInstructions,
+    desiredSkillRefs: [
+      "paperclipai/paperclip/caveman",
+      "paperclipai/paperclip/ckm-banner-design",
+      "paperclipai/paperclip/ckm-brand",
+      "paperclipai/paperclip/ckm-design",
+      "paperclipai/paperclip/ckm-design-system",
+      "paperclipai/paperclip/ckm-slides",
+      "paperclipai/paperclip/ckm-ui-styling",
+      "paperclipai/paperclip/diagnose",
+      "paperclipai/paperclip/diagnose-why-work-stopped",
+      "paperclipai/paperclip/edit-article",
+      "paperclipai/paperclip/git-guardrails-claude-code",
+      "paperclipai/paperclip/gmail",
+      "paperclipai/paperclip/google-workspace-mcp",
+      "paperclipai/paperclip/granola",
+      "paperclipai/paperclip/grill-me",
+      "paperclipai/paperclip/grill-with-docs",
+      "paperclipai/paperclip/handoff",
+      "paperclipai/paperclip/improve-codebase-architecture",
+      "paperclipai/paperclip/jira",
+      "paperclipai/paperclip/market-research-agent",
+      "paperclipai/paperclip/migrate-to-shoehorn",
+      "paperclipai/paperclip/minimax-web-search",
+      "paperclipai/paperclip/obsidian-vault",
+      "paperclipai/paperclip/paperclip",
+      "paperclipai/paperclip/paperclip-converting-plans-to-tasks",
+      "paperclipai/paperclip/paperclip-create-agent",
+      "paperclipai/paperclip/paperclip-create-plugin",
+      "paperclipai/paperclip/paperclip-dev",
+      "paperclipai/paperclip/para-memory-files",
+      "paperclipai/paperclip/prototype",
+      "paperclipai/paperclip/quickbooks",
+      "paperclipai/paperclip/scaffold-exercises",
+      "paperclipai/paperclip/setup-matt-pocock-skills",
+      "paperclipai/paperclip/setup-pre-commit",
+      "paperclipai/paperclip/sibyl-memory",
+      "paperclipai/paperclip/tdd",
+      "paperclipai/paperclip/teach",
+      "paperclipai/paperclip/team-organiser",
+      "paperclipai/paperclip/terminal-bench-loop",
+      "paperclipai/paperclip/to-issues",
+      "paperclipai/paperclip/to-prd",
+      "paperclipai/paperclip/triage",
+      "paperclipai/paperclip/ui-ux-pro-max",
+      "paperclipai/paperclip/vector-memory",
+      "paperclipai/paperclip/write-a-skill",
+      "paperclipai/paperclip/zoom-out",
+      "url/clawhub-ai/d891ad2b2d/tiktok-app-marketing",
+      "coreyhaines31/marketingskills/social",
+      "coreyhaines31/marketingskills/seo-audit",
+      "coreyhaines31/marketingskills/prospecting",
+      "coreyhaines31/marketingskills/product-marketing",
+      "coreyhaines31/marketingskills/marketing-psychology",
+      "coreyhaines31/marketingskills/directory-submissions",
+      "coreyhaines31/marketingskills/marketing-ideas",
+      "coreyhaines31/marketingskills/competitors",
+      "coreyhaines31/marketingskills/competitor-profiling",
+      "coreyhaines31/marketingskills/co-marketing",
+      "coreyhaines31/marketingskills/analytics",
+      "coreyhaines31/marketingskills/ab-testing",
+    ],
+  },
+  "Carousel Social Media Agent": {
+    instructions: carouselSocialAgentInstructions,
+    desiredSkillRefs: [
+      "paperclipai/paperclip/caveman",
+      "paperclipai/paperclip/ckm-banner-design",
+      "paperclipai/paperclip/ckm-brand",
+      "paperclipai/paperclip/ckm-design",
+      "paperclipai/paperclip/ckm-design-system",
+      "paperclipai/paperclip/ckm-slides",
+      "paperclipai/paperclip/ckm-ui-styling",
+      "paperclipai/paperclip/diagnose",
+      "paperclipai/paperclip/diagnose-why-work-stopped",
+      "paperclipai/paperclip/edit-article",
+      "paperclipai/paperclip/git-guardrails-claude-code",
+      "paperclipai/paperclip/gmail",
+      "paperclipai/paperclip/google-workspace-mcp",
+      "paperclipai/paperclip/granola",
+      "paperclipai/paperclip/grill-me",
+      "paperclipai/paperclip/grill-with-docs",
+      "paperclipai/paperclip/handoff",
+      "paperclipai/paperclip/improve-codebase-architecture",
+      "paperclipai/paperclip/jira",
+      "paperclipai/paperclip/market-research-agent",
+      "paperclipai/paperclip/migrate-to-shoehorn",
+      "paperclipai/paperclip/minimax-web-search",
+      "paperclipai/paperclip/obsidian-vault",
+      "paperclipai/paperclip/paperclip",
+      "paperclipai/paperclip/paperclip-converting-plans-to-tasks",
+      "paperclipai/paperclip/paperclip-create-agent",
+      "paperclipai/paperclip/paperclip-create-plugin",
+      "paperclipai/paperclip/paperclip-dev",
+      "paperclipai/paperclip/para-memory-files",
+      "paperclipai/paperclip/prototype",
+      "paperclipai/paperclip/quickbooks",
+      "paperclipai/paperclip/scaffold-exercises",
+      "paperclipai/paperclip/setup-matt-pocock-skills",
+      "paperclipai/paperclip/setup-pre-commit",
+      "paperclipai/paperclip/sibyl-memory",
+      "paperclipai/paperclip/tdd",
+      "paperclipai/paperclip/teach",
+      "paperclipai/paperclip/team-organiser",
+      "paperclipai/paperclip/terminal-bench-loop",
+      "paperclipai/paperclip/to-issues",
+      "paperclipai/paperclip/to-prd",
+      "paperclipai/paperclip/triage",
+      "paperclipai/paperclip/ui-ux-pro-max",
+      "paperclipai/paperclip/vector-memory",
+      "paperclipai/paperclip/write-a-skill",
+      "paperclipai/paperclip/zoom-out",
+      "url/clawhub-ai/d891ad2b2d/tiktok-app-marketing",
+      "coreyhaines31/marketingskills/ab-testing",
+      "coreyhaines31/marketingskills/competitor-profiling",
+      "coreyhaines31/marketingskills/content-strategy",
+      "coreyhaines31/marketingskills/image",
+      "coreyhaines31/marketingskills/marketing-ideas",
+      "coreyhaines31/marketingskills/marketing-psychology",
+      "coreyhaines31/marketingskills/social",
+    ],
+  },
+};
+
+const MARKETING_STACK_AGENTS = MARKETING_STACK_AGENT_METADATA.map((definition) => ({
+  ...definition,
+  ...ETIQ_MARKETING_STACK_AGENT_CONFIG[definition.name],
+  needsTikTokSkill: false as const,
+  needsProductIdeationSkills: false as const,
+}));
+
+const MARKETING_STACK_ROUTINES = [
+  {
+    title: "Product Design",
+    assigneeName: "Product Design Agent",
+    description: `Purpose
+Analyze the company's current products, assets, customer problems, distribution advantages, and market position, then propose new product opportunities worth launching next.
+
+Routing
+This routine must be owned by the Product Design Agent.
+
+Execution instructions
+1. Start with company memory first. Read vector memory using the current Paperclip company ID as user_id.
+2. Reconstruct the company's current offerings, strengths, customer pains, constraints, and prior findings from memory, company docs, and the onboarding research issue.
+3. Research the live market and competitor landscape online using current sources.
+4. Generate multiple new product ideas across software, hardware, services, physical goods, and hybrid offers where relevant.
+5. Use jobs-to-be-done, opportunity-solution-tree thinking, customer pain, differentiation, monetization, company fit, and validation speed to rank the ideas.
+6. Recommend the strongest ideas with:
+   - target customer
+   - problem
+   - product form
+   - why now
+   - why this company can win
+   - risks
+   - validation plan
+7. Persist durable opportunity findings back to vector memory with user_id equal to the company ID.
+
+Skill guidance
+- Primary: brainstorm-ideas
+- Supporting: jobs-to-be-done, opportunity-solution-tree, customer-research, competitor-profiling, analytics, product-marketing, pricing, marketing-psychology
+
+Output
+Produce a ranked product opportunity memo with at least three serious ideas and a clear recommendation for what to test first.`,
+  },
+  {
+    title: "Competitor Research",
+    assigneeName: "Market Research Agent",
+    description: `Purpose
+Continuously study the company's direct competitors, substitutes, market moves, positioning shifts, and whitespace so the company can sharpen positioning and strategic messaging.
+
+Routing
+This routine must be owned by the Market Research Agent.
+
+Execution instructions
+1. Read company memory and current positioning before starting external research.
+2. Identify the active competitor set, substitutes, adjacent alternatives, and emergent players.
+3. Review current websites, product surfaces, public launches, messaging, pricing, reviews, case studies, content, and proof points.
+4. Compare the company against competitors on ICP, product shape, positioning, pricing, trust signals, strengths, weaknesses, and likely buyer objections.
+5. Highlight where the company should reposition, differentiate harder, or avoid crowded claims.
+6. Record durable competitor facts and dated market changes back into vector memory using the company ID as user_id.
+
+Skill guidance
+- Primary: paperclipai/paperclip/market-research-agent
+- Supporting: competitor-profiling, competitors, customer-research, analytics, product-marketing, pricing
+
+Output
+Produce a competitor intelligence brief with a positioning adjustment section, risk section, and specific messaging or GTM recommendations.`,
+  },
+  {
+    title: "Content Creation",
+    assigneeName: "Carousel Social Media Agent",
+    description: `Purpose
+Create a platform-ready 4-slide carousel based on the company's products, goals, market context, and current strategic priorities.
+
+Routing
+This routine must be owned by the Carousel Social Media Agent.
+
+Execution instructions
+1. Read the latest company memory, product context, market intelligence, and current goals before generating content.
+2. Choose one strong audience-specific angle tied to company goals.
+3. Research current market conversation and competitor or creator patterns relevant to that angle.
+4. Generate multiple hooks, choose the best one, and justify it briefly.
+5. Produce a complete 4-slide carousel:
+   - slide 1: hook
+   - slide 2: insight/problem
+   - slide 3: solution/proof/value
+   - slide 4: CTA
+6. Also provide caption, visual direction, target platform, target audience, and one test variation.
+7. Keep output aligned with brand and current company strategy.
+
+Skill guidance
+- Primary: tiktok-app-marketing for TikTok-first or short-form social framing
+- Supporting: social, copywriting, content-strategy, ad-creative, image, video, marketing-psychology, ckm:brand
+
+Output
+Deliver the finished 4-slide content package, not just notes.`,
+  },
+  {
+    title: MARKETING_INNOVATION_WORKFLOW_TITLE,
+    assigneeName: "Market Research Agent",
+    description: MARKETING_INNOVATION_WORKFLOW_DESCRIPTION,
+    trigger: {
+      kind: "webhook" as const,
+      label: "Innovation launch pack webhook",
+      enabled: true,
+      signingMode: "bearer" as const,
+    },
+    materializeForCompany: true as const,
+  },
+] as const;
 
 export function OnboardingWizard() {
   const { onboardingOpen, onboardingOptions, closeOnboarding } = useDialog();
@@ -107,6 +833,10 @@ export function OnboardingWizard() {
   // Step 1
   const [companyName, setCompanyName] = useState("");
   const [companyGoal, setCompanyGoal] = useState("");
+  const [companyWebsite, setCompanyWebsite] = useState("");
+  const [companyImportantLinks, setCompanyImportantLinks] = useState("");
+  const [companyDocuments, setCompanyDocuments] = useState<File[]>([]);
+  const [addMarketingStack, setAddMarketingStack] = useState(false);
 
   // Step 2
   const [agentName, setAgentName] = useState("CEO");
@@ -125,9 +855,7 @@ export function OnboardingWizard() {
   const [showMoreAdapters, setShowMoreAdapters] = useState(false);
 
   // Step 3
-  const [taskTitle, setTaskTitle] = useState(
-    "Hire your first engineer and create a hiring plan"
-  );
+  const [taskTitle, setTaskTitle] = useState(DEFAULT_TASK_TITLE);
   const [taskDescription, setTaskDescription] = useState(
     DEFAULT_TASK_DESCRIPTION
   );
@@ -154,6 +882,8 @@ export function OnboardingWizard() {
   const [createdAgentId, setCreatedAgentId] = useState<string | null>(null);
   const [createdProjectId, setCreatedProjectId] = useState<string | null>(null);
   const [createdIssueRef, setCreatedIssueRef] = useState<string | null>(null);
+  const [createdIssueId, setCreatedIssueId] = useState<string | null>(null);
+  const [createdResearchIssueId, setCreatedResearchIssueId] = useState<string | null>(null);
 
   useEffect(() => {
     setRouteDismissed(false);
@@ -172,6 +902,8 @@ export function OnboardingWizard() {
     setCreatedProjectId(null);
     setCreatedAgentId(null);
     setCreatedIssueRef(null);
+    setCreatedIssueId(null);
+    setCreatedResearchIssueId(null);
   }, [
     effectiveOnboardingOpen,
     effectiveOnboardingOptions.companyId,
@@ -182,8 +914,25 @@ export function OnboardingWizard() {
   useEffect(() => {
     if (!effectiveOnboardingOpen || !createdCompanyId || createdCompanyPrefix) return;
     const company = companies.find((c) => c.id === createdCompanyId);
-    if (company) setCreatedCompanyPrefix(company.issuePrefix);
-  }, [effectiveOnboardingOpen, createdCompanyId, createdCompanyPrefix, companies]);
+    if (!company) return;
+    setCreatedCompanyPrefix(company.issuePrefix);
+    if (taskDescription === DEFAULT_TASK_DESCRIPTION) {
+      setTaskTitle(DEFAULT_TASK_TITLE.replaceAll("{{company_name}}", company.name));
+      setTaskDescription(buildCompanyResearchTaskDescription({
+        companyId: company.id,
+        website: company.website ?? "",
+        importantLinks: company.importantLinks ?? [],
+        documentNames: companyDocuments.map((file) => file.name)
+      }));
+    }
+  }, [
+    effectiveOnboardingOpen,
+    createdCompanyId,
+    createdCompanyPrefix,
+    companies,
+    companyDocuments,
+    taskDescription
+  ]);
 
   // Resize textarea when step 3 is shown or description changes
   useEffect(() => {
@@ -290,6 +1039,10 @@ export function OnboardingWizard() {
     setError(null);
     setCompanyName("");
     setCompanyGoal("");
+    setCompanyWebsite("");
+    setCompanyImportantLinks("");
+    setCompanyDocuments([]);
+    setAddMarketingStack(false);
     setAgentName("CEO");
     setAdapterType("claude_local");
     setModel("");
@@ -301,7 +1054,7 @@ export function OnboardingWizard() {
     setAdapterEnvLoading(false);
     setForceUnsetAnthropicApiKey(false);
     setUnsetAnthropicLoading(false);
-    setTaskTitle("Hire your first engineer and create a hiring plan");
+    setTaskTitle(DEFAULT_TASK_TITLE);
     setTaskDescription(DEFAULT_TASK_DESCRIPTION);
     setCreatedCompanyId(null);
     setCreatedCompanyPrefix(null);
@@ -309,6 +1062,8 @@ export function OnboardingWizard() {
     setCreatedAgentId(null);
     setCreatedProjectId(null);
     setCreatedIssueRef(null);
+    setCreatedIssueId(null);
+    setCreatedResearchIssueId(null);
   }
 
   function handleClose() {
@@ -389,10 +1144,28 @@ export function OnboardingWizard() {
     setLoading(true);
     setError(null);
     try {
-      const company = await companiesApi.create({ name: companyName.trim() });
+      const importantLinks = companyImportantLinks
+        .split(/\r?\n/)
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      const company = await companiesApi.create({
+        name: companyName.trim(),
+        website: companyWebsite.trim() || null,
+        importantLinks
+      });
       setCreatedCompanyId(company.id);
       setCreatedCompanyPrefix(company.issuePrefix);
       setSelectedCompanyId(company.id);
+      if (addMarketingStack) {
+        void startMarketingStackImport(company.id);
+      }
+      setTaskTitle(DEFAULT_TASK_TITLE.replaceAll("{{company_name}}", company.name));
+      setTaskDescription(buildCompanyResearchTaskDescription({
+        companyId: company.id,
+        website: companyWebsite.trim(),
+        importantLinks,
+        documentNames: companyDocuments.map((file) => file.name)
+      }));
       queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
 
       if (companyGoal.trim()) {
@@ -440,24 +1213,78 @@ export function OnboardingWizard() {
         if (!result) return;
       }
 
-      const hire = await agentsApi.hire(createdCompanyId, {
-        name: agentName.trim(),
-        role: "ceo",
-        adapterType,
-        adapterConfig: buildAdapterConfig(),
-        runtimeConfig: buildNewAgentRuntimeConfig()
-      });
-      if (hire.approval) {
-        await approvalsApi.approve(
-          hire.approval.id,
-          "Approved during onboarding first-agent setup."
-        );
-        queryClient.invalidateQueries({
-          queryKey: queryKeys.approvals.list(createdCompanyId)
-        });
-      }
-      const agent = hire.agent;
+      const agent = createdAgentId
+        ? await agentsApi.get(createdAgentId, createdCompanyId)
+        : await (async () => {
+          const hire = await agentsApi.hire(createdCompanyId, {
+            name: agentName.trim(),
+            role: "ceo",
+            adapterType,
+            adapterConfig: buildAdapterConfig(),
+            runtimeConfig: buildNewAgentRuntimeConfig()
+          });
+          if (hire.approval) {
+            await approvalsApi.approve(
+              hire.approval.id,
+              "Approved during onboarding first-agent setup."
+            );
+            queryClient.invalidateQueries({
+              queryKey: queryKeys.approvals.list(createdCompanyId)
+            });
+          }
+          return hire.agent;
+        })();
       setCreatedAgentId(agent.id);
+
+      if (addMarketingStack) {
+        const existingAgents = await agentsApi.list(createdCompanyId);
+        const agentByName = new Map(
+          existingAgents.map((entry) => [entry.name.trim().toLowerCase(), entry])
+        );
+        const marketingStackAgentLinks = [];
+        for (const definition of MARKETING_STACK_AGENTS) {
+          const nameKey = definition.name.trim().toLowerCase();
+          let stackAgent = agentByName.get(nameKey);
+          if (!stackAgent) {
+            const stackHire = await agentsApi.hire(createdCompanyId, {
+              name: definition.name,
+              role: "general",
+              reportsTo: agent.id,
+              capabilities: definition.capabilities,
+              adapterType,
+              adapterConfig: buildAdapterConfig(),
+              runtimeConfig: buildNewAgentRuntimeConfig(),
+              instructionsBundle: {
+                entryFile: "AGENTS.md",
+                files: {
+                  "AGENTS.md": definition.instructions
+                }
+              }
+            });
+            if (stackHire.approval) {
+              await approvalsApi.approve(
+                stackHire.approval.id,
+                "Approved during onboarding Marketing Stack setup."
+              );
+            }
+            stackAgent = stackHire.agent;
+            agentByName.set(nameKey, stackAgent);
+          }
+
+          marketingStackAgentLinks.push({
+            agentId: stackAgent.id,
+            desiredSkillRefs: definition.desiredSkillRefs,
+            skillSlugs: [
+              ...(definition.needsTikTokSkill ? ["tiktok-app-marketing"] : []),
+              ...(definition.needsProductIdeationSkills
+                ? ["brainstorm-ideas", "jobs-to-be-done", "opportunity-solution-tree"]
+                : []),
+            ],
+          });
+        }
+        registerMarketingStackAgents(createdCompanyId, marketingStackAgentLinks);
+      }
+
       queryClient.invalidateQueries({
         queryKey: queryKeys.agents.list(createdCompanyId)
       });
@@ -550,21 +1377,110 @@ export function OnboardingWizard() {
       }
 
       let issueRef = createdIssueRef;
-      if (!issueRef) {
+      let issueId = createdIssueId;
+      if (!issueRef || !issueId) {
         const issue = await issuesApi.create(
           createdCompanyId,
-          buildOnboardingIssuePayload({
+          {
+            ...buildOnboardingIssuePayload({
             title: taskTitle,
             description: taskDescription,
             assigneeAgentId: createdAgentId,
             projectId,
             goalId
-          })
+            }),
+            priority: "high"
+          }
         );
+        issueId = issue.id;
         issueRef = issue.identifier ?? issue.id;
+        setCreatedIssueId(issue.id);
         setCreatedIssueRef(issueRef);
         queryClient.invalidateQueries({
           queryKey: queryKeys.issues.list(createdCompanyId)
+        });
+      }
+
+      if (createdResearchIssueId !== issueId) {
+        for (const file of companyDocuments) {
+          await issuesApi.uploadAttachment(createdCompanyId, issueId, file);
+        }
+
+        await agentsApi.wakeup(createdAgentId, {
+          source: "assignment",
+          triggerDetail: "system",
+          reason: "Company onboarding research sources are ready for vector-memory ingestion.",
+          payload: {
+            issueId,
+            companyId: createdCompanyId,
+            vectorMemoryUserId: createdCompanyId
+          },
+          idempotencyKey: `company-onboarding-research:${createdCompanyId}`
+        }, createdCompanyId);
+        setCreatedResearchIssueId(issueId);
+      }
+
+      if (addMarketingStack) {
+        const [companyAgents, existingRoutines] = await Promise.all([
+          agentsApi.list(createdCompanyId),
+          routinesApi.list(createdCompanyId),
+        ]);
+        const agentByName = new Map(
+          companyAgents.map((entry) => [entry.name.trim().toLowerCase(), entry])
+        );
+        const existingRoutineTitles = new Set(
+          existingRoutines.map((entry) => entry.title.trim().toLowerCase())
+        );
+        const companyRecord = companies.find((entry) => entry.id === createdCompanyId);
+        const onboardingImportantLinks = companyImportantLinks
+          .split(/\r?\n/)
+          .map((entry) => entry.trim())
+          .filter(Boolean);
+        const companyContext = {
+          companyId: createdCompanyId,
+          companyName: companyRecord?.name ?? companyName.trim(),
+          website: companyRecord?.website ?? companyWebsite.trim(),
+          importantLinks: companyRecord?.importantLinks ?? onboardingImportantLinks,
+          documentNames: companyDocuments.map((file) => file.name),
+        };
+
+        for (const routineDefinition of MARKETING_STACK_ROUTINES) {
+          const materializedContent = "materializeForCompany" in routineDefinition && routineDefinition.materializeForCompany
+            ? buildMarketingInnovationWorkflowContent(companyContext)
+            : null;
+          const routineTitle = materializedContent?.title ?? routineDefinition.title;
+          const routineDescription = materializedContent?.description ?? routineDefinition.description;
+          if (
+            existingRoutineTitles.has(routineTitle.toLowerCase())
+            || existingRoutineTitles.has(routineDefinition.title.toLowerCase())
+          ) {
+            continue;
+          }
+          const assignee = agentByName.get(
+            routineDefinition.assigneeName.toLowerCase()
+          );
+          if (!assignee) continue;
+
+          const routine = await routinesApi.create(createdCompanyId, {
+            title: routineTitle,
+            description: routineDescription,
+            assigneeAgentId: assignee.id,
+            projectId,
+            goalId,
+            priority: "high",
+            status: "active",
+            concurrencyPolicy: "coalesce_if_active",
+            catchUpPolicy: "skip_missed",
+          });
+          const trigger = "trigger" in routineDefinition && routineDefinition.trigger
+            ? routineDefinition.trigger
+            : { kind: "api" as const, label: "Manual run", enabled: true };
+          await routinesApi.createTrigger(routine.id, trigger);
+          existingRoutineTitles.add(routineTitle.toLowerCase());
+        }
+
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.routines.list(createdCompanyId, { projectId }),
         });
       }
 
@@ -706,6 +1622,82 @@ export function OnboardingWizard() {
                       onChange={(e) => setCompanyGoal(e.target.value)}
                     />
                   </div>
+                  <div className="group">
+                    <label className="text-xs text-muted-foreground mb-1 block">
+                      Website (optional)
+                    </label>
+                    <input
+                      type="url"
+                      className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50"
+                      placeholder="https://acme.com"
+                      value={companyWebsite}
+                      onChange={(e) => setCompanyWebsite(e.target.value)}
+                    />
+                  </div>
+                  <div className="group">
+                    <label className="text-xs text-muted-foreground mb-1 block">
+                      Important links (optional, one per line)
+                    </label>
+                    <textarea
+                      className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50 resize-none min-h-[72px]"
+                      placeholder={"https://docs.acme.com\nhttps://linkedin.com/company/acme"}
+                      value={companyImportantLinks}
+                      onChange={(e) => setCompanyImportantLinks(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">
+                      Company documents (optional)
+                    </label>
+                    <label className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground">
+                      <Upload className="h-4 w-4" />
+                      Upload documents
+                      <input
+                        type="file"
+                        multiple
+                        className="hidden"
+                        accept=".pdf,.doc,.docx,.txt,.md,.csv,.ppt,.pptx,.xls,.xlsx,application/pdf,text/*"
+                        onChange={(event) => {
+                          const files = Array.from(event.target.files ?? []);
+                          setCompanyDocuments((current) => [...current, ...files]);
+                          event.target.value = "";
+                        }}
+                      />
+                    </label>
+                    {companyDocuments.length > 0 && (
+                      <div className="mt-2 space-y-1">
+                        {companyDocuments.map((file, index) => (
+                          <div key={`${file.name}-${file.size}-${index}`} className="flex items-center justify-between gap-2 text-xs">
+                            <span className="truncate text-muted-foreground">{file.name}</span>
+                            <button
+                              type="button"
+                              className="text-muted-foreground hover:text-foreground"
+                              onClick={() => setCompanyDocuments((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <label className="flex cursor-pointer items-start gap-3 rounded-md border border-border p-3 hover:bg-accent/40">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-4 w-4"
+                      checked={addMarketingStack}
+                      onChange={(event) => setAddMarketingStack(event.target.checked)}
+                    />
+                    <span>
+                      <span className="block text-sm font-medium">
+                        Add Marketing Stack
+                      </span>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">
+                        Adds Market Research, Market Intelligence, and Carousel
+                        Social Media agents. All three report directly to the CEO.
+                      </span>
+                    </span>
+                  </label>
                 </div>
               )}
 
@@ -1149,6 +2141,18 @@ export function OnboardingWizard() {
                       </div>
                       <Check className="h-4 w-4 text-green-500 shrink-0" />
                     </div>
+                    {addMarketingStack && (
+                      <div className="flex items-center gap-3 px-3 py-2.5">
+                        <Bot className="h-4 w-4 text-muted-foreground shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium">Marketing Stack</p>
+                          <p className="text-xs text-muted-foreground">
+                            Research, intelligence, and carousel social media
+                          </p>
+                        </div>
+                        <Check className="h-4 w-4 text-green-500 shrink-0" />
+                      </div>
+                    )}
                     <div className="flex items-center gap-3 px-3 py-2.5">
                       <Bot className="h-4 w-4 text-muted-foreground shrink-0" />
                       <div className="flex-1 min-w-0">

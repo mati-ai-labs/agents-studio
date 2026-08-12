@@ -54,7 +54,7 @@ function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
-function rejectUpgrade(socket: Duplex, statusLine: string, message: string) {
+export function rejectUpgrade(socket: Duplex, statusLine: string, message: string) {
   const safe = message.replace(/[\r\n]+/g, " ").trim();
   socket.write(`HTTP/1.1 ${statusLine}\r\nConnection: close\r\nContent-Type: text/plain\r\n\r\n${safe}`);
   socket.destroy();
@@ -79,7 +79,7 @@ function parseBearerToken(rawAuth: string | string[] | undefined) {
   return token.length > 0 ? token : null;
 }
 
-function headersFromIncomingMessage(req: IncomingMessage): Headers {
+export function headersFromIncomingMessage(req: IncomingMessage): Headers {
   const headers = new Headers();
   for (const [key, raw] of Object.entries(req.headers)) {
     if (!raw) continue;
@@ -92,7 +92,7 @@ function headersFromIncomingMessage(req: IncomingMessage): Headers {
   return headers;
 }
 
-async function authorizeUpgrade(
+export async function authorizeUpgrade(
   db: Db,
   req: IncomingMessage,
   companyId: string,
@@ -240,6 +240,9 @@ export function setupLiveEventsWebSocketServer(
     }
 
     const url = new URL(req.url, "http://localhost");
+    if (url.pathname === "/preview" || url.pathname.startsWith("/preview/")) {
+      return;
+    }
     const companyId = parseCompanyId(url.pathname);
     if (!companyId) {
       socket.destroy();

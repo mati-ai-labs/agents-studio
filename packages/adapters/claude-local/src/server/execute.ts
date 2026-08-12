@@ -106,6 +106,12 @@ interface ClaudeGithubMcpConfig {
   accessToken: string;
 }
 
+interface ClaudeMetaAdsMcpConfig {
+  serverName: string;
+  url: string;
+  accessToken: string;
+}
+
 function readClaudeGoogleWorkspaceMcpConfig(value: unknown): ClaudeGoogleWorkspaceMcpConfig | null {
   const root = parseObject(value);
   const candidate = parseObject(root.googleWorkspace ?? root["google-workspace"]);
@@ -167,6 +173,17 @@ function readClaudeGithubMcpConfig(value: unknown): ClaudeGithubMcpConfig | null
   const accessToken =
     asString(candidate.accessToken, "").trim() || asString(candidate.token, "").trim();
   const serverName = asString(candidate.serverName, "github").trim() || "github";
+  if (!url || !accessToken) return null;
+  return { serverName, url, accessToken };
+}
+
+function readClaudeMetaAdsMcpConfig(value: unknown): ClaudeMetaAdsMcpConfig | null {
+  const root = parseObject(value);
+  const candidate = parseObject(root.metaAds ?? root["meta-ads"]);
+  const url = asString(candidate.url, "").trim();
+  const accessToken =
+    asString(candidate.accessToken, "").trim() || asString(candidate.token, "").trim();
+  const serverName = asString(candidate.serverName, "meta-ads").trim() || "meta-ads";
   if (!url || !accessToken) return null;
   return { serverName, url, accessToken };
 }
@@ -517,6 +534,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const googleWorkspaceMcpConfig = readClaudeGoogleWorkspaceMcpConfig(ctx.mcpConfig);
   const jiraMcpConfig = readClaudeJiraMcpConfig(ctx.mcpConfig);
   const githubMcpConfig = readClaudeGithubMcpConfig(ctx.mcpConfig);
+  const metaAdsMcpConfig = readClaudeMetaAdsMcpConfig(ctx.mcpConfig);
   const claudeSkillEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
   const desiredSkillNames = new Set(resolveClaudeDesiredSkillNames(config, claudeSkillEntries));
   // When instructionsFilePath is configured, build a stable content-addressed
@@ -640,6 +658,17 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
             url: githubMcpConfig.url,
             headers: {
               Authorization: `Bearer ${githubMcpConfig.accessToken}`,
+            },
+          },
+        }
+      : {}),
+    ...(metaAdsMcpConfig
+      ? {
+          [metaAdsMcpConfig.serverName]: {
+            type: "http",
+            url: metaAdsMcpConfig.url,
+            headers: {
+              Authorization: `Bearer ${metaAdsMcpConfig.accessToken}`,
             },
           },
         }

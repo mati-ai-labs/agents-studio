@@ -165,6 +165,7 @@ import { environmentRuntimeService } from "./environment-runtime.js";
 import { environmentRunOrchestrator } from "./environment-run-orchestrator.js";
 import { connectorRegistryService } from "./connector-registry.js";
 import { resolveGoogleWorkspaceMcpAccessToken } from "./google-workspace-mcp-auth.js";
+import { resolveMetaAdsMcpAccessToken } from "./meta-ads-mcp-auth.js";
 import type { PluginWorkerManager } from "./plugin-worker-manager.js";
 
 const MAX_LIVE_LOG_CHUNK_BYTES = 8 * 1024;
@@ -209,6 +210,14 @@ const EXECUTION_PATH_HEARTBEAT_RUN_STATUSES = ["queued", "running", "scheduled_r
 const CANCELLABLE_HEARTBEAT_RUN_STATUSES = ["queued", "running", "scheduled_retry"] as const;
 const HEARTBEAT_RUN_TERMINAL_STATUSES = ["succeeded", "failed", "cancelled", "timed_out"] as const;
 const UNSUCCESSFUL_HEARTBEAT_RUN_TERMINAL_STATUSES = ["failed", "cancelled", "timed_out"] as const;
+
+export function resolveEffectiveProjectId(input: {
+  issueProjectId?: string | null;
+  projectWorkspaceProjectId?: string | null;
+  contextProjectId?: string | null;
+}) {
+  return input.issueProjectId ?? input.projectWorkspaceProjectId ?? input.contextProjectId ?? null;
+}
 export {
   ACTIVE_RUN_OUTPUT_CONTINUE_REARM_MS,
   ACTIVE_RUN_OUTPUT_CRITICAL_THRESHOLD_MS,
@@ -3461,7 +3470,23 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     const issueProjectId = issueProjectRef?.projectId ?? null;
     const preferredProjectWorkspaceId =
       issueProjectRef?.projectWorkspaceId ?? contextProjectWorkspaceId ?? null;
-    const resolvedProjectId = issueProjectId ?? contextProjectId;
+    const projectWorkspaceProjectId = preferredProjectWorkspaceId
+      ? await db
+          .select({ projectId: projectWorkspaces.projectId })
+          .from(projectWorkspaces)
+          .where(
+            and(
+              eq(projectWorkspaces.id, preferredProjectWorkspaceId),
+              eq(projectWorkspaces.companyId, agent.companyId),
+            ),
+          )
+          .then((rows) => rows[0]?.projectId ?? null)
+      : null;
+    const resolvedProjectId = resolveEffectiveProjectId({
+      issueProjectId,
+      projectWorkspaceProjectId,
+      contextProjectId,
+    });
     const useProjectWorkspace = opts?.useProjectWorkspace !== false;
     const workspaceProjectId = useProjectWorkspace ? resolvedProjectId : null;
 
@@ -7265,6 +7290,9 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       if (issueRef?.executionWorkspaceId !== persistedExecutionWorkspace.id) {
         nextIssuePatch.executionWorkspaceId = persistedExecutionWorkspace.id;
       }
+      if (!issueRef?.projectId && resolvedProjectId) {
+        nextIssuePatch.projectId = resolvedProjectId;
+      }
       if (resolvedProjectWorkspaceId && issueRef?.projectWorkspaceId !== resolvedProjectWorkspaceId) {
         nextIssuePatch.projectWorkspaceId = resolvedProjectWorkspaceId;
       }
@@ -7804,9 +7832,46 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
               accessToken: githubAccessToken,
             }
           : null;
+
+      const metaAdsMcpEnabled =
+        runtimeConfig.enableMetaAdsMcp === undefined
+          ? true
+          : asBoolean(runtimeConfig.enableMetaAdsMcp, true);
+      const metaAdsMcpUrl =
+        readNonEmptyString(runtimeConfig.metaAdsMcpUrl) ??
+        readNonEmptyString(process.env.META_ADS_MCP_URL) ??
+        "https://mcp.facebook.com/ads";
+      const metaAdsMcpToken = metaAdsMcpEnabled
+        ? await resolveMetaAdsMcpAccessToken({
+            db,
+            companyId: agent.companyId,
+            userId: runRequestedByUserId,
+          })
+        : null;
+      if (
+        metaAdsMcpEnabled &&
+        metaAdsMcpToken?.reason &&
+        metaAdsMcpToken.reason !== "missing_credentials"
+      ) {
+        await onLog(
+          "stderr",
+          `[paperclip] Meta Ads MCP auth is unavailable (${metaAdsMcpToken.reason}).\n`,
+        );
+      }
+      const metaAdsConfig =
+        metaAdsMcpEnabled && metaAdsMcpToken?.accessToken
+          ? {
+              serverName:
+                readNonEmptyString(runtimeConfig.metaAdsMcpServerName) ??
+                "meta-ads",
+              url: metaAdsMcpUrl,
+              accessToken: metaAdsMcpToken.accessToken,
+            }
+          : null;
+
       const adapterMcpConfig = (
         googleWorkspaceMcpEnabled && googleWorkspaceMcpToken?.accessToken
-      ) || jiraConfig || githubConfig
+      ) || jiraConfig || githubConfig || metaAdsConfig
         ? {
             ...(googleWorkspaceMcpEnabled && googleWorkspaceMcpToken?.accessToken
               ? {
@@ -7818,6 +7883,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
               : {}),
             ...(jiraConfig ? { jira: jiraConfig } : {}),
             ...(githubConfig ? { github: githubConfig } : {}),
+            ...(metaAdsConfig ? { metaAds: metaAdsConfig } : {}),
           }
         : null;
 
@@ -7835,6 +7901,29 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           },
           "local agent jwt secret missing or invalid; running without injected PAPERCLIP_API_KEY",
         );
+      }
+      // Inject PAPERCLIP_API_KEY into agent.adapterConfig.env for ALL adapter
+      // types (not just Hermes). The env var is read by Claude/Codex/Cursor
+      // /Pi/OpenCode adapters when spawning the agent subprocess so they can
+      // call Paperclip API endpoints (e.g. connector credentials) from
+      // inside their own runtime. Do not clobber an explicitly-set value.
+      if (authToken) {
+        const existingAdapterConfig = (agent.adapterConfig ?? {}) as Record<string, unknown>;
+        const existingEnv =
+          typeof existingAdapterConfig.env === "object" && existingAdapterConfig.env !== null && !Array.isArray(existingAdapterConfig.env)
+            ? (existingAdapterConfig.env as Record<string, string>)
+            : {};
+        const explicitApiKey =
+          typeof existingEnv.PAPERCLIP_API_KEY === "string" && existingEnv.PAPERCLIP_API_KEY.trim().length > 0;
+        if (!explicitApiKey) {
+          agent.adapterConfig = {
+            ...existingAdapterConfig,
+            env: {
+              ...existingEnv,
+              PAPERCLIP_API_KEY: authToken,
+            },
+          };
+        }
       }
       const adapterResult = await adapter.execute({
         runId: run.id,

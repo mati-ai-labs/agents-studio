@@ -28,6 +28,47 @@ Workspace commands are manually controlled from the UI.
 - Paperclip does not automatically start or stop these workspace services as part of issue execution.
 - Paperclip also does not automatically restart workspace services on server boot.
 
+## Paperclip previews for local services
+
+A running local service can be exposed through Paperclip without publishing it to the public internet or handing the process to a second supervisor.
+
+Set the service exposure type to `paperclip_preview`:
+
+```json
+{
+  "commands": [
+    {
+      "id": "web",
+      "name": "web",
+      "kind": "service",
+      "command": "pnpm dev",
+      "cwd": ".",
+      "port": { "type": "auto", "envKey": "PORT" },
+      "readiness": {
+        "type": "http",
+        "urlTemplate": "http://127.0.0.1:${port}"
+      },
+      "expose": {
+        "type": "paperclip_preview"
+      },
+      "lifecycle": "shared",
+      "reuseScope": "project_workspace"
+    }
+  ]
+}
+```
+
+When Paperclip starts that service, it creates a 30-minute lease and returns a URL such as `/preview/web-<random>/`. The URL proxies HTTP requests and WebSocket upgrades to the registered localhost port. The lease expiry returns `410 Gone`; it does not stop the local process. Explicitly stopping or closing the workspace still stops the process.
+
+For services that are started without `paperclip_preview`, the board can create a lease explicitly:
+
+- `POST /api/companies/{companyId}/previews` with `{ "runtimeServiceId": "<running-service-id>" }`
+- `GET /api/companies/{companyId}/previews` to list leases
+- `GET /api/previews/{leaseId}` to inspect one lease
+- `DELETE /api/previews/{leaseId}` to revoke one lease
+
+Preview requests remain company-authenticated. Paperclip credentials are not forwarded to the local service. The proxy forwards `X-Forwarded-Prefix: /preview/{slug}` and rewrites common HTML root references, redirects, and cookie paths. Applications should still prefer relative asset/API/WebSocket URLs or honor `X-Forwarded-Prefix` for framework-specific routing.
+
 ## Execution workspace inheritance
 
 Execution workspaces isolate code and runtime state from the project primary workspace.
@@ -72,3 +113,4 @@ With the current implementation:
 - Execution workspace runtime overrides are stored on the execution workspace.
 - Heartbeat runs do not auto-start workspace services.
 - Server startup does not auto-restart workspace services.
+- Services configured with `expose.type = "paperclip_preview"` receive a persisted, expiring preview lease when they are started.

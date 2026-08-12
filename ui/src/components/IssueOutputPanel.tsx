@@ -9,7 +9,7 @@ import {
 } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { cn, formatDate, formatDateTime } from "@/lib/utils";
-import { CalendarDays, FileText, Globe, Image as ImageIcon, Loader2, UserRound } from "lucide-react";
+import { Braces, CalendarDays, FileText, Globe, Image as ImageIcon, Loader2, UserRound } from "lucide-react";
 import { ImageGalleryModal } from "./ImageGalleryModal";
 import { MarkdownBody } from "./MarkdownBody";
 import type { Issue, IssueAttachment } from "@paperclipai/shared";
@@ -408,6 +408,14 @@ export function IssueOutputPanel({
     attachment.originalFilename?.toLowerCase().endsWith(".html") ||
     attachment.originalFilename?.toLowerCase().endsWith(".htm");
 
+  const isPlainText = (attachment: IssueAttachment) =>
+    attachment.contentType === "text/plain" ||
+    attachment.originalFilename?.toLowerCase().endsWith(".txt");
+
+  const isJson = (attachment: IssueAttachment) =>
+    attachment.contentType === "application/json" ||
+    attachment.originalFilename?.toLowerCase().endsWith(".json");
+
   const formatSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -490,6 +498,8 @@ export function IssueOutputPanel({
                   {documentAttachments.map((attachment) => {
                     const isMd = isMarkdown(attachment);
                     const isHtmlFile = isHtml(attachment);
+                    const isJsonFile = isJson(attachment);
+                    const isTextFile = isPlainText(attachment);
                     return (
                       <button
                         key={attachment.id}
@@ -506,6 +516,10 @@ export function IssueOutputPanel({
                             <FileText className="h-5 w-5 text-amber-600" />
                           ) : isHtmlFile ? (
                             <Globe className="h-5 w-5 text-blue-500" />
+                          ) : isJsonFile ? (
+                            <Braces className="h-5 w-5 text-green-500" />
+                          ) : isTextFile ? (
+                            <FileText className="h-5 w-5 text-violet-500" />
                           ) : (
                             <FileText className="h-5 w-5 text-muted-foreground" />
                           )}
@@ -567,10 +581,18 @@ function DocumentViewerModal({
     attachment.originalFilename?.toLowerCase().endsWith(".md") ||
     attachment.originalFilename?.toLowerCase().endsWith(".markdown");
 
-  const isHtml =
+  const isHtmlFile =
     attachment.contentType === "text/html" ||
     attachment.originalFilename?.toLowerCase().endsWith(".html") ||
     attachment.originalFilename?.toLowerCase().endsWith(".htm");
+
+  const isJsonFile =
+    attachment.contentType === "application/json" ||
+    attachment.originalFilename?.toLowerCase().endsWith(".json");
+
+  const isTextFile =
+    attachment.contentType === "text/plain" ||
+    attachment.originalFilename?.toLowerCase().endsWith(".txt");
 
   return (
     <div
@@ -621,8 +643,10 @@ function DocumentViewerModal({
         <div className="flex-1 overflow-auto min-h-0">
           {isMd ? (
             <MarkdownDocViewer contentPath={attachment.contentPath} />
-          ) : isHtml ? (
+          ) : isHtmlFile ? (
             <HtmlDocViewer contentPath={attachment.contentPath} />
+          ) : isJsonFile || isTextFile ? (
+            <TextDocViewer contentPath={attachment.contentPath} isJson={isJsonFile} />
           ) : (
             <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
               <p>
@@ -778,5 +802,77 @@ function MarkdownDocViewer({ contentPath }: MarkdownDocViewerProps) {
     <div className="p-6 prose prose-sm dark:prose-invert max-w-none">
       <MarkdownBody>{content}</MarkdownBody>
     </div>
+  );
+}
+
+interface TextDocViewerProps {
+  contentPath: string;
+  isJson?: boolean;
+}
+
+function TextDocViewer({ contentPath, isJson }: TextDocViewerProps) {
+  const [content, setContent] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    setContent(null);
+
+    fetch(contentPath)
+      .then((res) => {
+        if (!res.ok) throw new Error(`Failed to load: ${res.status}`);
+        return res.text();
+      })
+      .then((text) => {
+        if (cancelled) return;
+        if (isJson) {
+          try {
+            const parsed = JSON.parse(text);
+            setContent(JSON.stringify(parsed, null, 2));
+          } catch {
+            setContent(text);
+          }
+        } else {
+          setContent(text);
+        }
+        setLoading(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Failed to load document");
+        setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [contentPath, isJson]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+        Loading document...
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-full text-destructive text-sm">
+        {error}
+      </div>
+    );
+  }
+
+  if (!content) return null;
+
+  return (
+    <pre className="p-6 text-sm font-mono whitespace-pre-wrap break-words overflow-auto max-h-full">
+      <code>{content}</code>
+    </pre>
   );
 }

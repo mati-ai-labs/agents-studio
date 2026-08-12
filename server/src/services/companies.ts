@@ -40,6 +40,8 @@ export function companyService(db: Db) {
     id: companies.id,
     name: companies.name,
     description: companies.description,
+    website: companies.website,
+    importantLinks: companies.importantLinks,
     status: companies.status,
     issuePrefix: companies.issuePrefix,
     issueCounter: companies.issueCounter,
@@ -124,17 +126,33 @@ export function companyService(db: Db) {
     return "A".repeat(attempt - 1);
   }
 
+  function* walkErrorChain(error: unknown): Generator<Record<string, unknown>> {
+    const seen = new Set<unknown>();
+    let current: unknown = error;
+    while (typeof current === "object" && current !== null && !seen.has(current)) {
+      seen.add(current);
+      yield current as Record<string, unknown>;
+      current = "cause" in current ? (current as { cause?: unknown }).cause : undefined;
+    }
+  }
+
   function isIssuePrefixConflict(error: unknown) {
-    const constraint = typeof error === "object" && error !== null && "constraint" in error
-      ? (error as { constraint?: string }).constraint
-      : typeof error === "object" && error !== null && "constraint_name" in error
-        ? (error as { constraint_name?: string }).constraint_name
-        : undefined;
-    return typeof error === "object"
-      && error !== null
-      && "code" in error
-      && (error as { code?: string }).code === "23505"
-      && constraint === "companies_issue_prefix_idx";
+    for (const candidate of walkErrorChain(error)) {
+      const code = typeof candidate.code === "string" ? candidate.code : undefined;
+      const constraint = typeof candidate.constraint === "string"
+        ? candidate.constraint
+        : typeof candidate.constraint_name === "string"
+          ? candidate.constraint_name
+          : undefined;
+      const message = typeof candidate.message === "string" ? candidate.message : "";
+      if (
+        code === "23505" &&
+        (constraint === "companies_issue_prefix_idx" || message.includes("companies_issue_prefix_idx"))
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   async function createCompanyWithUniquePrefix(data: typeof companies.$inferInsert) {
