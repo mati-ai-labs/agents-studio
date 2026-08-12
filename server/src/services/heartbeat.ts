@@ -210,6 +210,14 @@ const EXECUTION_PATH_HEARTBEAT_RUN_STATUSES = ["queued", "running", "scheduled_r
 const CANCELLABLE_HEARTBEAT_RUN_STATUSES = ["queued", "running", "scheduled_retry"] as const;
 const HEARTBEAT_RUN_TERMINAL_STATUSES = ["succeeded", "failed", "cancelled", "timed_out"] as const;
 const UNSUCCESSFUL_HEARTBEAT_RUN_TERMINAL_STATUSES = ["failed", "cancelled", "timed_out"] as const;
+
+export function resolveEffectiveProjectId(input: {
+  issueProjectId?: string | null;
+  projectWorkspaceProjectId?: string | null;
+  contextProjectId?: string | null;
+}) {
+  return input.issueProjectId ?? input.projectWorkspaceProjectId ?? input.contextProjectId ?? null;
+}
 export {
   ACTIVE_RUN_OUTPUT_CONTINUE_REARM_MS,
   ACTIVE_RUN_OUTPUT_CRITICAL_THRESHOLD_MS,
@@ -3462,7 +3470,23 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     const issueProjectId = issueProjectRef?.projectId ?? null;
     const preferredProjectWorkspaceId =
       issueProjectRef?.projectWorkspaceId ?? contextProjectWorkspaceId ?? null;
-    const resolvedProjectId = issueProjectId ?? contextProjectId;
+    const projectWorkspaceProjectId = preferredProjectWorkspaceId
+      ? await db
+          .select({ projectId: projectWorkspaces.projectId })
+          .from(projectWorkspaces)
+          .where(
+            and(
+              eq(projectWorkspaces.id, preferredProjectWorkspaceId),
+              eq(projectWorkspaces.companyId, agent.companyId),
+            ),
+          )
+          .then((rows) => rows[0]?.projectId ?? null)
+      : null;
+    const resolvedProjectId = resolveEffectiveProjectId({
+      issueProjectId,
+      projectWorkspaceProjectId,
+      contextProjectId,
+    });
     const useProjectWorkspace = opts?.useProjectWorkspace !== false;
     const workspaceProjectId = useProjectWorkspace ? resolvedProjectId : null;
 
@@ -7265,6 +7289,9 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       const nextIssuePatch: Record<string, unknown> = {};
       if (issueRef?.executionWorkspaceId !== persistedExecutionWorkspace.id) {
         nextIssuePatch.executionWorkspaceId = persistedExecutionWorkspace.id;
+      }
+      if (!issueRef?.projectId && resolvedProjectId) {
+        nextIssuePatch.projectId = resolvedProjectId;
       }
       if (resolvedProjectWorkspaceId && issueRef?.projectWorkspaceId !== resolvedProjectWorkspaceId) {
         nextIssuePatch.projectWorkspaceId = resolvedProjectWorkspaceId;
