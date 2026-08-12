@@ -35,6 +35,16 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function lockEnvironmentLeaseWrites(
+  tx: { execute: (query: ReturnType<typeof sql>) => Promise<unknown> },
+  environmentId: string,
+): Promise<void> {
+  // Lease inserts and releases touch the environment row through foreign-key
+  // checks. Serializing those writes per environment prevents a cancellation
+  // and a new run from acquiring conflicting row locks in opposite orders.
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${environmentId}, 0))`);
+}
+
 function cloneRecord(value: unknown, fallback: Record<string, unknown> | null = null): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return fallback;
   return { ...(value as Record<string, unknown>) };
@@ -243,30 +253,33 @@ export function environmentService(db: Db) {
       for (let attempt = 1; attempt <= LEASE_ACQUIRE_MAX_ATTEMPTS; attempt += 1) {
         const now = new Date();
         try {
-          const row = await db
-            .insert(environmentLeases)
-            .values({
-              companyId: input.companyId,
-              environmentId: input.environmentId,
-              executionWorkspaceId: input.executionWorkspaceId ?? null,
-              issueId: input.issueId ?? null,
-              heartbeatRunId: input.heartbeatRunId ?? null,
-              status: "active",
-              leasePolicy: input.leasePolicy ?? "ephemeral",
-              provider: input.provider ?? null,
-              providerLeaseId: input.providerLeaseId ?? null,
-              acquiredAt: now,
-              lastUsedAt: now,
-              expiresAt: input.expiresAt ?? null,
-              releasedAt: null,
-              failureReason: null,
-              cleanupStatus: null,
-              metadata: input.metadata ?? null,
-              createdAt: now,
-              updatedAt: now,
-            })
-            .returning()
-            .then((rows) => rows[0] ?? null);
+          const row = await db.transaction(async (tx) => {
+            await lockEnvironmentLeaseWrites(tx, input.environmentId);
+            return tx
+              .insert(environmentLeases)
+              .values({
+                companyId: input.companyId,
+                environmentId: input.environmentId,
+                executionWorkspaceId: input.executionWorkspaceId ?? null,
+                issueId: input.issueId ?? null,
+                heartbeatRunId: input.heartbeatRunId ?? null,
+                status: "active",
+                leasePolicy: input.leasePolicy ?? "ephemeral",
+                provider: input.provider ?? null,
+                providerLeaseId: input.providerLeaseId ?? null,
+                acquiredAt: now,
+                lastUsedAt: now,
+                expiresAt: input.expiresAt ?? null,
+                releasedAt: null,
+                failureReason: null,
+                cleanupStatus: null,
+                metadata: input.metadata ?? null,
+                createdAt: now,
+                updatedAt: now,
+              })
+              .returning()
+              .then((rows) => rows[0] ?? null);
+          });
           if (!row) {
             throw new Error("Failed to acquire environment lease");
           }
@@ -290,20 +303,30 @@ export function environmentService(db: Db) {
         cleanupStatus?: EnvironmentLeaseCleanupStatus;
       },
     ) => {
-      const now = new Date();
-      const row = await db
-        .update(environmentLeases)
-        .set({
-          status,
-          releasedAt: status === "retained" ? null : now,
-          lastUsedAt: now,
-          updatedAt: now,
-          ...(options?.failureReason !== undefined ? { failureReason: options.failureReason } : {}),
-          ...(options?.cleanupStatus !== undefined ? { cleanupStatus: options.cleanupStatus } : {}),
-        })
-        .where(eq(environmentLeases.id, id))
-        .returning()
-        .then((rows) => rows[0] ?? null);
+      const row = await db.transaction(async (tx) => {
+        const existing = await tx
+          .select({ environmentId: environmentLeases.environmentId })
+          .from(environmentLeases)
+          .where(eq(environmentLeases.id, id))
+          .then((rows) => rows[0] ?? null);
+        if (!existing) return null;
+
+        await lockEnvironmentLeaseWrites(tx, existing.environmentId);
+        const now = new Date();
+        return tx
+          .update(environmentLeases)
+          .set({
+            status,
+            releasedAt: status === "retained" ? null : now,
+            lastUsedAt: now,
+            updatedAt: now,
+            ...(options?.failureReason !== undefined ? { failureReason: options.failureReason } : {}),
+            ...(options?.cleanupStatus !== undefined ? { cleanupStatus: options.cleanupStatus } : {}),
+          })
+          .where(eq(environmentLeases.id, id))
+          .returning()
+          .then((rows) => rows[0] ?? null);
+      });
       return row ? toEnvironmentLease(row) : null;
     },
 
@@ -311,16 +334,27 @@ export function environmentService(db: Db) {
       id: string,
       metadata: Record<string, unknown> | null,
     ): Promise<EnvironmentLease | null> => {
-      const row = await db
-        .update(environmentLeases)
-        .set({
-          metadata,
-          lastUsedAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .where(eq(environmentLeases.id, id))
-        .returning()
-        .then((rows) => rows[0] ?? null);
+      const row = await db.transaction(async (tx) => {
+        const existing = await tx
+          .select({ environmentId: environmentLeases.environmentId })
+          .from(environmentLeases)
+          .where(eq(environmentLeases.id, id))
+          .then((rows) => rows[0] ?? null);
+        if (!existing) return null;
+
+        await lockEnvironmentLeaseWrites(tx, existing.environmentId);
+        const now = new Date();
+        return tx
+          .update(environmentLeases)
+          .set({
+            metadata,
+            lastUsedAt: now,
+            updatedAt: now,
+          })
+          .where(eq(environmentLeases.id, id))
+          .returning()
+          .then((rows) => rows[0] ?? null);
+      });
       return row ? toEnvironmentLease(row) : null;
     },
 
@@ -328,22 +362,38 @@ export function environmentService(db: Db) {
       heartbeatRunId: string,
       status: Extract<EnvironmentLeaseStatus, "released" | "expired" | "failed"> = "released",
     ): Promise<EnvironmentLease[]> => {
-      const now = new Date();
-      const rows = await db
-        .update(environmentLeases)
-        .set({
-          status,
-          releasedAt: now,
-          lastUsedAt: now,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(environmentLeases.heartbeatRunId, heartbeatRunId),
-            eq(environmentLeases.status, "active"),
-          ),
-        )
-        .returning();
+      const rows = await db.transaction(async (tx) => {
+        const activeLeases = await tx
+          .select({ environmentId: environmentLeases.environmentId })
+          .from(environmentLeases)
+          .where(
+            and(
+              eq(environmentLeases.heartbeatRunId, heartbeatRunId),
+              eq(environmentLeases.status, "active"),
+            ),
+          );
+        const environmentIds = [...new Set(activeLeases.map((lease) => lease.environmentId))].sort();
+        for (const environmentId of environmentIds) {
+          await lockEnvironmentLeaseWrites(tx, environmentId);
+        }
+
+        const now = new Date();
+        return tx
+          .update(environmentLeases)
+          .set({
+            status,
+            releasedAt: now,
+            lastUsedAt: now,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(environmentLeases.heartbeatRunId, heartbeatRunId),
+              eq(environmentLeases.status, "active"),
+            ),
+          )
+          .returning();
+      });
       return rows.map(toEnvironmentLease);
     },
   };
