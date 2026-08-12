@@ -10,6 +10,7 @@ import {
 } from "../services/previews.js";
 import {
   parsePreviewRequestTarget,
+  previewPathPrefix,
   proxyPreviewHttp,
 } from "../services/preview-proxy.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
@@ -128,6 +129,15 @@ export function previewProxyRoutes(db: Db) {
     }
 
     assertCompanyAccess(req, preview.lease.companyId);
+    // Keep relative links in the application rooted inside the lease. Without
+    // the trailing slash, a URL such as `./public/logo.png` resolves to
+    // `/preview/public/logo.png` instead of `/preview/{slug}/public/logo.png`.
+    const requestPath = new URL(req.originalUrl, "http://paperclip-preview.local").pathname;
+    const canonicalRoot = `${previewPathPrefix(target.slug)}/`;
+    if (requestPath === previewPathPrefix(target.slug)) {
+      res.redirect(308, `${canonicalRoot}${target.search}`);
+      return;
+    }
     await proxyPreviewHttp(req, res, preview, target);
   });
 

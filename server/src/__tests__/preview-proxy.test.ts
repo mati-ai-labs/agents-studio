@@ -9,6 +9,7 @@ import {
   proxyPreviewHttp,
   rewritePreviewHtml,
   rewritePreviewLocation,
+  rewritePreviewModuleReferences,
   rewritePreviewSetCookie,
   stripPaperclipCookies,
 } from "../services/preview-proxy.js";
@@ -66,6 +67,24 @@ describe("preview proxy", () => {
       .toBe("/preview/site-abc/dashboard?tab=1");
     expect(rewritePreviewSetCookie("sid=abc; Domain=localhost; Path=/; HttpOnly", "site-abc"))
       .toBe("sid=abc; Path=/preview/site-abc/; HttpOnly");
+  });
+
+  it("rewrites root-relative imports inside Vite JavaScript and CSS responses", () => {
+    const source = [
+      'import "/node_modules/.vite/deps/react.js";',
+      'import "/@vite/client";',
+      'const stylesheet = "/src/app.scss";',
+      'const font = url(/assets/font.woff2);',
+      'const external = "https://example.com/app.js";',
+    ].join("\n");
+
+    const rewritten = rewritePreviewModuleReferences(source, "site-abc");
+
+    expect(rewritten).toContain('import "/preview/site-abc/node_modules/.vite/deps/react.js";');
+    expect(rewritten).toContain('import "/preview/site-abc/@vite/client";');
+    expect(rewritten).toContain('const stylesheet = "/preview/site-abc/src/app.scss";');
+    expect(rewritten).toContain("url(/preview/site-abc/assets/font.woff2)");
+    expect(rewritten).toContain('"https://example.com/app.js"');
   });
 
   it("proxies HTML and request bodies to a registered localhost service", async () => {
