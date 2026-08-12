@@ -168,14 +168,263 @@ export function rewritePreviewHtml(html: string, slug: string): string {
  * JavaScript and CSS responses, not only in the HTML shell. Those imports
  * must stay inside the lease prefix or the browser requests them from the
  * Paperclip root and receives the control-plane HTML document instead.
+ *
+ * IMPORTANT: this must NOT be a blind `quote + "/"` string rewrite. Dependency
+ * bundles contain regex literals, template literals, and comments that are
+ * legitimately full of `"/"` sequences (e.g. `/can't redefine ... "solana"/`).
+ * A global regex corrupts those into `"solana"/preview/<slug>/` and produces
+ * `Invalid regular expression flags`, blank pages, and broken HMR. We therefore
+ * lex the source and rewrite ONLY:
+ *   - static import/export module specifiers (`from "/x"`, `import "/x"`,
+ *     `export ... from "/x"`),
+ *   - dynamic `import("/x")` specifiers,
+ *   - `new URL("/x", import.meta.url)` asset references,
+ *   - Vite-injected HMR server hosts (`127.0.0.1:<port>/` / `localhost:<port>/`)
+ *     so the browser connects through the preview instead of the loopback.
+ * Regex literals, comments, template contents, arbitrary strings, and source
+ * maps are never rewritten.
  */
-export function rewritePreviewModuleReferences(source: string, slug: string): string {
+type RewriteModuleToken =
+  | { kind: "id" | "kw" | "num" | "str" | "template" | "regex"; value: string }
+  | { kind: "punct"; value: string };
+
+function regexAllowedAfter(previous: RewriteModuleToken | undefined): boolean {
+  if (!previous) return true;
+  if (previous.kind === "punct") {
+    return !(previous.value === ")" || previous.value === "]" || previous.value === "}" || previous.value === "++" || previous.value === "--");
+  }
+  return false;
+}
+
+function isModuleSpecifierString(history: RewriteModuleToken[]): boolean {
+  const last = history[history.length - 1];
+  if (!last) return false;
+  if ((last.kind === "id" || last.kind === "kw") && last.value === "from") return true;
+  if (last.kind === "kw" && (last.value === "import" || last.value === "export")) return true;
+  if (last.kind === "punct" && last.value === "(") {
+    const prev = history[history.length - 2];
+    if (!prev) return false;
+    if (prev.kind === "kw" && prev.value === "import") return true;
+    if (prev.kind === "id" && prev.value === "URL") {
+      const prev3 = history[history.length - 3];
+      return !!(prev3 && prev3.kind === "kw" && prev3.value === "new");
+    }
+  }
+  return false;
+}
+
+const HMR_LOOPBACK_RE = /^(?:127\.0\.0\.1|localhost):(\d+)\/?$/;
+
+export function rewritePreviewModuleReferences(
+  source: string,
+  slug: string,
+  opts?: { upstreamPort?: number; browserHost?: string | null },
+): string {
   const prefix = previewPathPrefix(slug);
-  let rewritten = source.replace(
-    /(["'`])\/(?!\/|preview\/)/g,
-    (_match, quote: string) => `${quote}${prefix}/`,
-  );
-  return rewritten.replace(
+  const out: string[] = [];
+  let i = 0;
+  const n = source.length;
+  const history: RewriteModuleToken[] = [];
+
+  const pushToken = (token: RewriteModuleToken) => {
+    history.push(token);
+    if (history.length > 32) history.shift();
+  };
+
+  while (i < n) {
+    const c = source[i];
+
+    // Whitespace
+    if (/\s/.test(c)) {
+      out.push(c);
+      i++;
+      continue;
+    }
+
+    // Line comment
+    if (c === "/" && source[i + 1] === "/") {
+      const j = source.indexOf("\n", i);
+      const end = j === -1 ? n : j;
+      out.push(source.slice(i, end));
+      i = end;
+      continue;
+    }
+
+    // Block comment
+    if (c === "/" && source[i + 1] === "*") {
+      const j = source.indexOf("*/", i + 2);
+      const end = j === -1 ? n : j + 2;
+      out.push(source.slice(i, end));
+      i = end;
+      continue;
+    }
+
+    // String literal (single or double quote)
+    if (c === '"' || c === "'") {
+      const quote = c;
+      let j = i + 1;
+      while (j < n && source[j] !== quote) {
+        if (source[j] === "\\") {
+          j += 2;
+          continue;
+        }
+        j++;
+      }
+      const end = j < n ? j + 1 : n;
+      const raw = source.slice(i, end);
+      let rewritten = raw;
+      const inner = raw.slice(1, raw.length - 1);
+
+      if (isModuleSpecifierString(history)) {
+        if (inner.startsWith("/") && !inner.startsWith("//") && !inner.startsWith(prefix)) {
+          rewritten = quote + prefix + inner + quote;
+        }
+      } else if (opts?.browserHost && opts.upstreamPort && HMR_LOOPBACK_RE.test(inner)) {
+        const match = HMR_LOOPBACK_RE.exec(inner)!;
+        if (Number(match[1]) === opts.upstreamPort) {
+          rewritten = quote + `${opts.browserHost}${prefix}/` + quote;
+        }
+      }
+
+      out.push(rewritten);
+      pushToken({ kind: "str", value: "s" });
+      i = end;
+      continue;
+    }
+
+    // Template literal — never rewrite contents; just skip over it (incl. ${}).
+    if (c === "`") {
+      let j = i + 1;
+      let depth = 0;
+      let s = "`";
+      while (j < n) {
+        if (source[j] === "\\") {
+          s += source.slice(j, j + 2);
+          j += 2;
+          continue;
+        }
+        if (source[j] === "$" && source[j + 1] === "{") {
+          depth++;
+          s += "${";
+          j += 2;
+          continue;
+        }
+        if (source[j] === "}" && depth > 0) {
+          depth--;
+          s += "}";
+          j++;
+          continue;
+        }
+        if (source[j] === "`" && depth === 0) {
+          s += "`";
+          j++;
+          break;
+        }
+        s += source[j];
+        j++;
+      }
+      out.push(s);
+      pushToken({ kind: "template", value: "t" });
+      i = j;
+      continue;
+    }
+
+    // Regex literal (only when in expression position).
+    if (c === "/" && regexAllowedAfter(history[history.length - 1])) {
+      let j = i + 1;
+      let k = j;
+      let closed = false;
+      while (k < n && source[k] !== "\n") {
+        if (source[k] === "\\") {
+          k += 2;
+          continue;
+        }
+        if (source[k] === "[") {
+          k++;
+          while (k < n && source[k] !== "]" && source[k] !== "\n") {
+            if (source[k] === "\\") k += 2;
+            else k++;
+          }
+          k++;
+          continue;
+        }
+        if (source[k] === "/") {
+          closed = true;
+          break;
+        }
+        k++;
+      }
+      if (closed) {
+        let e = k + 1;
+        while (e < n && /[a-z]/i.test(source[e])) e++;
+        out.push(source.slice(i, e));
+        pushToken({ kind: "regex", value: "r" });
+        i = e;
+        continue;
+      }
+      // Division operator — treat as plain punctuation.
+      out.push(c);
+      i++;
+      continue;
+    }
+
+    // Identifier / keyword
+    if (/[A-Za-z_$]/.test(c) || c.charCodeAt(0) > 127) {
+      let j = i;
+      while (j < n && /[A-Za-z0-9_$]/.test(source[j])) j++;
+      const word = source.slice(i, j);
+      const keywords = new Set([
+        "import", "from", "export", "new", "const", "let", "var", "function",
+        "return", "if", "else", "class", "async", "await", "of", "in",
+        "typeof", "instanceof", "throw", "try", "catch", "finally", "switch",
+        "case", "default", "break", "continue", "delete", "void", "this",
+        "super", "extends", "yield", "static", "get", "set", "do", "while",
+        "for", "with", "debugger", "true", "false", "null", "undefined",
+      ]);
+      out.push(word);
+      pushToken({ kind: keywords.has(word) ? "kw" : "id", value: word });
+      i = j;
+      continue;
+    }
+
+    // Number
+    if (/[0-9]/.test(c)) {
+      let j = i;
+      while (j < n && /[0-9a-fA-FxXoObB.eE_+-]/.test(source[j])) j++;
+      out.push(source.slice(i, j));
+      pushToken({ kind: "num", value: "n" });
+      i = j;
+      continue;
+    }
+
+    // Punctuation (including ++ / --)
+    if ("(){}[];,<>=!+-*%&|^~?:.".includes(c)) {
+      let tok = c;
+      if ((c === "+" && source[i + 1] === "+") || (c === "-" && source[i + 1] === "-")) {
+        tok = c + c;
+      }
+      out.push(tok);
+      pushToken({ kind: "punct", value: tok });
+      i += tok.length;
+      continue;
+    }
+
+    // Anything else (rare unicode operators, etc.) — pass through untouched.
+    out.push(c);
+    i++;
+  }
+
+  return out.join("");
+}
+
+/**
+ * Rewrite root-relative `url(...)` references in CSS responses so they stay
+ * inside the preview lease prefix. CSS has no regex literals, so a targeted
+ * url()-anchored rewrite is safe (it cannot corrupt JS-style literals).
+ */
+export function rewritePreviewCssReferences(source: string, slug: string): string {
+  const prefix = previewPathPrefix(slug);
+  return source.replace(
     /(url\(\s*["']?)\/(?!\/|preview\/)/gi,
     (_match, start: string) => `${start}${prefix}/`,
   );
@@ -270,11 +519,10 @@ export async function proxyPreviewHttp(
 
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
   const rewriteHtml = contentType.includes("text/html");
-  const rewriteModule =
-    contentType.includes("javascript") ||
-    contentType.includes("ecmascript") ||
-    contentType.includes("text/css");
-  const rewriteBody = rewriteHtml || rewriteModule;
+  const rewriteJs =
+    contentType.includes("javascript") || contentType.includes("ecmascript");
+  const rewriteCss = contentType.includes("text/css");
+  const rewriteBody = rewriteHtml || rewriteJs || rewriteCss;
   res.status(response.status);
   res.setHeader("Cache-Control", "no-store");
   copyPreviewResponseHeaders(response, res, target.slug, targetOrigin, rewriteBody);
@@ -290,9 +538,21 @@ export async function proxyPreviewHttp(
     return;
   }
 
-  if (rewriteModule) {
+  if (rewriteJs) {
     const source = await response.text();
-    res.end(rewritePreviewModuleReferences(source, target.slug));
+    const forwardedHost = req.headers["x-forwarded-host"];
+    const hostHeader = req.headers["host"];
+    const browserHost =
+      (Array.isArray(forwardedHost) ? forwardedHost[0] : forwardedHost)?.split(",")[0]?.trim() ||
+      (Array.isArray(hostHeader) ? hostHeader[0] : hostHeader)?.split(",")[0]?.trim() ||
+      null;
+    res.end(rewritePreviewModuleReferences(source, target.slug, { upstreamPort: port, browserHost }));
+    return;
+  }
+
+  if (rewriteCss) {
+    const css = await response.text();
+    res.end(rewritePreviewCssReferences(css, target.slug));
     return;
   }
 

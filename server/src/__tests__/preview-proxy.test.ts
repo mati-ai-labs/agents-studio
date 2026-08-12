@@ -7,6 +7,7 @@ import {
   parsePreviewRequestTarget,
   previewPathPrefix,
   proxyPreviewHttp,
+  rewritePreviewCssReferences,
   rewritePreviewHtml,
   rewritePreviewLocation,
   rewritePreviewModuleReferences,
@@ -69,22 +70,62 @@ describe("preview proxy", () => {
       .toBe("sid=abc; Path=/preview/site-abc/; HttpOnly");
   });
 
-  it("rewrites root-relative imports inside Vite JavaScript and CSS responses", () => {
-    const source = [
-      'import "/node_modules/.vite/deps/react.js";',
-      'import "/@vite/client";',
-      'const stylesheet = "/src/app.scss";',
-      'const font = url(/assets/font.woff2);',
-      'const external = "https://example.com/app.js";',
-    ].join("\n");
+  it("rewrites module specifiers without corrupting regex literals or strings", async () => {
+    const slug = "site-abc";
+    const source = `import x from "/node_modules/foo.js";
+import "/src/sideeffect.css";
+import { y } from '/src/other.js';
+const d = import("/src/dyn.js");
+const u = new URL("/assets/pic.png", import.meta.url);
+const ignore = [
+  /can't redefine non-configurable property "solana"/,
+  /random\\/slash "quoted"\\/end/,
+];
+const msg = "a plain string with /slashes/ inside";
+`;
+    const rewritten = rewritePreviewModuleReferences(source, slug);
 
-    const rewritten = rewritePreviewModuleReferences(source, "site-abc");
+    expect(rewritten).toContain('from "/preview/site-abc/node_modules/foo.js"');
+    expect(rewritten).toContain('import "/preview/site-abc/src/sideeffect.css"');
+    expect(rewritten).toContain("from '/preview/site-abc/src/other.js'");
+    expect(rewritten).toContain('import("/preview/site-abc/src/dyn.js")');
+    expect(rewritten).toContain('new URL("/preview/site-abc/assets/pic.png", import.meta.url)');
+    // Regex literals and ordinary strings must survive byte-for-byte.
+    expect(rewritten).toContain('/can\'t redefine non-configurable property "solana"/');
+    expect(rewritten).toContain('"a plain string with /slashes/ inside"');
+    // Result must remain valid JavaScript (no "Invalid regular expression flags").
+    // `import`/`export` statements are module syntax, so validate via the
+    // TypeScript parser (a repo dependency) instead of `new Function`.
+    const { createSourceFile, ScriptTarget, ScriptKind } = await import("typescript");
+    const diagnostics = createSourceFile(
+      "module.js",
+      rewritten,
+      ScriptTarget.Latest,
+      false,
+      ScriptKind.JS,
+    ).parseDiagnostics;
+    expect(diagnostics).toEqual([]);
+  });
 
-    expect(rewritten).toContain('import "/preview/site-abc/node_modules/.vite/deps/react.js";');
-    expect(rewritten).toContain('import "/preview/site-abc/@vite/client";');
-    expect(rewritten).toContain('const stylesheet = "/preview/site-abc/src/app.scss";');
-    expect(rewritten).toContain("url(/preview/site-abc/assets/font.woff2)");
-    expect(rewritten).toContain('"https://example.com/app.js"');
+  it("routes Vite-injected HMR loopback hosts through the preview", () => {
+    const rewritten = rewritePreviewModuleReferences(
+      'const serverHost = "127.0.0.1:39079/";\nconst directSocketHost = "127.0.0.1:39079/";\nconst keep = "other";',
+      "site-abc",
+      { upstreamPort: 39079, browserHost: "preview.example.com" },
+    );
+    expect(rewritten).toContain('const serverHost = "preview.example.com/preview/site-abc/";');
+    expect(rewritten).toContain('const directSocketHost = "preview.example.com/preview/site-abc/";');
+    expect(rewritten).toContain('const keep = "other";');
+    expect(rewritten).not.toContain("127.0.0.1:39079");
+  });
+
+  it("rewrites CSS url() references only", () => {
+    expect(rewritePreviewCssReferences(
+      ".a { background: url(/img/x.png); }\n.b { background-image: url(\"/img/y.png?v=2\"); }",
+      "site-abc",
+    )).toBe(
+      '.a { background: url(/preview/site-abc/img/x.png); }\n.b { background-image: url("/preview/site-abc/img/y.png?v=2"); }',
+    );
   });
 
   it("proxies HTML and request bodies to a registered localhost service", async () => {
