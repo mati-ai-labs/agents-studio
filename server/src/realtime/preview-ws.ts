@@ -47,13 +47,6 @@ function headersToObject(headers: Headers) {
   return Object.fromEntries(headers.entries());
 }
 
-function removePaperclipToken(search: string) {
-  const params = new URLSearchParams(search);
-  params.delete("token");
-  const serialized = params.toString();
-  return serialized ? `?${serialized}` : "";
-}
-
 function websocketProtocols(req: IncomingMessage) {
   const raw = req.headers["sec-websocket-protocol"];
   const value = Array.isArray(raw) ? raw.join(",") : raw;
@@ -205,7 +198,10 @@ export function setupPreviewWebSocketServer(
         const upstream = new WebSocket(
           buildPreviewUpstreamUrl(port, {
             targetPath: target.targetPath,
-            search: removePaperclipToken(target.search),
+            // Preserve the runtime's own query parameters (including Vite's
+            // HMR token). Paperclip authorization is performed on the client
+            // upgrade above and must not be confused with runtime auth.
+            search: target.search,
           }).replace(/^http:/, "ws:"),
           {
             headers: headersToObject(upstreamHeaders),

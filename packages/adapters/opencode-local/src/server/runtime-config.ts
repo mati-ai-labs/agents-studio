@@ -17,6 +17,14 @@ function resolveXdgConfigHome(env: Record<string, string>): string {
   );
 }
 
+function resolveRuntimeTempDir(env: Record<string, string>): string {
+  return (
+    (typeof env.PAPERCLIP_RUNTIME_TEMP_DIR === "string" && env.PAPERCLIP_RUNTIME_TEMP_DIR.trim()) ||
+    (typeof process.env.PAPERCLIP_RUNTIME_TEMP_DIR === "string" && process.env.PAPERCLIP_RUNTIME_TEMP_DIR.trim()) ||
+    path.join(os.homedir(), ".paperclip", "runtime", "tmp")
+  );
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -122,7 +130,9 @@ export async function prepareOpenCodeRuntimeConfig(input: {
   }
 
   const sourceConfigDir = path.join(resolveXdgConfigHome(input.env), "opencode");
-  const runtimeConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-opencode-config-"));
+  const runtimeTempDir = resolveRuntimeTempDir(input.env);
+  await fs.mkdir(runtimeTempDir, { recursive: true, mode: 0o700 });
+  const runtimeConfigHome = await fs.mkdtemp(path.join(runtimeTempDir, "paperclip-opencode-config-"));
   const runtimeConfigDir = path.join(runtimeConfigHome, "opencode");
   const runtimeConfigPath = path.join(runtimeConfigDir, "opencode.json");
 
@@ -136,6 +146,7 @@ export async function prepareOpenCodeRuntimeConfig(input: {
     });
   } catch (err) {
     if ((err as NodeJS.ErrnoException | null)?.code !== "ENOENT") {
+      await fs.rm(runtimeConfigHome, { recursive: true, force: true }).catch(() => undefined);
       throw err;
     }
   }
