@@ -1,7 +1,7 @@
 import type { AdapterModelProfileDefinition } from "@paperclipai/adapter-utils";
 
 export const type = "opencode_local";
-export const label = "OpenCode";
+export const label = "OpenCode (local)";
 
 // Use OpenCode's official installer instead of `npm install -g opencode-ai`.
 // The npm package reifies four large Linux x64 prebuilt-binary subpackages
@@ -44,7 +44,7 @@ export const SANDBOX_INSTALL_COMMAND =
   'fi; ' +
   'fi';
 
-export const DEFAULT_OPENCODE_LOCAL_MODEL = "openai/gpt-5.2-codex";
+export const DEFAULT_OPENCODE_LOCAL_MODEL = "opencode-go/deepseek-v4-flash";
 
 export function isValidOpenCodeModelId(value: unknown): value is string {
   if (typeof value !== "string") return false;
@@ -55,48 +55,46 @@ export function isValidOpenCodeModelId(value: unknown): value is string {
 
 export const models: Array<{ id: string; label: string }> = [
   { id: DEFAULT_OPENCODE_LOCAL_MODEL, label: DEFAULT_OPENCODE_LOCAL_MODEL },
-  { id: "openai/gpt-5.5", label: "openai/gpt-5.5" },
-  { id: "openai/gpt-5.4", label: "openai/gpt-5.4" },
-  { id: "openai/gpt-5.4-mini", label: "openai/gpt-5.4-mini" },
-  { id: "openai/gpt-5.2", label: "openai/gpt-5.2" },
-  { id: "openai/gpt-5.1-codex-max", label: "openai/gpt-5.1-codex-max" },
-  { id: "openai/gpt-5.1-codex-mini", label: "openai/gpt-5.1-codex-mini" },
+  { id: "opencode/big-pickle", label: "opencode/big-pickle" },
+  { id: "opencode/deepseek-v4-flash-free", label: "opencode/deepseek-v4-flash-free" },
+  { id: "opencode/hy3-free", label: "opencode/hy3-free" },
+  { id: "opencode/laguna-s-2.1-free", label: "opencode/laguna-s-2.1-free" },
+  { id: "opencode/mimo-v2.5-free", label: "opencode/mimo-v2.5-free" },
+  { id: "opencode/nemotron-3-ultra-free", label: "opencode/nemotron-3-ultra-free" },
+  { id: "opencode/nemotron-3.5-lightning-free", label: "opencode/nemotron-3.5-lightning-free" },
+  { id: "opencode-go/deepseek-v4-pro", label: "opencode-go/deepseek-v4-pro" },
+  { id: "opencode-go/glm-5.1", label: "opencode-go/glm-5.1" },
+  { id: "opencode-go/glm-5.2", label: "opencode-go/glm-5.2" },
+  { id: "opencode-go/glm-5.3", label: "opencode-go/glm-5.3" },
+  { id: "opencode-go/gpt-5.6-luna", label: "opencode-go/gpt-5.6-luna" },
+  { id: "opencode-go/grok-4.5", label: "opencode-go/grok-4.5" },
+  { id: "opencode-go/hy3", label: "opencode-go/hy3" },
+  { id: "opencode-go/kimi-k2.6", label: "opencode-go/kimi-k2.6" },
+  { id: "opencode-go/kimi-k2.7-code", label: "opencode-go/kimi-k2.7-code" },
+  { id: "opencode-go/kimi-k3", label: "opencode-go/kimi-k3" },
+  { id: "opencode-go/mimo-v2.5", label: "opencode-go/mimo-v2.5" },
+  { id: "opencode-go/mimo-v2.5-pro", label: "opencode-go/mimo-v2.5-pro" },
+  { id: "opencode-go/minimax-m2.7", label: "opencode-go/minimax-m2.7" },
+  { id: "opencode-go/minimax-m3", label: "opencode-go/minimax-m3" },
+  { id: "opencode-go/muse-spark-1.2-contributor", label: "opencode-go/muse-spark-1.2-contributor" },
+  { id: "opencode-go/qwen3.6-plus", label: "opencode-go/qwen3.6-plus" },
+  { id: "opencode-go/qwen3.7-max", label: "opencode-go/qwen3.7-max" },
+  { id: "opencode-go/qwen3.7-plus", label: "opencode-go/qwen3.7-plus" },
+  { id: "opencode-go/qwen3.8-max", label: "opencode-go/qwen3.8-max" },
 ];
 
-export const DEFAULT_OPENCODE_CHEAP_MODEL = "openai/gpt-5.1-codex-mini";
-
-// The "cheap" budget profile (used for recovery retries and other low-cost lanes).
-// Defaults to OpenCode's known Codex mini model, but is overridable so a deployment
-// routing through a gateway that does not serve that model (e.g. an EU LLM gateway)
-// can point the budget lane at a gateway-served model instead -- otherwise recovery
-// retries fail with "model not found". PAPERCLIP_OPENCODE_CHEAP_MODEL takes priority;
-// PAPERCLIP_OPENCODE_SMALL_MODEL (the auxiliary/title model) is reused as a sensible
-// fallback so a single setting covers both budget lanes. The default keeps the
-// upstream behaviour (with the Codex `variant: "low"`).
-//
-// This module is shared client/server code (the UI imports it for
-// DEFAULT_OPENCODE_LOCAL_MODEL etc.), so it must not touch the global `process`
-// unguarded: in the browser (Vite dev middleware serves it untransformed)
-// a bare `process.env` throws ReferenceError at module load and takes the whole
-// app down. Guard with `typeof process` and fall back to an empty env.
-export function buildOpenCodeModelProfiles(
-  env: NodeJS.ProcessEnv = typeof process === "undefined" ? {} : process.env,
-): AdapterModelProfileDefinition[] {
-  const override = (env.PAPERCLIP_OPENCODE_CHEAP_MODEL ?? env.PAPERCLIP_OPENCODE_SMALL_MODEL)?.trim();
-  return [
-    {
-      key: "cheap",
-      label: "Cheap",
-      description: "Budget lane model for recovery retries and other low-cost tasks.",
-      adapterConfig: override
-        ? { model: override }
-        : { model: DEFAULT_OPENCODE_CHEAP_MODEL, variant: "low" },
-      source: "adapter_default",
+export const modelProfiles: AdapterModelProfileDefinition[] = [
+  {
+    key: "cheap",
+    label: "Cheap",
+    description: "Use the deployed OpenCode deepseek-v4-flash model as the budget lane.",
+    adapterConfig: {
+      model: DEFAULT_OPENCODE_LOCAL_MODEL,
+      variant: "low",
     },
-  ];
-}
-
-export const modelProfiles: AdapterModelProfileDefinition[] = buildOpenCodeModelProfiles();
+    source: "adapter_default",
+  },
+];
 
 export const agentConfigurationDoc = `# opencode_local agent configuration
 
@@ -115,7 +113,7 @@ Don't use when:
 Core fields:
 - cwd (string, optional): default absolute working directory fallback for the agent process (created if missing when possible)
 - instructionsFilePath (string, optional): absolute path to a markdown instructions file prepended to the run prompt
-- model (string, required): OpenCode model id in provider/model format (for example anthropic/claude-sonnet-4-5)
+- model (string, required): OpenCode model id in provider/model format (for example opencode-go/deepseek-v4-flash)
 - variant (string, optional): provider-specific reasoning/profile variant passed as --variant (for example minimal|low|medium|high|xhigh|max)
 - dangerouslySkipPermissions (boolean, optional): inject a runtime OpenCode config that allows \`external_directory\` access without interactive prompts; defaults to true for unattended Paperclip runs
 - promptTemplate (string, optional): run prompt template

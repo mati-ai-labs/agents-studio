@@ -25,7 +25,11 @@ import {
   prepareAdapterExecutionTargetRuntime,
   overrideAdapterExecutionTargetRemoteCwd,
 } from "@paperclipai/adapter-utils/execution-target";
-import { discoverOpenCodeModels, ensureOpenCodeModelConfiguredAndAvailable } from "./models.js";
+import {
+  discoverOpenCodeModels,
+  ensureOpenCodeModelConfiguredAndAvailable,
+  resolveOpenCodeCommand,
+} from "./models.js";
 import { parseOpenCodeJsonl } from "./parse.js";
 import { SANDBOX_INSTALL_COMMAND } from "../index.js";
 import { prepareOpenCodeRuntimeConfig } from "./runtime-config.js";
@@ -70,7 +74,7 @@ export async function testEnvironment(
 ): Promise<AdapterEnvironmentTestResult> {
   const checks: AdapterEnvironmentCheck[] = [];
   const config = parseObject(ctx.config);
-  const command = asString(config.command, "opencode");
+  const command = resolveOpenCodeCommand(config.command);
   const target = ctx.executionTarget ?? null;
   const targetIsRemote = target?.kind === "remote";
   const targetIsSandbox = target?.kind === "remote" && target.transport === "sandbox";

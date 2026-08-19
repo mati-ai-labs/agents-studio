@@ -1,10 +1,49 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  DEFAULT_OPENCODE_LOCAL_MODEL,
+  models as openCodeDefaultModels,
+  modelProfiles as openCodeDefaultModelProfiles,
+} from "../index.js";
+import {
   ensureOpenCodeModelConfiguredAndAvailable,
   listOpenCodeModels,
   requireOpenCodeModelId,
+  resolveOpenCodeCommand,
   resetOpenCodeModelsCacheForTests,
 } from "./models.js";
+
+// Authoritative list from the deployment's `opencode models` output. Kept in
+// sync with the adapter's static `models` list so defaults never reference a
+// model absent from the running runtime.
+const DEPLOYED_OPENCODE_MODEL_IDS = [
+  "opencode/big-pickle",
+  "opencode/deepseek-v4-flash-free",
+  "opencode/hy3-free",
+  "opencode/laguna-s-2.1-free",
+  "opencode/mimo-v2.5-free",
+  "opencode/nemotron-3-ultra-free",
+  "opencode/nemotron-3.5-lightning-free",
+  "opencode-go/deepseek-v4-flash",
+  "opencode-go/deepseek-v4-pro",
+  "opencode-go/glm-5.1",
+  "opencode-go/glm-5.2",
+  "opencode-go/glm-5.3",
+  "opencode-go/gpt-5.6-luna",
+  "opencode-go/grok-4.5",
+  "opencode-go/hy3",
+  "opencode-go/kimi-k2.6",
+  "opencode-go/kimi-k2.7-code",
+  "opencode-go/kimi-k3",
+  "opencode-go/mimo-v2.5",
+  "opencode-go/mimo-v2.5-pro",
+  "opencode-go/minimax-m2.7",
+  "opencode-go/minimax-m3",
+  "opencode-go/muse-spark-1.2-contributor",
+  "opencode-go/qwen3.6-plus",
+  "opencode-go/qwen3.7-max",
+  "opencode-go/qwen3.7-plus",
+  "opencode-go/qwen3.8-max",
+];
 
 describe("openCode models", () => {
   afterEach(() => {
@@ -25,7 +64,37 @@ describe("openCode models", () => {
   });
 
   it("accepts a provider/model id without running discovery", () => {
-    expect(requireOpenCodeModelId("openai/gpt-5.2-codex")).toBe("openai/gpt-5.2-codex");
+    expect(requireOpenCodeModelId(DEFAULT_OPENCODE_LOCAL_MODEL)).toBe(
+      DEFAULT_OPENCODE_LOCAL_MODEL,
+    );
+  });
+
+  it("defaults to a model deployed in the opencode runtime", () => {
+    expect(DEFAULT_OPENCODE_LOCAL_MODEL).toBe("opencode-go/deepseek-v4-flash");
+    expect(DEPLOYED_OPENCODE_MODEL_IDS).toContain(DEFAULT_OPENCODE_LOCAL_MODEL);
+    expect(openCodeDefaultModels[0]?.id).toBe(DEFAULT_OPENCODE_LOCAL_MODEL);
+  });
+
+  it("declares static models and cheap profile using only deployed model ids", () => {
+    const staticIds = openCodeDefaultModels.map((entry) => entry.id);
+    expect(staticIds).toEqual([...new Set(staticIds)]);
+
+    for (const id of staticIds) {
+      expect(DEPLOYED_OPENCODE_MODEL_IDS).toContain(id);
+    }
+
+    const cheapModel = openCodeDefaultModelProfiles.find(
+      (profile) => profile.key === "cheap",
+    )?.adapterConfig?.model;
+    expect(cheapModel).toBe(DEFAULT_OPENCODE_LOCAL_MODEL);
+    expect(staticIds).toContain(cheapModel);
+    expect(DEPLOYED_OPENCODE_MODEL_IDS).toContain(cheapModel);
+  });
+
+  it("uses the deployment command for the UI's default command value", () => {
+    process.env.PAPERCLIP_OPENCODE_COMMAND = "/home/ubuntu/.opencode/bin/opencode";
+    expect(resolveOpenCodeCommand("opencode")).toBe("/home/ubuntu/.opencode/bin/opencode");
+    expect(resolveOpenCodeCommand("/custom/opencode")).toBe("/custom/opencode");
   });
 
   it("rejects malformed provider/model ids before discovery", () => {
