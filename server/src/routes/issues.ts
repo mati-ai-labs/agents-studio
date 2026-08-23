@@ -95,7 +95,7 @@ import { executionWorkspaceService as executionWorkspaceServiceDirect } from "..
 import { feedbackService } from "../services/feedback.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
 import { environmentService } from "../services/environments.js";
-import { postIssueCompletionToSlack } from "../services/issue-slack-completion.js";
+import { enqueueIssueCompletionToSlack } from "../services/issue-slack-completion.js";
 import { redactSensitiveText } from "../redaction.js";
 import {
   createCompanySearchRateLimiter,
@@ -3385,7 +3385,7 @@ export function issueRoutes(
     }
 
     if (existing.status !== "done" && issue.status === "done") {
-      const slackResult = await postIssueCompletionToSlack(db, {
+      const slackResult = await enqueueIssueCompletionToSlack(db, {
         issue,
         completionComment: commentBody ?? null,
       });
@@ -3395,14 +3395,14 @@ export function issueRoutes(
         slackCompletion: slackCompletionState,
       };
 
-      if (slackResult.posted) {
+      if (slackResult.queued) {
         await logActivity(db, {
           companyId: issue.companyId,
           actorType: actor.actorType,
           actorId: actor.actorId,
           agentId: actor.agentId,
           runId: actor.runId,
-          action: "issue.slack_completion_posted",
+          action: "issue.slack_completion_queued",
           entityType: "issue",
           entityId: issue.id,
           details: {
@@ -3410,7 +3410,6 @@ export function issueRoutes(
             channelId: slackCompletionState?.channelId ?? null,
             channelName: slackCompletionState?.channelName ?? null,
             workspaceId: slackCompletionState?.workspaceId ?? null,
-            messageTs: slackCompletionState?.lastPostedMessageTs ?? null,
           },
         });
       } else if (slackResult.error) {

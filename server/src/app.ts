@@ -42,6 +42,9 @@ import { pluginRoutes } from "./routes/plugins.js";
 import { adapterRoutes } from "./routes/adapters.js";
 import { pluginUiStaticRoutes } from "./routes/plugin-ui-static.js";
 import { connectorsRoutes } from "./routes/connectors.js";
+import { slackEventsRoute } from "./routes/slack-events.js";
+import { slackChannelRoutes } from "./routes/slack-channel-routes.js";
+import { slackSlashCommandsRoute } from "./routes/slack-slash-commands.js";
 import { chatRoutes } from "./routes/chat.js";
 import { previewApiRoutes, previewProxyRoutes } from "./routes/previews.js";
 import { applyUiBranding } from "./ui-branding.js";
@@ -64,6 +67,7 @@ import { pluginRegistryService } from "./services/plugin-registry.js";
 import { createHostClientHandlers } from "@paperclipai/plugin-sdk";
 import type { BetterAuthSessionResult } from "./auth/better-auth.js";
 import { createCachedViteHtmlRenderer } from "./vite-html-renderer.js";
+import { createSlackDeliveryWorker } from "./services/slack-delivery-worker.js";
 
 type UiMode = "none" | "static" | "vite-dev";
 const FEEDBACK_EXPORT_FLUSH_INTERVAL_MS = 5_000;
@@ -179,6 +183,7 @@ export async function createApp(
 
   const hostServicesDisposers = new Map<string, () => void>();
   const workerManager = opts.pluginWorkerManager ?? createPluginWorkerManager();
+  const slackWorker = createSlackDeliveryWorker(db, { pluginWorkerManager: workerManager });
 
   // Mount API routes
   const api = Router();
@@ -299,6 +304,9 @@ export async function createApp(
   );
   api.use(adapterRoutes());
   const connectorsRouter = connectorsRoutes(db);
+  api.use("/connectors/slack", slackEventsRoute(db, slackWorker.kick));
+  api.use("/connectors/slack", slackChannelRoutes(db));
+  api.use("/connectors/slack", slackSlashCommandsRoute(db));
   api.use("/connectors", connectorsRouter);
   // Second mount: agent-runtime credentials endpoint. `api` is itself mounted
   // at `/api`, so this resolves to /api/agents/:agentId/connector-credentials/:type.
@@ -425,6 +433,7 @@ export async function createApp(
 
   jobCoordinator.start();
   scheduler.start();
+  slackWorker.start();
   const feedbackExportTimer = opts.feedbackExportService
     ? setInterval(() => {
       void opts.feedbackExportService?.flushPendingFeedbackTraces().catch((err) => {
@@ -457,6 +466,7 @@ export async function createApp(
   });
   process.once("exit", () => {
     if (feedbackExportTimer) clearInterval(feedbackExportTimer);
+    slackWorker.stop();
     devWatcher?.close();
     viteHtmlRenderer?.dispose();
     hostServiceCleanup.disposeAll();

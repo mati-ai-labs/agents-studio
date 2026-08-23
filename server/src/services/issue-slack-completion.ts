@@ -1,10 +1,12 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { companies, issues } from "@paperclipai/db";
+import { companies, issues, slackThreadBindings } from "@paperclipai/db";
 import type { IssueSlackCompletion, IssueWorkProduct } from "@paperclipai/shared";
 import { logger } from "../middleware/logger.js";
+import { getPublicBaseUrl } from "../lib/public-url.js";
 import { connectorRegistryService } from "./connector-registry.js";
 import { workProductService } from "./work-products.js";
+import { enqueueSlackOutbound } from "./slack-outbound-dispatch.js";
 import {
   isRetryableSlackError,
   postSlackMessage,
@@ -77,14 +79,7 @@ function formatWorkProductLine(product: IssueWorkProduct): string {
 }
 
 function paperclipIssueUrl(issue: IssueRow, issuePrefix: string | null | undefined): string {
-  const baseUrl = (
-    process.env.PAPERCLIP_PUBLIC_URL?.trim() ||
-    process.env.PAPERCLIP_AUTH_PUBLIC_BASE_URL?.trim() ||
-    process.env.BETTER_AUTH_URL?.trim() ||
-    process.env.PAPERCLIP_RUNTIME_API_URL?.trim() ||
-    process.env.PAPERCLIP_API_URL?.trim() ||
-    `http://127.0.0.1:${process.env.PORT ?? 3100}`
-  ).replace(/\/+$/, "");
+  const baseUrl = getPublicBaseUrl();
   const prefix = issuePrefix?.trim() || issue.identifier?.split("-")[0] || "PAP";
   const identifier = issue.identifier ?? issue.id;
   return `${baseUrl}/${encodeURIComponent(prefix)}/issues/${encodeURIComponent(identifier)}`;
@@ -146,6 +141,30 @@ export function buildIssueCompletionSlackMessage(input: {
     text: textParts.join(" "),
     blocks,
   };
+}
+
+/** Queue completion delivery; the worker performs the actual Slack API call. */
+export async function enqueueIssueCompletionToSlack(
+  db: Db,
+  input: { issue: IssueRow; completionComment?: string | null },
+): Promise<{ issue: IssueRow; queued: boolean; skippedReason?: string; error?: string }> {
+  const completedAt = toIsoString(input.issue.completedAt);
+  if (input.issue.status !== "done" || !completedAt) return { issue: input.issue, queued: false, skippedReason: "issue_not_done" };
+  const configured = readIssueSlackCompletion(input.issue.slackCompletion);
+  const connector = await connectorRegistryService(db).getByType(input.issue.companyId, "slack", null);
+  if (!connector || connector.status !== "connected") return { issue: input.issue, queued: false, error: "Slack workspace is not connected for this company" };
+  const workspace = readSlackWorkspaceMetadata(connector.config);
+  const binding = await db.select().from(slackThreadBindings).where(eq(slackThreadBindings.issueId, input.issue.id)).then((rows) => rows[0] ?? null);
+  const destination = binding ?? configured;
+  if (!destination) return { issue: input.issue, queued: false, skippedReason: "no_slack_completion_config" };
+  const lastPostedCompletedAt = configured?.lastPostedCompletedAt;
+  if (lastPostedCompletedAt === completedAt) return { issue: input.issue, queued: false, skippedReason: "already_posted_for_completion" };
+  const completion = configured ?? { channelId: binding!.channelId, channelName: binding!.channelName, workspaceId: binding!.workspaceId, workspaceName: workspace?.workspaceName ?? null, channelType: "public" as const, threadTs: binding!.threadTs };
+  const products = await workProductService(db).listForIssue(input.issue.id).catch(() => []);
+  const [company] = await db.select({ issuePrefix: companies.issuePrefix }).from(companies).where(eq(companies.id, input.issue.companyId)).limit(1);
+  const message = buildIssueCompletionSlackMessage({ issue: input.issue, slackCompletion: completion, completionComment: input.completionComment, workProducts: products, issueUrl: paperclipIssueUrl(input.issue, company?.issuePrefix) });
+  await enqueueSlackOutbound(db, { companyId: input.issue.companyId, connectorId: connector.id, issueId: input.issue.id, bindingId: binding?.id ?? null, kind: "completion", dedupeKey: `completion:issue:${input.issue.id}:${completedAt}`, channelId: destination.channelId, threadTs: binding?.threadTs ?? configured?.threadTs ?? null, payload: message });
+  return { issue: input.issue, queued: true };
 }
 
 async function persistSlackCompletion(
@@ -250,6 +269,7 @@ export async function postIssueCompletionToSlack(
         channelId: slackCompletion.channelId,
         text: message.text,
         blocks: message.blocks,
+        threadTs: slackCompletion.threadTs ?? null,
       });
 
       const postedAt = new Date().toISOString();
