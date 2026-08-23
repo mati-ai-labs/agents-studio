@@ -108,7 +108,7 @@ function readRetryAfterMs(response: Response): number | null {
   if (!retryAfter) return null;
   const seconds = Number(retryAfter);
   if (!Number.isFinite(seconds) || seconds <= 0) return null;
-  return Math.min(Math.round(seconds * 1_000), 5_000);
+  return Math.max(1_000, Math.round(seconds * 1_000));
 }
 
 async function parseSlackResponse<T extends SlackErrorPayload>(
@@ -356,12 +356,16 @@ export async function postSlackMessage(
     channelId: string;
     text: string;
     blocks?: Array<Record<string, unknown>>;
+    threadTs?: string | null;
+    clientMsgId?: string | null;
   },
 ): Promise<SlackMessagePostResult> {
   const payload = await callSlackJsonApi<SlackChatPostMessageResponse>(accessToken, "chat.postMessage", {
     channel: input.channelId,
     text: input.text,
     ...(input.blocks && input.blocks.length > 0 ? { blocks: input.blocks } : {}),
+    ...(input.threadTs ? { thread_ts: input.threadTs } : {}),
+    ...(input.clientMsgId ? { client_msg_id: input.clientMsgId } : {}),
     unfurl_links: false,
     unfurl_media: false,
   });

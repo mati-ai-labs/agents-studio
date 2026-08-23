@@ -689,6 +689,11 @@ export {
   issueGraphLivenessAutoRecoveryRequestSchema,
   type PatchInstanceExperimentalSettings,
   type IssueGraphLivenessAutoRecoveryRequest,
+  upsertSlackChannelRouteSchema,
+  slackChannelIdParamSchema,
+  slackChannelRoutesQuerySchema,
+  slackEventsInfoQuerySchema,
+  type UpsertSlackChannelRouteInput,
 } from "./validators/index.js";
 
 export {

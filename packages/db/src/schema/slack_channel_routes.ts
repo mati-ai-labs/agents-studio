@@ -41,6 +41,7 @@ export const slackChannelRoutes = pgTable(
       .notNull()
       .references(() => agents.id, { onDelete: "restrict" }),
     enabled: boolean("enabled").notNull().default(true),
+    mode: text("mode").$type<"triage" | "working" | "paused">().notNull().default("triage"),
     createdByUserId: text("created_by_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

@@ -1,10 +1,9 @@
+import { getPublicBaseUrl } from "../lib/public-url.js";
+
 export function connectorsRoutes(db: Db): Router {
   return createConnectorsRouter({
     db,
-    getBaseUrl: () =>
-      process.env.PAPERCLIP_API_URL?.trim() ||
-      process.env.PAPERCLIP_RUNTIME_API_URL?.trim() ||
-      `http://127.0.0.1:${process.env.PORT ?? 3100}`,
+    getBaseUrl: getPublicBaseUrl,
   });
 }
 
@@ -67,6 +66,8 @@ const META_ADS_OAUTH_SCOPES = [
   "business_management",
 ] as const;
 const SLACK_OAUTH_SCOPES = [
+  "app_mentions:read",
+  "channels:history",
   "channels:read",
   "chat:write",
   "chat:write.public",
@@ -448,11 +449,7 @@ export interface CreateConnectorsRouterDeps {
 
 /** Returns the app's public base URL, used to construct OAuth redirect URIs. */
 function resolveBaseUrl(): string {
-  return (
-    process.env.PAPERCLIP_API_URL?.trim() ||
-    process.env.PAPERCLIP_RUNTIME_API_URL?.trim() ||
-    `http://127.0.0.1:${process.env.PORT ?? 3100}`
-  );
+  return getPublicBaseUrl();
 }
 
 export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router {

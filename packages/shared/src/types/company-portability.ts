@@ -34,8 +34,8 @@ export interface CompanyPortabilityCompanyManifestEntry {
   path: string;
   name: string;
   description: string | null;
-  website: string | null;
-  importantLinks: string[];
+  website?: string | null;
+  importantLinks?: string[];
   brandColor: string | null;
   logoPath: string | null;
   attachmentMaxBytes: number | null;
