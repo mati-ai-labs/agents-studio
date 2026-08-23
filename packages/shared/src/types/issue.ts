@@ -89,6 +89,7 @@ export interface IssueSlackCompletion {
   workspaceId: string;
   workspaceName: string | null;
   channelType: IssueSlackChannelType;
+  threadTs?: string | null;
   postAttemptCount?: number;
   lastAttemptAt?: Date | string | null;
   lastPostedAt?: Date | string | null;
@@ -458,6 +459,9 @@ export interface IssueComment {
   body: string;
   presentation: IssueCommentPresentation | null;
   metadata: IssueCommentMetadata | null;
+  externalSource?: string | null;
+  externalId?: string | null;
+  externalAuthorId?: string | null;
   followUpRequested?: boolean;
   createdAt: Date;
   updatedAt: Date;

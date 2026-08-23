@@ -24,6 +24,7 @@ type IssueSlackCompletionRecord = {
   workspaceId: string;
   workspaceName: string | null;
   channelType: "public" | "private";
+  threadTs?: string | null;
   postAttemptCount?: number;
   lastAttemptAt?: string | Date | null;
   lastPostedAt?: string | Date | null;
@@ -154,5 +155,8 @@ export const issues = pgTable(
           and ${table.hiddenAt} is null
           and ${table.status} not in ('done', 'cancelled')`,
       ),
+    slackThreadOriginIdx: uniqueIndex("issues_slack_thread_origin_uq")
+      .on(table.companyId, table.originKind, table.originId)
+      .where(sql`${table.originKind} = 'slack_thread' and ${table.originId} is not null`),
   }),
 );
