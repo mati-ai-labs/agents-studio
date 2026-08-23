@@ -38,7 +38,12 @@ import {
   KeyRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { connectorsApi, type ConnectorRecord, type ConnectorType } from "@/api/connectors";
+import {
+  connectorsApi,
+  type ConnectorRecord,
+  type ConnectorType,
+  type SlackChannelListResponse,
+} from "@/api/connectors";
 
 // ---------------------------------------------------------------------------
 // Connector type definitions
@@ -124,7 +129,7 @@ const CONNECTOR_META: Record<ConnectorType, {
     name: "Slack",
     description: "Connect a Slack workspace so agents can read channels, send messages, and collaborate through Slack.",
     icon: "#",
-    scopes: ["channels:read", "channels:history", "chat:write", "users:read", "team:read"],
+    scopes: ["channels:read", "chat:write", "chat:write.public", "users:read", "team:read"],
     mode: "oauth",
   },
 };
@@ -163,6 +168,7 @@ const STATUS_CONFIG: Record<ConnectorStatus, {
 interface ConnectorCardProps {
   type: ConnectorType;
   connector: ConnectorRecord | null;
+  details?: React.ReactNode;
   onConnect: (type: ConnectorType) => void;
   onConfigure: (type: ConnectorType) => void;
   onDisconnect: (type: ConnectorType) => void;
@@ -173,6 +179,7 @@ interface ConnectorCardProps {
 function ConnectorCard({
   type,
   connector,
+  details,
   onConnect,
   onConfigure,
   onDisconnect,
@@ -241,6 +248,8 @@ function ConnectorCard({
           </p>
         )}
 
+        {details}
+
         {/* Actions */}
         <div className="flex gap-2 mt-auto">
           {canConnect && (
@@ -299,6 +308,9 @@ export function Connectors() {
   const [configHostingerDomain, setConfigHostingerDomain] = useState("");
   const [configSurgeToken, setConfigSurgeToken] = useState("");
   const [configSurgeDomain, setConfigSurgeDomain] = useState("");
+  const [slackChannels, setSlackChannels] = useState<SlackChannelListResponse | null>(null);
+  const [slackChannelsLoading, setSlackChannelsLoading] = useState(false);
+  const [slackChannelsError, setSlackChannelsError] = useState<string | null>(null);
   const [isConfiguring, setIsConfiguring] = useState(false);
   const companyId = selectedCompany?.id ?? null;
 
@@ -347,6 +359,8 @@ export function Connectors() {
   async function fetchConnectors() {
     if (!companyId) {
       setConnectors([]);
+      setSlackChannels(null);
+      setSlackChannelsError(null);
       setIsLoading(false);
       return;
     }
@@ -354,6 +368,24 @@ export function Connectors() {
     try {
       const data = await connectorsApi.list(companyId);
       setConnectors(data);
+      const slackConnector = data.find((connector) => connector.type === "slack") ?? null;
+      if (slackConnector?.status === "connected") {
+        setSlackChannelsLoading(true);
+        setSlackChannelsError(null);
+        try {
+          const slackData = await connectorsApi.listSlackChannels(companyId);
+          setSlackChannels(slackData);
+        } catch (error) {
+          setSlackChannels(null);
+          setSlackChannelsError(error instanceof Error ? error.message : String(error));
+        } finally {
+          setSlackChannelsLoading(false);
+        }
+      } else {
+        setSlackChannelsLoading(false);
+        setSlackChannels(null);
+        setSlackChannelsError(null);
+      }
     } catch (err) {
       pushToast({ title: "Failed to load connectors", body: String(err), tone: "error" });
     } finally {
@@ -407,6 +439,71 @@ export function Connectors() {
 
   function getConnector(type: ConnectorType): ConnectorRecord | null {
     return connectors.find((c) => c.type === type) ?? null;
+  }
+
+  function renderConnectorDetails(type: ConnectorType): React.ReactNode {
+    const connector = getConnector(type);
+    if (type !== "slack" || connector?.status !== "connected") return null;
+    const workspace = slackChannels?.workspace;
+    const previewChannels = slackChannels?.channels.slice(0, 6) ?? [];
+    const remainingCount = Math.max(0, (slackChannels?.channels.length ?? 0) - previewChannels.length);
+
+    return (
+      <div className="space-y-2 rounded-md border border-border/70 px-3 py-2">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="truncate text-xs font-medium">
+              {workspace?.workspaceName ?? "Company workspace"}
+            </div>
+            {workspace?.workspaceUrl ? (
+              <div className="truncate text-[11px] text-muted-foreground">
+                {workspace.workspaceUrl}
+              </div>
+            ) : null}
+          </div>
+          <Badge variant="secondary" className="shrink-0 text-[11px]">
+            {slackChannels?.channels.length ?? 0} channels
+          </Badge>
+        </div>
+
+        {slackChannelsLoading ? (
+          <div className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Loading channels
+          </div>
+        ) : null}
+
+        {!slackChannelsLoading && slackChannelsError ? (
+          <div className="rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] text-red-700">
+            {slackChannelsError}
+          </div>
+        ) : null}
+
+        {!slackChannelsLoading && !slackChannelsError && previewChannels.length > 0 ? (
+          <div className="flex flex-wrap gap-1">
+            {previewChannels.map((channel) => (
+              <span
+                key={channel.id}
+                className="inline-flex items-center rounded bg-muted px-2 py-0.5 text-[11px] text-muted-foreground"
+              >
+                #{channel.name}
+              </span>
+            ))}
+            {remainingCount > 0 ? (
+              <span className="inline-flex items-center rounded bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                +{remainingCount} more
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+
+        {!slackChannelsLoading && !slackChannelsError && (slackChannels?.channels.length ?? 0) === 0 ? (
+          <div className="text-[11px] text-muted-foreground">
+            No joined channels are available for posting yet.
+          </div>
+        ) : null}
+      </div>
+    );
   }
 
   const connectorTypes: ConnectorType[] = [
@@ -513,6 +610,7 @@ export function Connectors() {
               key={type}
               type={type}
               connector={getConnector(type)}
+              details={renderConnectorDetails(type)}
               onConnect={handleConnect}
               onConfigure={openConfigureDialog}
               onDisconnect={(t) => setDisconnectDialogType(t)}

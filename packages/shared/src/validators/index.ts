@@ -154,6 +154,7 @@ export {
   resolveCreateIssueStatusDefault,
   createIssueLabelSchema,
   updateIssueSchema,
+  issueSlackCompletionSchema,
   issueExecutionPolicySchema,
   issueExecutionStateSchema,
   issueRecoveryActionReadModelSchema,

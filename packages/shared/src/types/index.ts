@@ -146,6 +146,8 @@ export type {
   Issue,
   IssueWorkMode,
   IssueAssigneeAdapterOverrides,
+  IssueSlackChannelType,
+  IssueSlackCompletion,
   IssueBlockerAttention,
   IssueBlockerAttentionReason,
   IssueBlockerAttentionState,

@@ -301,6 +301,20 @@ function withCreateIssueStatusDefault<T extends z.ZodRawShape>(schema: z.ZodObje
   }, schema);
 }
 
+export const issueSlackCompletionSchema = z.object({
+  channelId: z.string().trim().min(1).max(64),
+  channelName: z.string().trim().min(1).max(120),
+  workspaceId: z.string().trim().min(1).max(64),
+  workspaceName: z.string().trim().max(120).nullable().optional(),
+  channelType: z.enum(["public", "private"]).default("public"),
+  postAttemptCount: z.number().int().nonnegative().optional(),
+  lastAttemptAt: z.string().datetime().nullable().optional(),
+  lastPostedAt: z.string().datetime().nullable().optional(),
+  lastPostedCompletedAt: z.string().datetime().nullable().optional(),
+  lastPostedMessageTs: z.string().trim().min(1).max(64).nullable().optional(),
+  lastError: z.string().trim().max(500).nullable().optional(),
+}).strict();
+
 const createIssueBaseSchema = z.object({
   projectId: z.string().uuid().optional().nullable(),
   projectWorkspaceId: z.string().uuid().optional().nullable(),
@@ -318,6 +332,7 @@ const createIssueBaseSchema = z.object({
   requestDepth: issueRequestDepthInputSchema.optional().default(0),
   billingCode: z.string().optional().nullable(),
   assigneeAdapterOverrides: issueAssigneeAdapterOverridesSchema.optional().nullable(),
+  slackCompletion: issueSlackCompletionSchema.optional().nullable(),
   executionPolicy: issueExecutionPolicySchema.optional().nullable(),
   executionWorkspaceId: z.string().uuid().optional().nullable(),
   executionWorkspacePreference: z.enum(ISSUE_EXECUTION_WORKSPACE_PREFERENCES).optional().nullable(),
