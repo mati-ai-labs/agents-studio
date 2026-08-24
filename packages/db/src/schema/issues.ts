@@ -18,6 +18,21 @@ import { heartbeatRuns } from "./heartbeat_runs.js";
 import { projectWorkspaces } from "./project_workspaces.js";
 import { executionWorkspaces } from "./execution_workspaces.js";
 
+type IssueSlackCompletionRecord = {
+  channelId: string;
+  channelName: string;
+  workspaceId: string;
+  workspaceName: string | null;
+  channelType: "public" | "private";
+  threadTs?: string | null;
+  postAttemptCount?: number;
+  lastAttemptAt?: string | Date | null;
+  lastPostedAt?: string | Date | null;
+  lastPostedCompletedAt?: string | Date | null;
+  lastPostedMessageTs?: string | null;
+  lastError?: string | null;
+};
+
 export const issues = pgTable(
   "issues",
   {
@@ -49,6 +64,7 @@ export const issues = pgTable(
     requestDepth: integer("request_depth").notNull().default(0),
     billingCode: text("billing_code"),
     assigneeAdapterOverrides: jsonb("assignee_adapter_overrides").$type<Record<string, unknown>>(),
+    slackCompletion: jsonb("slack_completion").$type<IssueSlackCompletionRecord>(),
     executionPolicy: jsonb("execution_policy").$type<Record<string, unknown>>(),
     executionState: jsonb("execution_state").$type<Record<string, unknown>>(),
     monitorNextCheckAt: timestamp("monitor_next_check_at", { withTimezone: true }),
@@ -139,5 +155,8 @@ export const issues = pgTable(
           and ${table.hiddenAt} is null
           and ${table.status} not in ('done', 'cancelled')`,
       ),
+    slackThreadOriginIdx: uniqueIndex("issues_slack_thread_origin_uq")
+      .on(table.companyId, table.originKind, table.originId)
+      .where(sql`${table.originKind} = 'slack_thread' and ${table.originId} is not null`),
   }),
 );

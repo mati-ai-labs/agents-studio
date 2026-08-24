@@ -1,4 +1,11 @@
 export {
+  upsertSlackChannelRouteSchema,
+  slackChannelIdParamSchema,
+  slackChannelRoutesQuerySchema,
+  slackEventsInfoQuerySchema,
+  type UpsertSlackChannelRouteInput,
+} from "./slack.js";
+export {
   instanceGeneralSettingsSchema,
   patchInstanceGeneralSettingsSchema,
   type InstanceGeneralSettings,
@@ -154,6 +161,7 @@ export {
   resolveCreateIssueStatusDefault,
   createIssueLabelSchema,
   updateIssueSchema,
+  issueSlackCompletionSchema,
   issueExecutionPolicySchema,
   issueExecutionStateSchema,
   issueRecoveryActionReadModelSchema,

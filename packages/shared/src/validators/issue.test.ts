@@ -227,6 +227,27 @@ describe("issue validators", () => {
     }).success).toBe(false);
   });
 
+  it("accepts Slack completion delivery settings", () => {
+    const parsed = createIssueSchema.parse({
+      title: "Ship it",
+      slackCompletion: {
+        channelId: "C123",
+        channelName: "ship-alerts",
+        workspaceId: "T123",
+        workspaceName: "Paperclip",
+        channelType: "public",
+      },
+    });
+
+    expect(parsed.slackCompletion).toMatchObject({
+      channelId: "C123",
+      channelName: "ship-alerts",
+      workspaceId: "T123",
+      workspaceName: "Paperclip",
+      channelType: "public",
+    });
+  });
+
   it("clamps oversized requestDepth values on update", () => {
     const parsed = updateIssueSchema.parse({
       requestDepth: MAX_ISSUE_REQUEST_DEPTH + 1,

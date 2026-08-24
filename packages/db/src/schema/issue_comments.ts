@@ -1,5 +1,6 @@
+import { sql } from "drizzle-orm";
 import type { IssueCommentAuthorType, IssueCommentMetadata, IssueCommentPresentation } from "@paperclipai/shared";
-import { pgTable, uuid, text, timestamp, index, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, index, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
 import { companies } from "./companies.js";
 import { issues } from "./issues.js";
 import { agents } from "./agents.js";
@@ -18,6 +19,9 @@ export const issueComments = pgTable(
     body: text("body").notNull(),
     presentation: jsonb("presentation").$type<IssueCommentPresentation | null>(),
     metadata: jsonb("metadata").$type<IssueCommentMetadata | null>(),
+    externalSource: text("external_source"),
+    externalId: text("external_id"),
+    externalAuthorId: text("external_author_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -36,5 +40,16 @@ export const issueComments = pgTable(
       table.createdAt,
     ),
     bodySearchIdx: index("issue_comments_body_search_idx").using("gin", table.body.op("gin_trgm_ops")),
+    // Idempotency for external ingest sources (e.g. Slack). Only when both
+    // external_source and external_id are set do we treat the comment as
+    // deduplicated.
+    externalUq: uniqueIndex("issue_comments_external_uq")
+      .on(table.companyId, table.externalSource, table.externalId)
+      .where(sql`${table.externalSource} IS NOT NULL AND ${table.externalId} IS NOT NULL`),
+    externalIdx: index("issue_comments_external_idx").on(
+      table.companyId,
+      table.externalSource,
+      table.externalId,
+    ),
   }),
 );

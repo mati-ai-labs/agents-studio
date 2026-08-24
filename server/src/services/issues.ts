@@ -23,6 +23,7 @@ import {
   issueDocuments,
   issueReadStates,
   issueThreadInteractions,
+  slackThreadBindings,
   issues,
   labels,
   projectWorkspaces,
@@ -69,6 +70,8 @@ import {
   type ActiveIssueTreePauseHoldGate,
 } from "./issue-tree-control.js";
 import { parseIssueGraphLivenessIncidentKey } from "./recovery/origins.js";
+import { enqueueSlackOutbound } from "./slack-outbound-dispatch.js";
+import { buildSlackProgressMessage } from "./slack-message-builder.js";
 
 const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
 const MAX_ISSUE_COMMENT_PAGE_LIMIT = 500;
@@ -1566,6 +1569,7 @@ const issueListSelect = {
   requestDepth: issues.requestDepth,
   billingCode: issues.billingCode,
   assigneeAdapterOverrides: issues.assigneeAdapterOverrides,
+  slackCompletion: sql<null>`null`,
   executionPolicy: sql<null>`null`,
   executionState: sql<null>`null`,
   monitorNextCheckAt: issues.monitorNextCheckAt,
@@ -4073,11 +4077,14 @@ export function issueService(db: Db) {
         authorType?: IssueCommentAuthorType | null;
         presentation?: IssueCommentPresentation | null;
         metadata?: IssueCommentMetadata | null;
+        externalSource?: string | null;
+        externalId?: string | null;
+        externalAuthorId?: string | null;
         createdAt?: Date | string | null;
       },
     ) => {
       const issue = await db
-        .select({ companyId: issues.companyId })
+        .select({ companyId: issues.companyId, id: issues.id, status: issues.status, title: issues.title, identifier: issues.identifier })
         .from(issues)
         .where(eq(issues.id, issueId))
         .then((rows) => rows[0] ?? null);
@@ -4095,29 +4102,47 @@ export function issueService(db: Db) {
       const presentation = issueCommentPresentationSchema.nullable().parse(options?.presentation ?? null);
       const metadata = issueCommentMetadataSchema.nullable().parse(options?.metadata ?? null);
       const createdAt = options?.createdAt ? new Date(options.createdAt) : null;
-      const [comment] = await db
-        .insert(issueComments)
-        .values({
-          companyId: issue.companyId,
-          issueId,
-          authorAgentId: actor.agentId ?? null,
-          authorUserId: actor.userId ?? null,
-          authorType,
-          createdByRunId: actor.runId ?? null,
-          body: redactedBody,
-          presentation,
-          metadata,
-          ...(createdAt && !Number.isNaN(createdAt.getTime()) ? { createdAt } : {}),
-        })
-        .returning();
+      return db.transaction(async (tx) => {
+        const [comment] = await tx
+          .insert(issueComments)
+          .values({
+            companyId: issue.companyId,
+            issueId,
+            authorAgentId: actor.agentId ?? null,
+            authorUserId: actor.userId ?? null,
+            authorType,
+            createdByRunId: actor.runId ?? null,
+            body: redactedBody,
+            presentation,
+            metadata,
+            externalSource: options?.externalSource ?? null,
+            externalId: options?.externalId ?? null,
+            externalAuthorId: options?.externalAuthorId ?? null,
+            ...(createdAt && !Number.isNaN(createdAt.getTime()) ? { createdAt } : {}),
+          })
+          .returning();
 
-      // Update issue's updatedAt so comment activity is reflected in recency sorting
-      await db
-        .update(issues)
-        .set({ updatedAt: new Date() })
-        .where(eq(issues.id, issueId));
-
-      return redactIssueComment(comment, currentUserRedactionOptions.enabled);
+        await tx.update(issues).set({ updatedAt: new Date() }).where(eq(issues.id, issueId));
+        if (actor.agentId && !options?.externalSource && !["done", "cancelled"].includes(issue.status)) {
+          const binding = await tx.select().from(slackThreadBindings).where(eq(slackThreadBindings.issueId, issueId)).then((rows) => rows[0] ?? null);
+          if (binding) {
+            const agent = await tx.select({ name: agents.name }).from(agents).where(eq(agents.id, actor.agentId)).then((rows) => rows[0] ?? null);
+            await enqueueSlackOutbound(tx as unknown as Db, {
+              companyId: binding.companyId,
+              connectorId: binding.connectorId,
+              issueId,
+              bindingId: binding.id,
+              commentId: comment.id,
+              kind: "progress",
+              dedupeKey: `progress:comment:${comment.id}`,
+              channelId: binding.channelId,
+              threadTs: binding.threadTs,
+              payload: { text: buildSlackProgressMessage({ issue, agentName: agent?.name, body: redactedBody }) },
+            });
+          }
+        }
+        return redactIssueComment(comment, currentUserRedactionOptions.enabled);
+      });
     },
 
     createAttachment: async (input: {

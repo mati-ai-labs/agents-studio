@@ -146,6 +146,8 @@ export type {
   Issue,
   IssueWorkMode,
   IssueAssigneeAdapterOverrides,
+  IssueSlackChannelType,
+  IssueSlackCompletion,
   IssueBlockerAttention,
   IssueBlockerAttentionReason,
   IssueBlockerAttentionState,
@@ -216,6 +218,19 @@ export type {
   IssueAttachment,
   IssueLabel,
 } from "./issue.js";
+
+export type { IssueCommentAuthorType } from "../constants.js";
+
+export type {
+  SlackChannelRoute,
+  SlackChannelRouteListResponse,
+  UpsertSlackChannelRouteInput,
+  SlackEventsInfo,
+  SlackChannelRouteEventsInfo,
+  SlackDeliveryStatus,
+  SlackOutboundDeliveryKind,
+} from "./slack.js";
+
 export type {
   IssueTreeControlPreview,
   IssueTreeHold,

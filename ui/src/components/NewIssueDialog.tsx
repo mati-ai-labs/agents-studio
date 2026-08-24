@@ -10,6 +10,7 @@ import { issuesApi } from "../api/issues";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { projectsApi } from "../api/projects";
 import { agentsApi } from "../api/agents";
+import { connectorsApi } from "../api/connectors";
 import { accessApi } from "../api/access";
 import { authApi } from "../api/auth";
 import { assetsApi } from "../api/assets";
@@ -60,6 +61,8 @@ import {
   X,
   Eye,
   ShieldCheck,
+  Hash,
+  Check,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { extractProviderIdWithFallback } from "../lib/model-utils";
@@ -91,7 +94,16 @@ interface IssueDraft {
   selectedExecutionWorkspaceId?: string;
   useIsolatedExecutionWorkspace?: boolean;
   workMode?: IssueWorkMode;
+  slackCompletion?: DraftSlackCompletion | null;
 }
+
+type DraftSlackCompletion = {
+  channelId: string;
+  channelName: string;
+  workspaceId: string;
+  workspaceName: string | null;
+  channelType: "public" | "private";
+};
 
 type StagedIssueFile = {
   id: string;
@@ -429,6 +441,7 @@ export function NewIssueDialog() {
   const [executionWorkspaceMode, setExecutionWorkspaceMode] = useState<string>("shared_workspace");
   const [selectedExecutionWorkspaceId, setSelectedExecutionWorkspaceId] = useState("");
   const [workMode, setWorkMode] = useState<IssueWorkMode>("standard");
+  const [slackCompletion, setSlackCompletion] = useState<DraftSlackCompletion | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [dialogCompanyId, setDialogCompanyId] = useState<string | null>(null);
   const [stagedFiles, setStagedFiles] = useState<StagedIssueFile[]>([]);
@@ -449,6 +462,8 @@ export function NewIssueDialog() {
   const [statusOpen, setStatusOpen] = useState(false);
   const [priorityOpen, setPriorityOpen] = useState(false);
   const [workModeOpen, setWorkModeOpen] = useState(false);
+  const [slackOpen, setSlackOpen] = useState(false);
+  const [slackChannelQuery, setSlackChannelQuery] = useState("");
   const [moreOpen, setMoreOpen] = useState(false);
   const [companyOpen, setCompanyOpen] = useState(false);
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
@@ -489,6 +504,22 @@ export function NewIssueDialog() {
     queryKey: queryKeys.access.companyUserDirectory(effectiveCompanyId!),
     queryFn: () => accessApi.listUserDirectory(effectiveCompanyId!),
     enabled: Boolean(effectiveCompanyId) && newIssueOpen,
+  });
+  const { data: connectors } = useQuery({
+    queryKey: queryKeys.connectors.list(effectiveCompanyId!),
+    queryFn: () => connectorsApi.list(effectiveCompanyId!),
+    enabled: Boolean(effectiveCompanyId) && newIssueOpen,
+    retry: false,
+  });
+  const slackConnector = useMemo(
+    () => (connectors ?? []).find((connector) => connector.type === "slack") ?? null,
+    [connectors],
+  );
+  const { data: slackChannelsData, isLoading: slackChannelsLoading } = useQuery({
+    queryKey: queryKeys.connectors.slackChannels(effectiveCompanyId!),
+    queryFn: () => connectorsApi.listSlackChannels(effectiveCompanyId!),
+    enabled: Boolean(effectiveCompanyId) && newIssueOpen && slackConnector?.status === "connected",
+    retry: false,
   });
   const { data: experimentalSettings } = useQuery({
     queryKey: queryKeys.instance.experimentalSettings,
@@ -541,6 +572,16 @@ export function NewIssueDialog() {
       members: companyMembers?.users,
     });
   }, [agents, companyMembers?.users, orderedProjects]);
+  const filteredSlackChannels = useMemo(() => {
+    const allChannels = slackChannelsData?.channels ?? [];
+    const query = slackChannelQuery.trim().toLowerCase();
+    if (!query) return allChannels;
+    return allChannels.filter((channel) => channel.name.toLowerCase().includes(query));
+  }, [slackChannelQuery, slackChannelsData?.channels]);
+  const selectedSlackChannelSummary = useMemo(
+    () => slackChannelsData?.channels.find((channel) => channel.id === slackCompletion?.channelId) ?? null,
+    [slackChannelsData?.channels, slackCompletion?.channelId],
+  );
 
   const { data: assigneeAdapterModels } = useQuery({
     queryKey:
@@ -657,6 +698,7 @@ export function NewIssueDialog() {
       executionWorkspaceMode,
       selectedExecutionWorkspaceId,
       workMode,
+      slackCompletion,
     });
   }, [
     newIssueOpen,
@@ -674,6 +716,7 @@ export function NewIssueDialog() {
     executionWorkspaceMode,
     selectedExecutionWorkspaceId,
     workMode,
+    slackCompletion,
   ]);
 
   const handleTitleChange = useCallback((nextTitle: string) => {
@@ -711,6 +754,7 @@ export function NewIssueDialog() {
     executionWorkspaceMode,
     selectedExecutionWorkspaceId,
     workMode,
+    slackCompletion,
     newIssueOpen,
     queueDraftSave,
   ]);
@@ -748,6 +792,7 @@ export function NewIssueDialog() {
       setAssigneeChrome(false);
       setExecutionWorkspaceMode(defaultExecutionWorkspaceMode);
       setWorkMode(nextWorkMode);
+      setSlackCompletion(null);
       setSelectedExecutionWorkspaceId(newIssueDefaults.executionWorkspaceId ?? "");
       executionWorkspaceDefaultProjectId.current = hasExplicitProjectWorkspaceId || defaultProject
         ? defaultProjectId || null
@@ -772,6 +817,7 @@ export function NewIssueDialog() {
       setAssigneeChrome(false);
       setExecutionWorkspaceMode(defaultExecutionWorkspaceModeForIssueDefaults(newIssueDefaults, defaultProject));
       setWorkMode(nextWorkMode);
+      setSlackCompletion(null);
       setSelectedExecutionWorkspaceId(newIssueDefaults.executionWorkspaceId ?? "");
       executionWorkspaceDefaultProjectId.current = hasExplicitProjectWorkspaceId || newIssueDefaults.executionWorkspaceId || defaultProject
         ? defaultProjectId || null
@@ -814,6 +860,7 @@ export function NewIssueDialog() {
             ),
       );
       setWorkMode(nextWorkMode);
+      setSlackCompletion(draft.slackCompletion ?? null);
       setSelectedExecutionWorkspaceId(
         hasExplicitExecutionWorkspaceId
           ? (newIssueDefaults.executionWorkspaceId ?? "")
@@ -841,12 +888,32 @@ export function NewIssueDialog() {
       setAssigneeThinkingEffort("");
       setAssigneeChrome(false);
       setExecutionWorkspaceMode(defaultExecutionWorkspaceModeForIssueDefaults(newIssueDefaults, defaultProject));
+      setSlackCompletion(null);
       setSelectedExecutionWorkspaceId(newIssueDefaults.executionWorkspaceId ?? "");
       executionWorkspaceDefaultProjectId.current = hasExplicitProjectWorkspaceId || newIssueDefaults.executionWorkspaceId || defaultProject
         ? defaultProjectId || null
         : null;
     }
   }, [newIssueOpen, newIssueDefaults, orderedProjects, selectedCompanyId, setIssueText]);
+
+  useEffect(() => {
+    if (slackConnector?.status !== "connected") {
+      setSlackCompletion((current) => current ? null : current);
+      return;
+    }
+    const connectedWorkspaceId = slackChannelsData?.workspace?.workspaceId ?? null;
+    if (!slackCompletion) return;
+    if (connectedWorkspaceId && slackCompletion.workspaceId !== connectedWorkspaceId) {
+      setSlackCompletion(null);
+      return;
+    }
+    if (
+      slackChannelsData
+      && !slackChannelsData.channels.some((channel) => channel.id === slackCompletion.channelId)
+    ) {
+      setSlackCompletion(null);
+    }
+  }, [slackChannelsData, slackCompletion, slackConnector?.status]);
 
   useEffect(() => {
     if (!supportsAssigneeOverrides) {
@@ -904,10 +971,13 @@ export function NewIssueDialog() {
     setExecutionWorkspaceMode("shared_workspace");
     setSelectedExecutionWorkspaceId("");
     setWorkMode("standard");
+    setSlackCompletion(null);
     setExpanded(false);
     setDialogCompanyId(null);
     setStagedFiles([]);
     setIsFileDragOver(false);
+    setSlackOpen(false);
+    setSlackChannelQuery("");
     setCompanyOpen(false);
     executionWorkspaceDefaultProjectId.current = null;
     initializationKeyRef.current = null;
@@ -931,6 +1001,9 @@ export function NewIssueDialog() {
     setExecutionWorkspaceMode("shared_workspace");
     setSelectedExecutionWorkspaceId("");
     setWorkMode("standard");
+    setSlackCompletion(null);
+    setSlackOpen(false);
+    setSlackChannelQuery("");
   }
 
   function discardDraft() {
@@ -974,6 +1047,21 @@ export function NewIssueDialog() {
       reviewerValues: reviewerValue ? [reviewerValue] : [],
       approverValues: approverValue ? [approverValue] : [],
     });
+    const connectedSlackWorkspace = slackChannelsData?.workspace ?? null;
+    const selectedSlackChannel = slackChannelsData?.channels.find((channel) => channel.id === slackCompletion?.channelId) ?? null;
+    const nextSlackCompletion =
+      slackConnector?.status === "connected"
+      && connectedSlackWorkspace
+      && slackCompletion
+      && selectedSlackChannel
+        ? {
+            channelId: selectedSlackChannel.id,
+            channelName: selectedSlackChannel.name,
+            workspaceId: connectedSlackWorkspace.workspaceId,
+            workspaceName: connectedSlackWorkspace.workspaceName,
+            channelType: selectedSlackChannel.channelType,
+          }
+        : null;
     createIssue.mutate({
       companyId: effectiveCompanyId,
       stagedFiles,
@@ -995,6 +1083,7 @@ export function NewIssueDialog() {
         : {}),
       ...(executionWorkspaceSettings ? { executionWorkspaceSettings } : {}),
       ...(executionPolicy ? { executionPolicy } : {}),
+      ...(nextSlackCompletion ? { slackCompletion: nextSlackCompletion } : {}),
     });
   }
 
@@ -1079,6 +1168,9 @@ export function NewIssueDialog() {
     experimentalSettings?.enableIsolatedWorkspaces === true
       ? currentProject?.executionWorkspacePolicy ?? null
       : null;
+  const slackChipLabel = selectedSlackChannelSummary || slackCompletion
+    ? `#${selectedSlackChannelSummary?.name ?? slackCompletion?.channelName ?? ""}`
+    : (slackConnector?.status === "connected" ? "Slack" : "Slack off");
   const currentProjectSupportsExecutionWorkspace = Boolean(currentProjectExecutionWorkspacePolicy?.enabled);
   const deduplicatedReusableWorkspaces = useMemo(() => {
     return orderReusableExecutionWorkspaces(reusableExecutionWorkspaces ?? []);
@@ -1921,6 +2013,107 @@ export function NewIssueDialog() {
             <Paperclip className="h-3 w-3" />
             Upload
           </button>
+
+          <Popover open={slackOpen} onOpenChange={setSlackOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors",
+                  selectedSlackChannelSummary
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-800 hover:bg-emerald-500/15 dark:text-emerald-200"
+                    : "border-border text-muted-foreground hover:bg-accent/50",
+                )}
+              >
+                <Hash className="h-3 w-3" />
+                {slackChipLabel}
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-80 p-2" align="start">
+              <div className="space-y-2">
+                <div className="px-1">
+                  <div className="text-xs font-medium">Completion update</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {slackChannelsData?.workspace?.workspaceName ?? "Slack workspace"}
+                  </div>
+                </div>
+
+                {slackConnector?.status !== "connected" ? (
+                  <div className="rounded-md border border-dashed border-border px-3 py-2 text-[11px] text-muted-foreground">
+                    Connect Slack in Settings to post a done summary.
+                  </div>
+                ) : slackChannelsLoading ? (
+                  <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Loading channels
+                  </div>
+                ) : (
+                  <>
+                    {(slackChannelsData?.channels.length ?? 0) > 8 ? (
+                      <input
+                        className="w-full rounded-md border border-border bg-transparent px-2.5 py-2 text-xs outline-none"
+                        value={slackChannelQuery}
+                        onChange={(event) => setSlackChannelQuery(event.target.value)}
+                        placeholder="Filter channels"
+                      />
+                    ) : null}
+
+                    <div className="max-h-64 space-y-1 overflow-y-auto">
+                      <button
+                        type="button"
+                        className={cn(
+                          "flex w-full items-center justify-between rounded px-2 py-1.5 text-xs hover:bg-accent/50",
+                          !slackCompletion && "bg-accent",
+                        )}
+                        onClick={() => {
+                          setSlackCompletion(null);
+                          setSlackOpen(false);
+                        }}
+                      >
+                        <span>No Slack update</span>
+                        {!slackCompletion ? <Check className="h-3.5 w-3.5" /> : null}
+                      </button>
+
+                      {filteredSlackChannels.map((channel) => {
+                        const selected = slackCompletion?.channelId === channel.id;
+                        return (
+                          <button
+                            key={channel.id}
+                            type="button"
+                            className={cn(
+                              "flex w-full items-center justify-between rounded px-2 py-1.5 text-xs hover:bg-accent/50",
+                              selected && "bg-accent",
+                            )}
+                            onClick={() => {
+                              setSlackCompletion({
+                                channelId: channel.id,
+                                channelName: channel.name,
+                                workspaceId: slackChannelsData?.workspace?.workspaceId ?? "",
+                                workspaceName: slackChannelsData?.workspace?.workspaceName ?? null,
+                                channelType: channel.channelType,
+                              });
+                              setSlackOpen(false);
+                            }}
+                          >
+                            <span className="truncate">
+                              #{channel.name}
+                            </span>
+                            {selected ? <Check className="h-3.5 w-3.5 shrink-0" /> : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {(slackChannelsData?.channels.length ?? 0) === 0 ? (
+                      <div className="rounded-md border border-dashed border-border px-3 py-2 text-[11px] text-muted-foreground">
+                        No joined Slack channels are available for posting yet.
+                      </div>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            </PopoverContent>
+          </Popover>
 
           {/* Work mode chip */}
           <Popover open={workModeOpen} onOpenChange={setWorkModeOpen}>

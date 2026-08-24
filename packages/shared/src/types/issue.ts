@@ -81,6 +81,23 @@ export interface IssueAssigneeAdapterOverrides {
   useProjectWorkspace?: boolean;
 }
 
+export type IssueSlackChannelType = "public";
+
+export interface IssueSlackCompletion {
+  channelId: string;
+  channelName: string;
+  workspaceId: string;
+  workspaceName: string | null;
+  channelType: IssueSlackChannelType;
+  threadTs?: string | null;
+  postAttemptCount?: number;
+  lastAttemptAt?: Date | string | null;
+  lastPostedAt?: Date | string | null;
+  lastPostedCompletedAt?: Date | string | null;
+  lastPostedMessageTs?: string | null;
+  lastError?: string | null;
+}
+
 export type DocumentFormat = "markdown";
 
 export interface IssueDocumentSummary {
@@ -386,6 +403,7 @@ export interface Issue {
   requestDepth: number;
   billingCode: string | null;
   assigneeAdapterOverrides: IssueAssigneeAdapterOverrides | null;
+  slackCompletion?: IssueSlackCompletion | null;
   executionPolicy?: IssueExecutionPolicy | null;
   executionState?: IssueExecutionState | null;
   monitorNextCheckAt?: Date | null;
@@ -441,6 +459,9 @@ export interface IssueComment {
   body: string;
   presentation: IssueCommentPresentation | null;
   metadata: IssueCommentMetadata | null;
+  externalSource?: string | null;
+  externalId?: string | null;
+  externalAuthorId?: string | null;
   followUpRequested?: boolean;
   createdAt: Date;
   updatedAt: Date;

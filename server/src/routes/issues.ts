@@ -95,6 +95,7 @@ import { executionWorkspaceService as executionWorkspaceServiceDirect } from "..
 import { feedbackService } from "../services/feedback.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
 import { environmentService } from "../services/environments.js";
+import { enqueueIssueCompletionToSlack } from "../services/issue-slack-completion.js";
 import { redactSensitiveText } from "../redaction.js";
 import {
   createCompanySearchRateLimiter,
@@ -2952,11 +2953,11 @@ export function issueRoutes(
       }
     }
 
-    let issue;
+    let updatedIssue: Awaited<ReturnType<typeof svc.update>>;
     try {
       if (transition.decision && decisionId) {
         const decision = transition.decision;
-        issue = await db.transaction(async (tx) => {
+        updatedIssue = await db.transaction(async (tx) => {
           const updated = await svc.update(
             id,
             {
@@ -2984,7 +2985,7 @@ export function issueRoutes(
           return updated;
         });
       } else {
-        issue = await svc.update(id, {
+        updatedIssue = await svc.update(id, {
           ...updateFields,
           actorAgentId: actor.agentId ?? null,
           actorUserId: actor.actorType === "user" ? actor.actorId : null,
@@ -3013,10 +3014,11 @@ export function issueRoutes(
       }
       throw err;
     }
-    if (!issue) {
+    if (!updatedIssue) {
       res.status(404).json({ error: "Issue not found" });
       return;
     }
+    const issue = updatedIssue;
 
     let cancelledStatusRunId: string | null = null;
     if (runToCancelForCancelledStatus) {
@@ -3380,6 +3382,55 @@ export function issueRoutes(
           (item) => item.issue.identifier ?? item.issue.id,
         ),
       };
+    }
+
+    if (existing.status !== "done" && issue.status === "done") {
+      const slackResult = await enqueueIssueCompletionToSlack(db, {
+        issue,
+        completionComment: commentBody ?? null,
+      });
+      const slackCompletionState = slackResult.issue.slackCompletion ?? null;
+      issueResponse = {
+        ...issueResponse,
+        slackCompletion: slackCompletionState,
+      };
+
+      if (slackResult.queued) {
+        await logActivity(db, {
+          companyId: issue.companyId,
+          actorType: actor.actorType,
+          actorId: actor.actorId,
+          agentId: actor.agentId,
+          runId: actor.runId,
+          action: "issue.slack_completion_queued",
+          entityType: "issue",
+          entityId: issue.id,
+          details: {
+            identifier: issue.identifier,
+            channelId: slackCompletionState?.channelId ?? null,
+            channelName: slackCompletionState?.channelName ?? null,
+            workspaceId: slackCompletionState?.workspaceId ?? null,
+          },
+        });
+      } else if (slackResult.error) {
+        await logActivity(db, {
+          companyId: issue.companyId,
+          actorType: actor.actorType,
+          actorId: actor.actorId,
+          agentId: actor.agentId,
+          runId: actor.runId,
+          action: "issue.slack_completion_failed",
+          entityType: "issue",
+          entityId: issue.id,
+          details: {
+            identifier: issue.identifier,
+            channelId: slackCompletionState?.channelId ?? null,
+            channelName: slackCompletionState?.channelName ?? null,
+            workspaceId: slackCompletionState?.workspaceId ?? null,
+            error: slackResult.error,
+          },
+        });
+      }
     }
 
     const assigneeChanged =

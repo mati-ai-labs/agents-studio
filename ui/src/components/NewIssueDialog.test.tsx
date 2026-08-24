@@ -56,6 +56,11 @@ const mockAgentsApi = vi.hoisted(() => ({
   adapterModels: vi.fn(),
 }));
 
+const mockConnectorsApi = vi.hoisted(() => ({
+  list: vi.fn(),
+  listSlackChannels: vi.fn(),
+}));
+
 const mockAuthApi = vi.hoisted(() => ({
   getSession: vi.fn(),
 }));
@@ -94,6 +99,10 @@ vi.mock("../api/projects", () => ({
 
 vi.mock("../api/agents", () => ({
   agentsApi: mockAgentsApi,
+}));
+
+vi.mock("../api/connectors", () => ({
+  connectorsApi: mockConnectorsApi,
 }));
 
 vi.mock("../api/auth", () => ({
@@ -301,6 +310,11 @@ describe("NewIssueDialog", () => {
     ]);
     mockAgentsApi.list.mockResolvedValue([]);
     mockAgentsApi.adapterModels.mockResolvedValue([]);
+    mockConnectorsApi.list.mockResolvedValue([]);
+    mockConnectorsApi.listSlackChannels.mockResolvedValue({
+      workspace: null,
+      channels: [],
+    });
     mockAuthApi.getSession.mockResolvedValue({ user: { id: "user-1" } });
     mockAssetsApi.uploadImage.mockResolvedValue({ contentPath: "/uploads/asset.png" });
     mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableIsolatedWorkspaces: false });
@@ -620,6 +634,85 @@ describe("NewIssueDialog", () => {
       expect.objectContaining({
         title: "Plan this first",
         workMode: "planning",
+      }),
+    );
+
+    act(() => root.unmount());
+  });
+
+  it("submits the selected Slack completion channel", async () => {
+    mockConnectorsApi.list.mockResolvedValue([
+      {
+        id: "connector-slack",
+        companyId: "company-1",
+        type: "slack",
+        config: {
+          workspaceId: "T123",
+          workspaceName: "Paperclip",
+        },
+        status: "connected",
+        displayName: "Paperclip",
+        lastError: null,
+        connectedAt: "2026-08-23T10:00:00.000Z",
+        disconnectedAt: null,
+        createdAt: "2026-08-23T10:00:00.000Z",
+        updatedAt: "2026-08-23T10:00:00.000Z",
+      },
+    ]);
+    mockConnectorsApi.listSlackChannels.mockResolvedValue({
+      workspace: {
+        workspaceId: "T123",
+        workspaceName: "Paperclip",
+        workspaceUrl: "https://paperclip.slack.com",
+      },
+      channels: [
+        {
+          id: "C123",
+          name: "ship-alerts",
+          channelType: "public",
+          isPrivate: false,
+          isMember: true,
+          memberCount: 12,
+        },
+      ],
+    });
+
+    const { root } = renderDialog(container);
+    await flush();
+    await flush();
+
+    const titleInput = container.querySelector('textarea[placeholder="Issue title"]') as HTMLTextAreaElement | null;
+    expect(titleInput).not.toBeNull();
+    await typeTextareaValue(titleInput!, "Ship Slack summary");
+
+    const channelButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "#ship-alerts");
+    expect(channelButton).not.toBeUndefined();
+    await act(async () => {
+      channelButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    const submitButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Create Issue"));
+    expect(submitButton).not.toBeUndefined();
+
+    await act(async () => {
+      submitButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(mockIssuesApi.create).toHaveBeenCalledWith(
+      "company-1",
+      expect.objectContaining({
+        title: "Ship Slack summary",
+        slackCompletion: {
+          channelId: "C123",
+          channelName: "ship-alerts",
+          workspaceId: "T123",
+          workspaceName: "Paperclip",
+          channelType: "public",
+        },
       }),
     );
 

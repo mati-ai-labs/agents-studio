@@ -369,6 +369,8 @@ export type {
   ProjectExecutionWorkspacePolicy,
   ProjectExecutionWorkspaceDefaultMode,
   IssueExecutionWorkspaceSettings,
+  IssueSlackChannelType,
+  IssueSlackCompletion,
   IssueWorkProduct,
   IssueWorkProductType,
   IssueWorkProductProvider,
@@ -687,6 +689,11 @@ export {
   issueGraphLivenessAutoRecoveryRequestSchema,
   type PatchInstanceExperimentalSettings,
   type IssueGraphLivenessAutoRecoveryRequest,
+  upsertSlackChannelRouteSchema,
+  slackChannelIdParamSchema,
+  slackChannelRoutesQuerySchema,
+  slackEventsInfoQuerySchema,
+  type UpsertSlackChannelRouteInput,
 } from "./validators/index.js";
 
 export {
@@ -766,6 +773,7 @@ export {
   resolveCreateIssueStatusDefault,
   createIssueLabelSchema,
   updateIssueSchema,
+  issueSlackCompletionSchema,
   issueExecutionPolicySchema,
   issueExecutionStateSchema,
   resolveIssueRecoveryActionSchema,

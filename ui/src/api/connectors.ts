@@ -35,6 +35,29 @@ export interface InitiateOAuthResponse {
   state: string;
 }
 
+export interface SlackWorkspaceSummary {
+  workspaceId: string;
+  workspaceName: string | null;
+  workspaceUrl: string | null;
+  enterpriseId?: string | null;
+  enterpriseName?: string | null;
+  botUserId?: string | null;
+}
+
+export interface SlackChannelSummary {
+  id: string;
+  name: string;
+  channelType: "public" | "private";
+  isPrivate: boolean;
+  isMember: boolean;
+  memberCount: number | null;
+}
+
+export interface SlackChannelListResponse {
+  workspace: SlackWorkspaceSummary | null;
+  channels: SlackChannelSummary[];
+}
+
 export interface ConfigureConnectorInput {
   baseUrl?: string;
   email?: string;
@@ -67,6 +90,10 @@ async function list(companyId?: string): Promise<ConnectorRecord[]> {
 /** Get a single connector by type. */
 async function get(type: ConnectorType, companyId?: string): Promise<ConnectorRecord> {
   return api.get<ConnectorRecord>(withCompanyId(`/connectors/${type}`, companyId));
+}
+
+async function listSlackChannels(companyId?: string): Promise<SlackChannelListResponse> {
+  return api.get<SlackChannelListResponse>(withCompanyId("/connectors/slack/channels", companyId));
 }
 
 /** Initiate OAuth flow for a connector type. Returns authorization URL. */
@@ -109,6 +136,7 @@ async function configure(type: ConnectorType, input: ConfigureConnectorInput, co
 export const connectorsApi = {
   list,
   get,
+  listSlackChannels,
   initiateConnect,
   configure,
   disconnect,
