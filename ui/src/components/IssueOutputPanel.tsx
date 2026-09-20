@@ -545,7 +545,7 @@ export function IssueOutputPanel({
 
       {/* Image gallery modal */}
       <ImageGalleryModal
-        images={imageAttachments}
+        items={imageAttachments}
         initialIndex={galleryIndex}
         open={galleryOpen}
         onOpenChange={setGalleryOpen}
