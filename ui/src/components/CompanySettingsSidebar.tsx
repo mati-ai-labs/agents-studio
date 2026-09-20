@@ -16,7 +16,6 @@ import {
   Users,
 } from "lucide-react";
 import type { PluginRecord } from "@paperclipai/shared";
-import { Plug2 } from "lucide-react";
 import { sidebarBadgesApi } from "@/api/sidebarBadges";
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import { pluginsApi } from "@/api/plugins";
@@ -134,7 +133,6 @@ export function CompanySettingsSidebar() {
             ))}
           <SidebarNavItem to="/company/settings/invites" label="Invites" icon={MailPlus} end />
           <SidebarNavItem to="/company/settings/secrets" label="Secrets" icon={KeyRound} end />
-          <SidebarNavItem to="/company/settings/connectors" label="Connectors" icon={Plug2} end />
         </div>
         <div className="mt-5 px-3 pb-1 text-(length:--text-micro) font-semibold uppercase tracking-wide text-muted-foreground">
           Instance settings

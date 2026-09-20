@@ -1,6 +1,11 @@
 import { memo, useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent, type CSSProperties, type DragEvent, type RefObject } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { AgentEnvConfig, EnvBinding, IssueWorkMode } from "@paperclipai/shared";
+import type {
+  AgentEnvConfig,
+  EnvBinding,
+  IssueCompletionDestination,
+  IssueWorkMode,
+} from "@paperclipai/shared";
 import { pickTextColorForSolidBg } from "@/lib/color-contrast";
 import { useDialog } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
@@ -23,8 +28,10 @@ import {
   issueExecutionWorkspaceModeForExistingWorkspace,
 } from "../lib/project-workspace-defaults";
 import { useProjectOrder } from "../hooks/useProjectOrder";
+import { useSlackWorkspace } from "../hooks/useSlackWorkspace";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { getRecentProjectIds, trackRecentProject } from "../lib/recent-projects";
+import { formatCompletionDestinationLabel } from "../lib/issue-completion-delivery";
 import { buildExecutionPolicy } from "../lib/issue-execution-policy";
 import { isIssueWorkMode, nextWorkMode, workModeMetaFor, workModeMetaList } from "../lib/work-mode-meta";
 import { useToastActions } from "../context/ToastContext";
@@ -56,7 +63,6 @@ import {
   ArrowUp,
   ArrowDown,
   AlertTriangle,
-  Tag,
   Calendar,
   Paperclip,
   FileText,
@@ -65,6 +71,7 @@ import {
   ListTree,
   X,
   Eye,
+  Hash,
   ShieldAlert,
   ShieldCheck,
   ScanEye,
@@ -105,6 +112,7 @@ interface IssueDraft {
   selectedExecutionWorkspaceId?: string;
   useIsolatedExecutionWorkspace?: boolean;
   workMode?: IssueWorkMode;
+  completionDestination?: IssueCompletionDestination | null;
 }
 
 type StagedIssueFile = {
@@ -447,6 +455,7 @@ export function NewIssueDialog() {
   const [executionWorkspaceMode, setExecutionWorkspaceMode] = useState<string>("shared_workspace");
   const [selectedExecutionWorkspaceId, setSelectedExecutionWorkspaceId] = useState("");
   const [workMode, setWorkMode] = useState<IssueWorkMode>("standard");
+  const [completionDestination, setCompletionDestination] = useState<IssueCompletionDestination | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [dialogCompanyId, setDialogCompanyId] = useState<string | null>(null);
   const [stagedFiles, setStagedFiles] = useState<StagedIssueFile[]>([]);
@@ -467,6 +476,7 @@ export function NewIssueDialog() {
   const [statusOpen, setStatusOpen] = useState(false);
   const [priorityOpen, setPriorityOpen] = useState(false);
   const [workModeOpen, setWorkModeOpen] = useState(false);
+  const [completionOpen, setCompletionOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [companyOpen, setCompanyOpen] = useState(false);
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
@@ -507,10 +517,24 @@ export function NewIssueDialog() {
     queryKey: queryKeys.auth.session,
     queryFn: () => authApi.getSession(),
   });
+  const { data: boardAccess } = useQuery({
+    queryKey: queryKeys.access.currentBoardAccess,
+    queryFn: () => accessApi.getCurrentBoardAccess(),
+    enabled: newIssueOpen && Boolean(session?.user?.id),
+    retry: false,
+  });
   const { data: companyMembers } = useQuery({
     queryKey: queryKeys.access.companyUserDirectory(effectiveCompanyId!),
     queryFn: () => accessApi.listUserDirectory(effectiveCompanyId!),
     enabled: Boolean(effectiveCompanyId) && newIssueOpen,
+  });
+  const {
+    connector: slackConnector,
+    channels: slackChannels,
+    channelsLoading: slackChannelsLoading,
+  } = useSlackWorkspace({
+    companyId: effectiveCompanyId,
+    enabled: newIssueOpen && Boolean(effectiveCompanyId && boardAccess?.companyIds?.includes(effectiveCompanyId)),
   });
   const { data: experimentalSettings } = useQuery({
     queryKey: queryKeys.instance.experimentalSettings,
@@ -681,6 +705,7 @@ export function NewIssueDialog() {
       executionWorkspaceMode,
       selectedExecutionWorkspaceId,
       workMode,
+      completionDestination,
     });
   }, [
     newIssueOpen,
@@ -694,12 +719,14 @@ export function NewIssueDialog() {
     watchdogInstructions,
     projectId,
     projectWorkspaceId,
+    assigneeModelLane,
     assigneeModelOverride,
     assigneeThinkingEffort,
     assigneeChrome,
     executionWorkspaceMode,
     selectedExecutionWorkspaceId,
     workMode,
+    completionDestination,
   ]);
 
   const handleTitleChange = useCallback((nextTitle: string) => {
@@ -739,6 +766,7 @@ export function NewIssueDialog() {
     executionWorkspaceMode,
     selectedExecutionWorkspaceId,
     workMode,
+    completionDestination,
     newIssueOpen,
     queueDraftSave,
   ]);
@@ -776,6 +804,7 @@ export function NewIssueDialog() {
       setAssigneeChrome(false);
       setExecutionWorkspaceMode(defaultExecutionWorkspaceMode);
       setWorkMode(nextWorkMode);
+      setCompletionDestination(null);
       setSelectedExecutionWorkspaceId(newIssueDefaults.executionWorkspaceId ?? "");
       executionWorkspaceDefaultProjectId.current = hasExplicitProjectWorkspaceId || defaultProject
         ? defaultProjectId || null
@@ -803,6 +832,7 @@ export function NewIssueDialog() {
       setAssigneeChrome(false);
       setExecutionWorkspaceMode(defaultExecutionWorkspaceModeForIssueDefaults(newIssueDefaults, defaultProject));
       setWorkMode(nextWorkMode);
+      setCompletionDestination(null);
       setSelectedExecutionWorkspaceId(newIssueDefaults.executionWorkspaceId ?? "");
       executionWorkspaceDefaultProjectId.current = hasExplicitProjectWorkspaceId || newIssueDefaults.executionWorkspaceId || defaultProject
         ? defaultProjectId || null
@@ -848,6 +878,7 @@ export function NewIssueDialog() {
             ),
       );
       setWorkMode(nextWorkMode);
+      setCompletionDestination(draft.completionDestination ?? null);
       setSelectedExecutionWorkspaceId(
         hasExplicitExecutionWorkspaceId
           ? (newIssueDefaults.executionWorkspaceId ?? "")
@@ -878,6 +909,7 @@ export function NewIssueDialog() {
       setAssigneeThinkingEffort("");
       setAssigneeChrome(false);
       setExecutionWorkspaceMode(defaultExecutionWorkspaceModeForIssueDefaults(newIssueDefaults, defaultProject));
+      setCompletionDestination(null);
       setSelectedExecutionWorkspaceId(newIssueDefaults.executionWorkspaceId ?? "");
       executionWorkspaceDefaultProjectId.current = hasExplicitProjectWorkspaceId || newIssueDefaults.executionWorkspaceId || defaultProject
         ? defaultProjectId || null
@@ -944,6 +976,8 @@ export function NewIssueDialog() {
     setExecutionWorkspaceMode("shared_workspace");
     setSelectedExecutionWorkspaceId("");
     setWorkMode("standard");
+    setCompletionDestination(null);
+    setCompletionOpen(false);
     setExpanded(false);
     setDialogCompanyId(null);
     setStagedFiles([]);
@@ -974,6 +1008,8 @@ export function NewIssueDialog() {
     setExecutionWorkspaceMode("shared_workspace");
     setSelectedExecutionWorkspaceId("");
     setWorkMode("standard");
+    setCompletionDestination(null);
+    setCompletionOpen(false);
   }
 
   function discardDraft() {
@@ -986,6 +1022,9 @@ export function NewIssueDialog() {
     const currentTitle = titleRef.current.trim();
     const currentDescription = descriptionRef.current.trim();
     if (!effectiveCompanyId || !currentTitle || createIssue.isPending) return;
+    const effectiveCompletionDestination = canManageCompletionDestination && slackConnector?.status === "connected"
+      ? completionDestination
+      : null;
     const effectiveLane = assigneeSupportsCheapLane
       ? assigneeModelLane
       : assigneeModelLane === "cheap"
@@ -1038,6 +1077,7 @@ export function NewIssueDialog() {
         : {}),
       ...(executionWorkspaceSettings ? { executionWorkspaceSettings } : {}),
       ...(executionPolicy ? { executionPolicy } : {}),
+      ...(effectiveCompletionDestination ? { completionDestination: effectiveCompletionDestination } : {}),
       ...(taskWatchdogsEnabled && watchdogAgentId
         ? { watchdog: { agentId: watchdogAgentId, instructions: watchdogInstructions.trim() || null } }
         : {}),
@@ -1141,6 +1181,9 @@ export function NewIssueDialog() {
     experimentalSettings?.enableIsolatedWorkspaces === true
       ? currentProject?.executionWorkspacePolicy ?? null
       : null;
+  const canManageCompletionDestination = Boolean(
+    effectiveCompanyId && boardAccess?.companyIds?.includes(effectiveCompanyId),
+  );
   const currentProjectSupportsExecutionWorkspace = Boolean(currentProjectExecutionWorkspacePolicy?.enabled);
   const taskWatchdogsEnabled = experimentalSettings?.enableTaskWatchdogs === true;
   const selectableReusableWorkspaces = reusableExecutionWorkspaces ?? [];
@@ -1211,6 +1254,27 @@ export function NewIssueDialog() {
       })),
     [orderedProjects],
   );
+  const selectedCompletionChannelId = completionDestination?.kind === "slack"
+    ? completionDestination.channelId
+    : "";
+  const selectedCompletionChannel = useMemo(
+    () => (selectedCompletionChannelId ? slackChannels.find((channel) => channel.id === selectedCompletionChannelId) ?? null : null),
+    [selectedCompletionChannelId, slackChannels],
+  );
+  const completionChannelOptions = useMemo<InlineEntityOption[]>(
+    () =>
+      slackChannels.map((channel) => ({
+        id: channel.id,
+        label: `#${channel.name}`,
+        searchText: `${channel.name} ${channel.isPrivate ? "private" : "public"}`,
+      })),
+    [slackChannels],
+  );
+  const completionEnabled = completionDestination?.kind === "slack";
+  const completionDestinationLabel = formatCompletionDestinationLabel(completionDestination);
+  const canEnableCompletionDestination = canManageCompletionDestination
+    && slackConnector?.status === "connected"
+    && slackChannels.length > 0;
   const savedDraft = useMemo(() => newIssueOpen ? loadDraft() : null, [newIssueOpen]);
   const hasSavedDraft = Boolean(savedDraft?.title.trim() || savedDraft?.description.trim());
   const canDiscardDraft = hasDraft || hasSavedDraft;
@@ -2174,6 +2238,117 @@ export function NewIssueDialog() {
               })}
             </PopoverContent>
           </Popover>
+
+          {canManageCompletionDestination ? (
+            <Popover open={completionOpen} onOpenChange={setCompletionOpen}>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs transition-colors hover:bg-accent/50"
+                >
+                  <Hash className="h-3 w-3 text-muted-foreground" />
+                  <span className={cn(!completionEnabled && "text-muted-foreground")}>
+                    {completionEnabled ? completionDestinationLabel : "Delivery"}
+                  </span>
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-80 p-3 space-y-3" align="start">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-foreground">Slack completion delivery</div>
+                    <div className="text-(length:--text-micro) text-muted-foreground">
+                      {slackConnector?.status === "connected"
+                        ? `Post a completion summary to ${slackConnector.displayName ?? "Slack"} when this task reaches done.`
+                        : "Connect Slack in Apps to post completion summaries."}
+                    </div>
+                  </div>
+                  <ToggleSwitch
+                    checked={completionEnabled}
+                    onCheckedChange={(checked) => {
+                      if (!checked) {
+                        setCompletionDestination(null);
+                        return;
+                      }
+                      const defaultChannel = selectedCompletionChannel ?? slackChannels[0] ?? null;
+                      if (!defaultChannel) return;
+                      setCompletionDestination({
+                        kind: "slack",
+                        channelId: defaultChannel.id,
+                        channelName: defaultChannel.name,
+                      });
+                    }}
+                    disabled={createIssue.isPending || !canEnableCompletionDestination}
+                  />
+                </div>
+
+                {slackConnector?.status !== "connected" ? (
+                  <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-(length:--text-micro) text-muted-foreground">
+                    Slack is not connected for this company.
+                  </div>
+                ) : slackChannelsLoading ? (
+                  <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-(length:--text-micro) text-muted-foreground">
+                    Loading channels…
+                  </div>
+                ) : slackChannels.length === 0 ? (
+                  <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-(length:--text-micro) text-muted-foreground">
+                    No Slack channels are visible to the installed workspace app.
+                  </div>
+                ) : null}
+
+                {completionEnabled ? (
+                  <div className="space-y-1.5">
+                    <div className="text-xs font-medium text-foreground">Channel</div>
+                    <InlineEntitySelector
+                      value={selectedCompletionChannelId}
+                      options={completionChannelOptions}
+                      disablePortal
+                      noneLabel="No delivery"
+                      placeholder="Select channel"
+                      searchPlaceholder="Search channels..."
+                      emptyMessage="No Slack channels found."
+                      onChange={(channelId) => {
+                        if (!channelId) {
+                          setCompletionDestination(null);
+                          return;
+                        }
+                        const channel = slackChannels.find((entry) => entry.id === channelId);
+                        if (!channel) return;
+                        setCompletionDestination({
+                          kind: "slack",
+                          channelId: channel.id,
+                          channelName: channel.name,
+                        });
+                      }}
+                      renderTriggerValue={(option) =>
+                        option ? (
+                          <>
+                            <Hash className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                            <span className="truncate">{option.label}</span>
+                          </>
+                        ) : (
+                          <span className="text-muted-foreground">Select channel</span>
+                        )
+                      }
+                      renderOption={(option) => {
+                        const channel = slackChannels.find((entry) => entry.id === option.id);
+                        return (
+                          <>
+                            <Hash className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                            <span className="truncate">{option.label}</span>
+                            {channel?.isPrivate ? (
+                              <span className="ml-auto shrink-0 text-(length:--text-nano) text-muted-foreground">
+                                Private
+                              </span>
+                            ) : null}
+                          </>
+                        );
+                      }}
+                    />
+                  </div>
+                ) : null}
+              </PopoverContent>
+            </Popover>
+          ) : null}
 
           {/* More */}
           <Popover open={moreOpen} onOpenChange={setMoreOpen}>

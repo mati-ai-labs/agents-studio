@@ -674,6 +674,39 @@ export interface IssueExecutionDecision {
   updatedAt: Date;
 }
 
+export interface IssueSlackCompletionDestination {
+  kind: "slack";
+  channelId: string;
+  channelName: string;
+}
+
+export type IssueCompletionDestination = IssueSlackCompletionDestination;
+
+export type IssueCompletionDeliveryStatus =
+  | "pending"
+  | "sending"
+  | "sent"
+  | "failed"
+  | "superseded";
+
+export interface IssueCompletionDeliverySummary {
+  id: string;
+  companyId: string;
+  issueId: string;
+  sourceActivityId: string;
+  status: IssueCompletionDeliveryStatus;
+  destination: IssueCompletionDestination;
+  attemptCount: number;
+  nextAttemptAt: Date | null;
+  lastAttemptAt: Date | null;
+  deliveredAt: Date | null;
+  lastError: string | null;
+  providerMessageId: string | null;
+  completedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export type IssueWatchdogStatus = "active" | "disabled";
 
 export interface IssueWatchdogSummary {
@@ -732,6 +765,7 @@ export interface Issue {
   originFingerprint?: string | null;
   requestDepth: number;
   billingCode: string | null;
+  completionDestination: IssueCompletionDestination | null;
   assigneeAdapterOverrides: IssueAssigneeAdapterOverrides | null;
   executionPolicy?: IssueExecutionPolicy | null;
   executionState?: IssueExecutionState | null;
@@ -756,6 +790,7 @@ export interface Issue {
   blockedInboxAttention?: IssueBlockedInboxAttention | null;
   productivityReview?: IssueProductivityReview | null;
   activeRecoveryAction?: IssueRecoveryAction | null;
+  latestCompletionDelivery?: IssueCompletionDeliverySummary | null;
   successfulRunHandoff?: SuccessfulRunHandoffState | null;
   watchdog?: IssueWatchdogSummary | null;
   scheduledRetry?: IssueScheduledRetry | null;

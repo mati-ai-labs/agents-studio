@@ -109,6 +109,7 @@ import {
   inboxAgentPolicyService,
   ISSUE_LIST_DEFAULT_LIMIT,
   ISSUE_LIST_MAX_LIMIT,
+  issueCompletionDeliveryService,
   issueReferenceService,
   issueService,
   type IssueFilters,
@@ -1662,6 +1663,22 @@ async function assertCanManageIssueMonitor(
   }
   if (req.actor.type === "agent" && req.actor.agentId && req.actor.agentId === assigneeAgentId) return;
   throw forbidden("Only the assignee agent or a board user can manage issue monitors");
+}
+
+function completionDestinationsEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+}
+
+async function assertCanManageIssueCompletionDestination(
+  req: Request,
+  res: Response,
+  existingDestination: unknown,
+  nextDestination: unknown,
+): Promise<boolean> {
+  if (completionDestinationsEqual(existingDestination, nextDestination)) return true;
+  if (req.actor.type === "board") return true;
+  res.status(403).json({ error: "Only board users can configure completion delivery destinations" });
+  return false;
 }
 
 function summarizeIssueMonitor(
@@ -7052,6 +7069,12 @@ export function issueRoutes(
       actor.actorType,
     );
     await assertCanManageIssueMonitor(access, req, companyId, createBody.assigneeAgentId ?? null, Boolean(executionPolicy?.monitor));
+    if (!(await assertCanManageIssueCompletionDestination(
+      req,
+      res,
+      null,
+      createBody.completionDestination ?? null,
+    ))) return;
     const issueId = randomUUID();
     const sourceTrust = await sourceTrustForActorWrite({
       id: issueId,
@@ -7096,7 +7119,7 @@ export function issueRoutes(
       referenceSummary,
     );
 
-    await logActivity(db, {
+    const createdActivity = await logActivity(db, {
       companyId,
       actorType: actor.actorType,
       actorId: actor.actorId,
@@ -7130,6 +7153,12 @@ export function issueRoutes(
         }),
       },
     });
+    if (issue.status === "done" && issue.completionDestination && createdActivity?.id) {
+      await issueCompletionDeliveryService(db).enqueueForIssueCompletion({
+        issueId: issue.id,
+        sourceActivityId: createdActivity.id,
+      });
+    }
 
     if (executionPolicy?.monitor) {
       await logActivity(db, {
@@ -7237,6 +7266,12 @@ export function issueRoutes(
       actor.actorType,
     );
     await assertCanManageIssueMonitor(access, req, parent.companyId, createBody.assigneeAgentId ?? null, Boolean(executionPolicy?.monitor));
+    if (!(await assertCanManageIssueCompletionDestination(
+      req,
+      res,
+      null,
+      createBody.completionDestination ?? null,
+    ))) return;
     const issueId = randomUUID();
     const sourceTrust = await sourceTrustForActorWrite({
       id: issueId,
@@ -7267,7 +7302,7 @@ export function issueRoutes(
     });
     await externalObjectsSvc.syncIssueSafely(issue.id);
 
-    await logActivity(db, {
+    const createdActivity = await logActivity(db, {
       companyId: parent.companyId,
       actorType: actor.actorType,
       actorId: actor.actorId,
@@ -7293,6 +7328,12 @@ export function issueRoutes(
           : {}),
       },
     });
+    if (issue.status === "done" && issue.completionDestination && createdActivity?.id) {
+      await issueCompletionDeliveryService(db).enqueueForIssueCompletion({
+        issueId: issue.id,
+        sourceActivityId: createdActivity.id,
+      });
+    }
 
     if (executionPolicy?.monitor) {
       await logActivity(db, {
@@ -7402,6 +7443,12 @@ export function issueRoutes(
         });
       }
       await assertIssueEnvironmentSelection(sourceIssue.companyId, childBody.executionWorkspaceSettings?.environmentId);
+      if (!(await assertCanManageIssueCompletionDestination(
+        req,
+        res,
+        null,
+        childBody.completionDestination ?? null,
+      ))) return;
     }
 
     const actor = getActorInfo(req);
@@ -7490,7 +7537,7 @@ export function issueRoutes(
     });
 
     for (const issue of result.newlyCreatedIssues) {
-      await logActivity(db, {
+      const createdActivity = await logActivity(db, {
         companyId: sourceIssue.companyId,
         actorType: actor.actorType,
         actorId: actor.actorId,
@@ -7515,6 +7562,12 @@ export function issueRoutes(
             : {}),
         },
       });
+      if (issue.status === "done" && issue.completionDestination && createdActivity?.id) {
+        await issueCompletionDeliveryService(db).enqueueForIssueCompletion({
+          issueId: issue.id,
+          sourceActivityId: createdActivity.id,
+        });
+      }
 
       const executionPolicy = normalizeIssueExecutionPolicy(issue.executionPolicy);
       if (executionPolicy?.monitor) {
@@ -7828,6 +7881,14 @@ export function issueRoutes(
       updateFields.executionPolicy !== undefined
         ? (updateFields.executionPolicy as NormalizedExecutionPolicy | null)
         : previousExecutionPolicy;
+    if (!(await assertCanManageIssueCompletionDestination(
+      req,
+      res,
+      existing.completionDestination ?? null,
+      req.body.completionDestination === undefined
+        ? existing.completionDestination ?? null
+        : req.body.completionDestination ?? null,
+    ))) return;
     if (normalizedAssigneeAgentId !== undefined) {
       updateFields.assigneeAgentId = normalizedAssigneeAgentId;
     }
@@ -8128,7 +8189,7 @@ export function issueRoutes(
         activeRecoveryAction: null,
       };
     }
-    await logActivity(db, {
+    const updatedActivity = await logActivity(db, {
       companyId: issue.companyId,
       actorType: actor.actorType,
       actorId: actor.actorId,
@@ -8166,6 +8227,12 @@ export function issueRoutes(
         ),
       },
     });
+    if (existing.status !== "done" && issue.status === "done" && issue.completionDestination && updatedActivity?.id) {
+      await issueCompletionDeliveryService(db).enqueueForIssueCompletion({
+        issueId: issue.id,
+        sourceActivityId: updatedActivity.id,
+      });
+    }
 
     if (existing.status === "in_progress" && issue.status !== existing.status && issue.status !== "in_progress") {
       await listSuccessfulRunHandoffStates(db, issue.companyId, [issue.id], { hydrateLiveness: false })

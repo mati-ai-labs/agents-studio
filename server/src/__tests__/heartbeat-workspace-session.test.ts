@@ -28,6 +28,7 @@ import {
   resolveExecutionWorkspaceConfigFreshness,
   resolveExecutionWorkspaceReuseRequestForIssue,
   resolveExecutionWorkspaceReuseProvisioningPolicy,
+  resolveEffectiveProjectId,
   resolveNextSessionState,
   resolveTaskSessionConfigFreshness,
   requiresPushCapabilityPreflight,
@@ -204,6 +205,24 @@ const truncatingHermesSessionCodec = {
     return sessionId ? sessionId.slice(0, 16) : null;
   },
 };
+
+describe("resolveEffectiveProjectId", () => {
+  it("uses the linked project workspace when the issue row is missing project_id", () => {
+    expect(resolveEffectiveProjectId({
+      issueProjectId: null,
+      projectWorkspaceProjectId: "project-from-workspace",
+      contextProjectId: null,
+    })).toBe("project-from-workspace");
+  });
+
+  it("preserves the issue project when all references are present", () => {
+    expect(resolveEffectiveProjectId({
+      issueProjectId: "project-from-issue",
+      projectWorkspaceProjectId: "project-from-workspace",
+      contextProjectId: "project-from-context",
+    })).toBe("project-from-issue");
+  });
+});
 
 function lowTrustResolution(): TrustPresetResolution {
   return {

@@ -75,7 +75,6 @@ import { ProfileSettings } from "./pages/ProfileSettings";
 import { PluginManager } from "./pages/PluginManager";
 import { PluginSettings } from "./pages/PluginSettings";
 import { AdapterManager } from "./pages/AdapterManager";
-import { Connectors } from "./pages/Connectors";
 import CeoChat from "./pages/CeoChat";
 import { PluginPage } from "./pages/PluginPage";
 import { OrgChart } from "./pages/OrgChart";
@@ -114,7 +113,7 @@ function boardRoutes() {
       <Route path="company/export/*" element={<CompanyExport />} />
       <Route path="company/import" element={<CompanyImport />} />
       <Route path="company/settings/secrets" element={<Secrets />} />
-      <Route path="company/settings/connectors" element={<Connectors />} />
+      <Route path="company/settings/connectors" element={<LegacyAppsRedirect />} />
       <Route path="chat" element={<CeoChat />} />
       <Route path="company/settings/tools" element={<LegacyToolsSettingsRedirect />} />
       <Route path="company/settings/tools/:tab" element={<LegacyToolsSettingsRedirect />} />
@@ -160,7 +159,7 @@ function boardRoutes() {
       <Route path="skills/studio/:skillId" element={<SkillStudio />} />
       <Route path="skills/:skillId/studio" element={<LegacySkillStudioRedirect />} />
       <Route path="skills/*" element={<CompanySkills />} />
-      <Route path="connectors" element={<Connectors />} />
+      <Route path="connectors" element={<LegacyAppsRedirect />} />
       <Route path="settings" element={<LegacySettingsRedirect />} />
       <Route path="settings/*" element={<LegacySettingsRedirect />} />
       <Route path="plugins/:pluginId" element={<PluginPage />} />
@@ -366,6 +365,11 @@ function LegacyToolsSettingsRedirect() {
   return <Navigate to={legacyToolsRedirectTarget(tab)} replace />;
 }
 
+function LegacyAppsRedirect() {
+  const location = useLocation();
+  return <Navigate to={`/apps${location.search}${location.hash}`} replace />;
+}
+
 // The developer "Tools" surface moved under the Apps "Advanced setup" door
 // (PAP-10862). `/tools` and `/tools/:tab` redirect to their new home.
 function LegacyToolsRedirect() {
@@ -526,6 +530,8 @@ export function App() {
           <Route path="instance/settings" element={<LegacySettingsRedirect />} />
           <Route path="instance/settings/*" element={<LegacySettingsRedirect />} />
           <Route path="chat" element={<UnprefixedBoardRedirect />} />
+          <Route path="connectors" element={<UnprefixedBoardRedirect />} />
+          <Route path="company/settings/connectors" element={<UnprefixedBoardRedirect />} />
           <Route path="companies" element={<UnprefixedBoardRedirect />} />
           <Route path="issues" element={<UnprefixedBoardRedirect />} />
           <Route path="issues/:issueId" element={<UnprefixedBoardRedirect />} />

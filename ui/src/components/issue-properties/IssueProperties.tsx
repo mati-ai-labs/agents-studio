@@ -15,7 +15,9 @@ import { useCompany } from "../../context/CompanyContext";
 import { queryKeys } from "../../lib/queryKeys";
 import { buildCompanyUserInlineOptions, buildCompanyUserLabelMap, buildCompanyUserProfileMap, isAgentTaskTarget } from "../../lib/company-members";
 import { ISSUE_OVERRIDE_ADAPTER_TYPES, type IssueModelLane } from "../../lib/issue-assignee-overrides";
+import { completionDeliveryStatusTone, formatCompletionDeliveryStatusLabel, formatCompletionDestinationLabel } from "../../lib/issue-completion-delivery";
 import { useProjectOrder } from "../../hooks/useProjectOrder";
+import { useSlackWorkspace } from "../../hooks/useSlackWorkspace";
 import {
   getRecentAssigneeIds,
   sortAgentsByRecency,
@@ -52,7 +54,7 @@ import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { User, ArrowUpRight, Plus, GitBranch, FolderOpen, HardDrive, Check, Clock, RotateCcw, Loader2, CheckCircle2, ArchiveRestore } from "lucide-react";
+import { User, ArrowUpRight, Plus, GitBranch, FolderOpen, HardDrive, Check, Clock, RotateCcw, Loader2, CheckCircle2, ArchiveRestore, Hash } from "lucide-react";
 import { AgentIcon } from "../AgentIconPicker";
 import { InlineEntitySelector, type InlineEntityOption } from "../InlineEntitySelector";
 import {
@@ -192,6 +194,8 @@ export function IssueProperties({
   const [scheduledRetryOpen, setScheduledRetryOpen] = useState(false);
   const [labelsOpen, setLabelsOpen] = useState(false);
   const [assigneeOptionsOpen, setAssigneeOptionsOpen] = useState(false);
+  const [completionOpen, setCompletionOpen] = useState(false);
+  const [completionSearch, setCompletionSearch] = useState("");
   const [labelSearch, setLabelSearch] = useState("");
   const [newLabelName, setNewLabelName] = useState("");
   // token-extraction: allowlisted — color-picker seed state, persisted into label-create payload; a var() string would break that payload.
@@ -212,6 +216,8 @@ export function IssueProperties({
     setBlockingExpanded(false);
     setSubTasksExpanded(false);
     setRelatedTasksExpanded(false);
+    setCompletionOpen(false);
+    setCompletionSearch("");
   }, [issue.id]);
 
   const { data: session } = useQuery({
@@ -219,6 +225,23 @@ export function IssueProperties({
     queryFn: () => authApi.getSession(),
   });
   const currentUserId = session?.user?.id ?? session?.session?.userId;
+  const { data: boardAccess } = useQuery({
+    queryKey: queryKeys.access.currentBoardAccess,
+    queryFn: () => accessApi.getCurrentBoardAccess(),
+    enabled: Boolean(session?.user?.id),
+    retry: false,
+  });
+  const canManageCompletionDestination = Boolean(
+    companyId && boardAccess?.companyIds?.includes(companyId),
+  );
+  const {
+    connector: slackConnector,
+    channels: slackChannels,
+    channelsLoading: slackChannelsLoading,
+  } = useSlackWorkspace({
+    companyId,
+    enabled: canManageCompletionDestination,
+  });
 
   const { data: agents } = useQuery({
     queryKey: queryKeys.agents.list(companyId!),
@@ -411,6 +434,106 @@ export function IssueProperties({
     const project = projects?.find((p) => p.id === id) ?? null;
     return project ? projectUrl(project) : `/projects/${id}`;
   };
+  const completionDestination = issue.completionDestination ?? null;
+  const completionDelivery = issue.latestCompletionDelivery ?? null;
+  const completionStatusLabel = formatCompletionDeliveryStatusLabel(completionDelivery);
+  const completionDestinationLabel = formatCompletionDestinationLabel(completionDestination);
+  const selectedCompletionChannelId = completionDestination?.kind === "slack"
+    ? completionDestination.channelId
+    : "";
+  const normalizedCompletionSearch = completionSearch.trim().toLowerCase();
+  const filteredSlackChannels = useMemo(
+    () =>
+      slackChannels.filter((channel) => {
+        if (channel.isArchived) return false;
+        if (!normalizedCompletionSearch) return true;
+        const haystack = `${channel.name} ${channel.id} ${channel.isPrivate ? "private" : "public"}`.toLowerCase();
+        return haystack.includes(normalizedCompletionSearch);
+      }),
+    [normalizedCompletionSearch, slackChannels],
+  );
+  const completionDestinationTrigger = completionDestination ? (
+    <>
+      <Hash className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <span className="truncate">{completionDestinationLabel}</span>
+    </>
+  ) : (
+    <span className="text-sm text-muted-foreground">No delivery</span>
+  );
+  const completionDestinationContent = (
+    <>
+      <button
+        type="button"
+        className={cn(
+          "mb-1 flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-accent/50",
+          !completionDestination && "bg-accent",
+        )}
+        onClick={() => {
+          onUpdate({ completionDestination: null });
+          setCompletionOpen(false);
+          setCompletionSearch("");
+        }}
+      >
+        <Hash className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <span className="truncate">No delivery</span>
+        {!completionDestination ? <Check className="ml-auto h-3.5 w-3.5 shrink-0" aria-hidden /> : null}
+      </button>
+      {slackConnector?.status !== "connected" ? (
+        <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          Connect Slack in Apps to configure a completion destination.
+        </div>
+      ) : (
+        <>
+          <input
+            className="mb-1 w-full border-b border-border bg-transparent px-2 py-1.5 text-xs outline-none placeholder:text-muted-foreground/50"
+            placeholder="Search channels..."
+            value={completionSearch}
+            onChange={(event) => setCompletionSearch(event.target.value)}
+            aria-label="Search Slack channels"
+            autoFocus={!inline}
+          />
+          <div className="max-h-48 overflow-y-auto overscroll-contain">
+            {slackChannelsLoading ? (
+              <div className="px-2 py-2 text-xs text-muted-foreground">Loading channels...</div>
+            ) : filteredSlackChannels.map((channel) => {
+              const selected = selectedCompletionChannelId === channel.id;
+              return (
+                <button
+                  key={channel.id}
+                  type="button"
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent/50",
+                    selected && "bg-accent",
+                  )}
+                  onClick={() => {
+                    onUpdate({
+                      completionDestination: {
+                        kind: "slack",
+                        channelId: channel.id,
+                        channelName: channel.name,
+                      },
+                    });
+                    setCompletionOpen(false);
+                    setCompletionSearch("");
+                  }}
+                >
+                  <Hash className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate">#{channel.name}</span>
+                  {channel.isPrivate ? (
+                    <span className="shrink-0 text-(length:--text-nano) text-muted-foreground">Private</span>
+                  ) : null}
+                  {selected ? <Check className="h-3.5 w-3.5 shrink-0" aria-hidden /> : null}
+                </button>
+              );
+            })}
+            {!slackChannelsLoading && filteredSlackChannels.length === 0 ? (
+              <div className="px-2 py-2 text-xs text-muted-foreground">No matching channels.</div>
+            ) : null}
+          </div>
+        </>
+      )}
+    </>
+  );
 
   const recentAssigneeIds = useMemo(() => getRecentAssigneeIds(), [assigneeOpen]);
   const sortedAgents = useMemo(
@@ -2283,6 +2406,74 @@ export function IssueProperties({
             {watchdogContent}
           </PropertyPicker>
         ) : null}
+      </PropertySection>
+
+      <PropertySection title="Completion">
+        {canManageCompletionDestination ? (
+          <PropertyPicker
+            inline={inline}
+            label="Destination"
+            open={completionOpen}
+            onOpenChange={(open) => {
+              setCompletionOpen(open);
+              if (!open) setCompletionSearch("");
+            }}
+            triggerContent={completionDestinationTrigger}
+            triggerClassName="min-w-0 max-w-full"
+            popoverClassName={cn("max-w-full", inline ? "w-full" : "w-72")}
+          >
+            {completionDestinationContent}
+          </PropertyPicker>
+        ) : (
+          <PropertyRow label="Destination">
+            {completionDestination ? (
+              <PropertyChip>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <Hash className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{completionDestinationLabel}</span>
+                </span>
+              </PropertyChip>
+            ) : (
+              <span className="text-sm text-muted-foreground">No delivery</span>
+            )}
+          </PropertyRow>
+        )}
+
+        <PropertyRow label="Delivery">
+          {completionDelivery ? (
+            <div className="flex min-w-0 flex-col items-start gap-1">
+              <PropertyChip className={cn("border-transparent", completionDeliveryStatusTone(completionDelivery))}>
+                {completionStatusLabel}
+              </PropertyChip>
+              {completionDelivery.deliveredAt ? (
+                <span className="text-xs text-muted-foreground">
+                  Delivered {formatDateTime(completionDelivery.deliveredAt)}
+                </span>
+              ) : null}
+              {!completionDelivery.deliveredAt
+                && completionDelivery.status === "pending"
+                && completionDelivery.nextAttemptAt ? (
+                  <span className="text-xs text-muted-foreground">
+                    Retry scheduled {formatDateTime(completionDelivery.nextAttemptAt)}
+                  </span>
+                ) : null}
+              {completionDelivery.attemptCount > 0 ? (
+                <span className="text-xs text-muted-foreground">
+                  {completionDelivery.attemptCount === 1
+                    ? "1 attempt"
+                    : `${completionDelivery.attemptCount} attempts`}
+                </span>
+              ) : null}
+              {completionDelivery.lastError ? (
+                <span className="text-xs text-destructive">{completionDelivery.lastError}</span>
+              ) : null}
+            </div>
+          ) : (
+            <span className="text-sm text-muted-foreground">
+              {completionDestination ? "No deliveries yet" : "Not configured"}
+            </span>
+          )}
+        </PropertyRow>
       </PropertySection>
 
       {hasWorkspaceRuntimeControls || issue.currentExecutionWorkspace?.branchName || issue.currentExecutionWorkspace?.cwd || issue.executionWorkspaceId ? (

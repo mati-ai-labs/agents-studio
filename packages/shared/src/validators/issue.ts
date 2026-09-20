@@ -241,6 +241,42 @@ export const issueExecutionStateSchema = z.object({
   monitor: issueExecutionMonitorStateSchema.optional().nullable(),
 });
 
+export const issueSlackCompletionDestinationSchema = z.object({
+  kind: z.literal("slack"),
+  channelId: z.string().trim().min(1).max(64),
+  channelName: z.string().trim().min(1).max(120),
+}).strict();
+
+export const issueCompletionDestinationSchema = z.discriminatedUnion("kind", [
+  issueSlackCompletionDestinationSchema,
+]);
+
+export const issueCompletionDeliveryStatusSchema = z.enum([
+  "pending",
+  "sending",
+  "sent",
+  "failed",
+  "superseded",
+]);
+
+export const issueCompletionDeliverySummarySchema = z.object({
+  id: z.string().uuid(),
+  companyId: z.string().uuid(),
+  issueId: z.string().uuid(),
+  sourceActivityId: z.string().uuid(),
+  status: issueCompletionDeliveryStatusSchema,
+  destination: issueCompletionDestinationSchema,
+  attemptCount: z.number().int().nonnegative(),
+  nextAttemptAt: z.union([z.date(), z.string().datetime()]).nullable(),
+  lastAttemptAt: z.union([z.date(), z.string().datetime()]).nullable(),
+  deliveredAt: z.union([z.date(), z.string().datetime()]).nullable(),
+  lastError: z.string().nullable(),
+  providerMessageId: z.string().nullable(),
+  completedAt: z.union([z.date(), z.string().datetime()]).nullable(),
+  createdAt: z.union([z.date(), z.string().datetime()]),
+  updatedAt: z.union([z.date(), z.string().datetime()]),
+});
+
 export const issueRecoveryActionReadModelSchema = z.object({
   id: z.string().uuid(),
   companyId: z.string().uuid(),
@@ -394,6 +430,7 @@ const createIssueBaseSchema = z.object({
   createdByUserId: z.string().optional().nullable(),
   responsibleUserId: z.string().optional().nullable(),
   billingCode: z.string().optional().nullable(),
+  completionDestination: issueCompletionDestinationSchema.optional().nullable(),
   assigneeAdapterOverrides: issueAssigneeAdapterOverridesSchema.optional().nullable(),
   executionPolicy: issueExecutionPolicySchema.optional().nullable(),
   executionWorkspaceId: z.string().uuid().optional().nullable(),

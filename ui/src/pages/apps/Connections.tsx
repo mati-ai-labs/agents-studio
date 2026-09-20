@@ -28,6 +28,7 @@ import {
 } from "./app-definition-display";
 import { useReviewCount } from "./useReviewCount";
 import { AdvancedToolsLink } from "./store-cards";
+import { Connectors } from "../Connectors";
 
 const BROWSE_HREF = "/apps/browse";
 
@@ -194,7 +195,7 @@ export function Connections() {
   const loading = applicationsQuery.isLoading || connectionsQuery.isLoading || galleryQuery.isLoading;
 
   return (
-    <div className="max-w-5xl">
+    <div className="max-w-5xl space-y-10">
       {loading ? (
         <div className="space-y-3">
           <Skeleton className="h-8 w-40" />
@@ -368,6 +369,10 @@ export function Connections() {
           </div>
         </div>
       )}
+
+      <section className="border-t border-border pt-8">
+        <Connectors embedded />
+      </section>
     </div>
   );
 }

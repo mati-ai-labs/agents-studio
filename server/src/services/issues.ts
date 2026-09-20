@@ -40,6 +40,7 @@ import type {
   AcceptedPlanDecomposition,
   IssueComment,
   IssueCommentAuthorType,
+  IssueCompletionDeliverySummary,
   IssueCommentDerivedAuthorSource,
   IssueCommentMetadata,
   IssueCommentPresentation,
@@ -108,6 +109,7 @@ import {
 import { classifyIssueGraphLiveness, type IssueLivenessFinding } from "./recovery/issue-graph-liveness.js";
 import { visibleIssueCondition } from "./issue-visibility.js";
 import { finalizeSummarySlotsForTerminalIssue } from "./summary-slot-finalization.js";
+import { issueCompletionDeliveryService } from "./issue-completion-deliveries.js";
 
 const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
 const MAX_ISSUE_COMMENT_PAGE_LIMIT = 500;
@@ -544,6 +546,7 @@ type IssueScheduledRetryRow = {
 type IssueWithLabels = IssueRow & {
   labels: IssueLabelRow[];
   labelIds: string[];
+  latestCompletionDelivery?: IssueCompletionDeliverySummary | null;
   watchdog?: IssueWatchdogSummary | null;
 };
 type IssueWithLabelsAndRun = IssueWithLabels & { activeRun: IssueActiveRunRow | null };
@@ -1620,8 +1623,9 @@ async function labelMapForIssues(dbOrTx: any, issueIds: string[]): Promise<Map<s
 async function withIssueLabels(dbOrTx: any, rows: IssueRow[]): Promise<IssueWithLabels[]> {
   if (rows.length === 0) return [];
   const issueIds = rows.map((row) => row.id);
-  const [labelsByIssueId, watchdogByIssueId] = await Promise.all([
+  const [labelsByIssueId, latestCompletionDeliveryByIssueId, watchdogByIssueId] = await Promise.all([
     labelMapForIssues(dbOrTx, issueIds),
+    issueCompletionDeliveryService(dbOrTx as Db).getLatestByIssueIds(issueIds),
     watchdogMapForIssues(dbOrTx, rows),
   ]);
   return rows.map((row) => {
@@ -1630,6 +1634,7 @@ async function withIssueLabels(dbOrTx: any, rows: IssueRow[]): Promise<IssueWith
       ...row,
       labels: issueLabels,
       labelIds: issueLabels.map((label) => label.id),
+      latestCompletionDelivery: latestCompletionDeliveryByIssueId.get(row.id) ?? null,
       watchdog: watchdogByIssueId.get(row.id) ?? null,
     };
   });
@@ -2539,6 +2544,7 @@ const issueListSelect = {
   originFingerprint: issues.originFingerprint,
   requestDepth: issues.requestDepth,
   billingCode: issues.billingCode,
+  completionDestination: issues.completionDestination,
   assigneeAdapterOverrides: issues.assigneeAdapterOverrides,
   executionPolicy: sql<null>`null`,
   executionState: sql<null>`null`,

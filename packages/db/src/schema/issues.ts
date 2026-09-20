@@ -17,7 +17,10 @@ import { companies } from "./companies.js";
 import { heartbeatRuns } from "./heartbeat_runs.js";
 import { projectWorkspaces } from "./project_workspaces.js";
 import { executionWorkspaces } from "./execution_workspaces.js";
-import type { SourceTrustMetadata } from "@paperclipai/shared";
+import type {
+  IssueCompletionDestination,
+  SourceTrustMetadata,
+} from "@paperclipai/shared";
 
 export const issues = pgTable(
   "issues",
@@ -51,6 +54,7 @@ export const issues = pgTable(
     originFingerprint: text("origin_fingerprint").notNull().default("default"),
     requestDepth: integer("request_depth").notNull().default(0),
     billingCode: text("billing_code"),
+    completionDestination: jsonb("completion_destination").$type<IssueCompletionDestination | null>(),
     assigneeAdapterOverrides: jsonb("assignee_adapter_overrides").$type<Record<string, unknown>>(),
     executionPolicy: jsonb("execution_policy").$type<Record<string, unknown>>(),
     executionState: jsonb("execution_state").$type<Record<string, unknown>>(),
