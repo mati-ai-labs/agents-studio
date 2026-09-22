@@ -125,6 +125,7 @@ export type RoutineDetailContextValue = {
   updateTrigger: UseMutationResult<unknown, unknown, { id: string; patch: Record<string, unknown> }, unknown>;
   deleteTrigger: UseMutationResult<unknown, unknown, string, unknown>;
   rotateTrigger: UseMutationResult<RotateRoutineTriggerResponse, unknown, string, unknown>;
+  connectTrigger: (id: string) => Promise<RotateRoutineTriggerResponse>;
 
   // secrets
   secretMessage: SecretMessage | null;

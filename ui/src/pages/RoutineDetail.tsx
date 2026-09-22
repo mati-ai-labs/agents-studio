@@ -565,6 +565,24 @@ export function RoutineDetail() {
     },
   });
 
+  const connectTrigger = useCallback(async (id: string): Promise<RotateRoutineTriggerResponse> => {
+    try {
+      const result = await routinesApi.rotateTriggerSecret(id);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.routines.detail(routineId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.routines.activity(selectedCompanyId!, routineId!) }),
+      ]);
+      return result;
+    } catch (triggerError) {
+      pushToast({
+        title: "Failed to prepare agent connection",
+        body: triggerError instanceof Error ? triggerError.message : "Paperclip could not create a connection token.",
+        tone: "error",
+      });
+      throw triggerError;
+    }
+  }, [pushToast, queryClient, routineId, selectedCompanyId]);
+
   const agentById = useMemo(() => new Map((agents ?? []).map((agent) => [agent.id, agent])), [agents]);
   const projectById = useMemo(() => new Map((projects ?? []).map((project) => [project.id, project])), [projects]);
   const recentAssigneeIds = useMemo(() => getRecentAssigneeIds(), [routine?.id]);
@@ -758,6 +776,7 @@ export function RoutineDetail() {
     updateTrigger,
     deleteTrigger,
     rotateTrigger,
+    connectTrigger,
     secretMessage,
     setSecretMessage,
     copySecretValue,
