@@ -163,6 +163,24 @@ export function rewritePreviewHtml(html: string, slug: string): string {
   );
 }
 
+/**
+ * Vite (and most dev bundlers) emit absolute root-relative imports inside
+ * JavaScript and CSS responses, not only in the HTML shell. Those imports
+ * must stay inside the lease prefix or the browser requests them from the
+ * Paperclip root and receives the control-plane HTML document instead.
+ */
+export function rewritePreviewModuleReferences(source: string, slug: string): string {
+  const prefix = previewPathPrefix(slug);
+  let rewritten = source.replace(
+    /(["'`])\/(?!\/|preview\/)/g,
+    (_match, quote: string) => `${quote}${prefix}/`,
+  );
+  return rewritten.replace(
+    /(url\(\s*["']?)\/(?!\/|preview\/)/gi,
+    (_match, start: string) => `${start}${prefix}/`,
+  );
+}
+
 function getSetCookies(headers: Headers): string[] {
   const withAccessor = headers as Headers & { getSetCookie?: () => string[] };
   if (typeof withAccessor.getSetCookie === "function") return withAccessor.getSetCookie();
@@ -251,7 +269,12 @@ export async function proxyPreviewHttp(
   }
 
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-  const rewriteBody = contentType.includes("text/html");
+  const rewriteHtml = contentType.includes("text/html");
+  const rewriteModule =
+    contentType.includes("javascript") ||
+    contentType.includes("ecmascript") ||
+    contentType.includes("text/css");
+  const rewriteBody = rewriteHtml || rewriteModule;
   res.status(response.status);
   res.setHeader("Cache-Control", "no-store");
   copyPreviewResponseHeaders(response, res, target.slug, targetOrigin, rewriteBody);
@@ -261,9 +284,15 @@ export async function proxyPreviewHttp(
     return;
   }
 
-  if (rewriteBody) {
+  if (rewriteHtml) {
     const html = await response.text();
     res.end(rewritePreviewHtml(html, target.slug));
+    return;
+  }
+
+  if (rewriteModule) {
+    const source = await response.text();
+    res.end(rewritePreviewModuleReferences(source, target.slug));
     return;
   }
 
