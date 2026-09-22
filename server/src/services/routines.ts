@@ -50,6 +50,7 @@ import {
   getBuiltinRoutineVariableValues,
   extractRoutineVariableNames,
   interpolateRoutineTemplate,
+  isUuidLike,
   isValidRoutineDateString,
   pluginOperationIssueOriginKind,
   stringifyRoutineVariableValue,
@@ -75,6 +76,7 @@ import {
 } from "./instance-settings.js";
 import { queueIssueAssignmentWakeup, type IssueAssignmentWakeupDeps } from "./issue-assignment-wakeup.js";
 import { logActivity } from "./activity-log.js";
+import { enqueueRoutineResultDelivery } from "./routine-result-deliveries.js";
 import type { PluginWorkerManager } from "./plugin-worker-manager.js";
 
 const OPEN_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked"];
@@ -1018,6 +1020,7 @@ export function routineService(
         dispatchFingerprint: routineRuns.dispatchFingerprint,
         routineRevisionId: routineRuns.routineRevisionId,
         linkedIssueId: routineRuns.linkedIssueId,
+        callbackIssueId: routineRuns.callbackIssueId,
         coalescedIntoRunId: routineRuns.coalescedIntoRunId,
         failureReason: routineRuns.failureReason,
         completedAt: routineRuns.completedAt,
@@ -1052,6 +1055,7 @@ export function routineService(
         dispatchFingerprint: row.dispatchFingerprint,
         routineRevisionId: row.routineRevisionId,
         linkedIssueId: row.linkedIssueId,
+        callbackIssueId: row.callbackIssueId,
         coalescedIntoRunId: row.coalescedIntoRunId,
         failureReason: row.failureReason,
         completedAt: row.completedAt,
@@ -1623,6 +1627,7 @@ export function routineService(
     executionWorkspaceSettings?: Record<string, unknown> | null;
     descriptionAppendix?: string | null;
     nextRunAtOverride?: Date | null;
+    callbackIssueId?: string | null;
     actor?: Actor;
   }) {
     const projectId = input.projectId ?? input.routine.projectId ?? null;
@@ -1744,6 +1749,7 @@ export function routineService(
           dispatchFingerprint,
           routineRevisionId: input.routine.latestRevisionId,
           responsibleUserId,
+          callbackIssueId: input.callbackIssueId ?? null,
         })
         .returning();
 
@@ -2000,6 +2006,7 @@ export function routineService(
             dispatchFingerprint: routineRuns.dispatchFingerprint,
             routineRevisionId: routineRuns.routineRevisionId,
             linkedIssueId: routineRuns.linkedIssueId,
+            callbackIssueId: routineRuns.callbackIssueId,
             coalescedIntoRunId: routineRuns.coalescedIntoRunId,
             failureReason: routineRuns.failureReason,
             completedAt: routineRuns.completedAt,
@@ -2856,6 +2863,24 @@ export function routineService(
         });
       }
 
+      // source_issue_id is control-plane routing metadata, not a routine
+      // template variable. Keeping it outside `variables` lets an agent start
+      // independent work without creating an issue-tree handoff.
+      const sourceIssueIdRaw = input.payload?.source_issue_id;
+      let callbackIssueId: string | null = null;
+      if (sourceIssueIdRaw !== undefined) {
+        if (typeof sourceIssueIdRaw !== "string" || !isUuidLike(sourceIssueIdRaw.trim())) {
+          throw unprocessable("source_issue_id must be a valid issue ID");
+        }
+        callbackIssueId = sourceIssueIdRaw.trim();
+        const sourceIssue = await db
+          .select({ id: issues.id })
+          .from(issues)
+          .where(and(eq(issues.id, callbackIssueId), eq(issues.companyId, routine.companyId)))
+          .then((rows) => rows[0] ?? null);
+        if (!sourceIssue) throw notFound("Source issue not found");
+      }
+
       return dispatchRoutineRun({
         routine,
         trigger,
@@ -2865,6 +2890,7 @@ export function routineService(
           ? input.payload.variables
           : null,
         idempotencyKey: input.idempotencyKey,
+        callbackIssueId,
       });
     },
 
@@ -2884,6 +2910,7 @@ export function routineService(
           dispatchFingerprint: routineRuns.dispatchFingerprint,
           routineRevisionId: routineRuns.routineRevisionId,
           linkedIssueId: routineRuns.linkedIssueId,
+          callbackIssueId: routineRuns.callbackIssueId,
           coalescedIntoRunId: routineRuns.coalescedIntoRunId,
           failureReason: routineRuns.failureReason,
           completedAt: routineRuns.completedAt,
@@ -2917,6 +2944,7 @@ export function routineService(
         dispatchFingerprint: row.dispatchFingerprint,
         routineRevisionId: row.routineRevisionId,
         linkedIssueId: row.linkedIssueId,
+        callbackIssueId: row.callbackIssueId,
         coalescedIntoRunId: row.coalescedIntoRunId,
         failureReason: row.failureReason,
         completedAt: row.completedAt,
@@ -3074,17 +3102,31 @@ export function routineService(
         .then((rows) => rows[0] ?? null);
       if (!issue || issue.originKind !== "routine_execution" || !issue.originRunId) return null;
       if (issue.status === "done") {
-        return finalizeRun(issue.originRunId, {
+        const run = await finalizeRun(issue.originRunId, {
           status: "completed",
           completedAt: new Date(),
         });
+        if (run) {
+          await enqueueRoutineResultDelivery(db, {
+            routineRunId: run.id,
+            executionIssueId: issue.id,
+          });
+        }
+        return run;
       }
       if (issue.status === "blocked" || issue.status === "cancelled") {
-        return finalizeRun(issue.originRunId, {
+        const run = await finalizeRun(issue.originRunId, {
           status: "failed",
           failureReason: `Execution issue moved to ${issue.status}`,
           completedAt: new Date(),
         });
+        if (run) {
+          await enqueueRoutineResultDelivery(db, {
+            routineRunId: run.id,
+            executionIssueId: issue.id,
+          });
+        }
+        return run;
       }
       return null;
     },

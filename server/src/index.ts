@@ -44,6 +44,7 @@ import {
   environmentCustomImageService,
   heartbeatService,
   issueCompletionDeliveryService,
+  routineResultDeliveryService,
   instanceSettingsService,
   reconcileBuiltInAgentsOnStartup,
   reconcileCloudUpstreamRunsOnStartup,
@@ -854,6 +855,7 @@ export async function startServer(): Promise<StartedServer> {
     prepareHotRestartShutdown = heartbeat.prepareHotRestartShutdown;
     const environmentCustomImages = environmentCustomImageService(db as any, { pluginWorkerManager });
     const issueCompletionDeliveries = issueCompletionDeliveryService(db as any);
+    const routineResultDeliveries = routineResultDeliveryService(db as any, storageService);
     const routines = routineService(db as any, { pluginWorkerManager });
     const tools = toolAccessService(db as any, {
       deploymentMode: config.deploymentMode,
@@ -990,6 +992,14 @@ export async function startServer(): Promise<StartedServer> {
       );
     }
 
+    const startupRoutineResultDeliveries = await routineResultDeliveries.processDueDeliveries();
+    if (startupRoutineResultDeliveries.claimed > 0) {
+      logger.info(
+        { ...startupRoutineResultDeliveries },
+        "startup routine result relay sweep processed queued callbacks",
+      );
+    }
+
     heartbeatSchedulerInterval = setInterval(() => {
       // Async so the suppression checks below can honor the override-aware
       // resolver (e.g. worktree run-execution opt-in). The gated work is still
@@ -1066,6 +1076,21 @@ export async function startServer(): Promise<StartedServer> {
           })
           .catch((err) => {
             logger.error({ err }, "periodic issue completion delivery sweep failed");
+          }));
+
+        if (heartbeatSchedulerStopped) return;
+        trackHeartbeatSchedulerWork(routineResultDeliveries
+          .processDueDeliveries()
+          .then((deliveries) => {
+            if (deliveries.claimed > 0) {
+              logger.info(
+                { ...deliveries },
+                "periodic routine result relay sweep processed queued callbacks",
+              );
+            }
+          })
+          .catch((err) => {
+            logger.error({ err }, "periodic routine result relay sweep failed");
           }));
 
         if (heartbeatSchedulerStopped) return;

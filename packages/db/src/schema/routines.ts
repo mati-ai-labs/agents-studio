@@ -154,6 +154,7 @@ export const routineRuns = pgTable(
     triggerPayload: jsonb("trigger_payload").$type<Record<string, unknown>>(),
     dispatchFingerprint: text("dispatch_fingerprint"),
     linkedIssueId: uuid("linked_issue_id").references(() => issues.id, { onDelete: "set null" }),
+    callbackIssueId: uuid("callback_issue_id").references(() => issues.id, { onDelete: "set null" }),
     coalescedIntoRunId: uuid("coalesced_into_run_id"),
     failureReason: text("failure_reason"),
     completedAt: timestamp("completed_at", { withTimezone: true }),
@@ -171,6 +172,7 @@ export const routineRuns = pgTable(
     triggerIdx: index("routine_runs_trigger_idx").on(table.triggerId, table.createdAt),
     dispatchFingerprintIdx: index("routine_runs_dispatch_fingerprint_idx").on(table.routineId, table.dispatchFingerprint),
     linkedIssueIdx: index("routine_runs_linked_issue_idx").on(table.linkedIssueId),
+    callbackIssueIdx: index("routine_runs_callback_issue_idx").on(table.callbackIssueId),
     idempotencyIdx: index("routine_runs_trigger_idempotency_idx").on(table.triggerId, table.idempotencyKey),
   }),
 );

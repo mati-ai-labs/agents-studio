@@ -205,6 +205,8 @@ export interface RoutineRun {
   triggerPayload: Record<string, unknown> | null;
   dispatchFingerprint: string | null;
   linkedIssueId: string | null;
+  /** The issue supplied as source_issue_id to a webhook-triggered routine. */
+  callbackIssueId?: string | null;
   coalescedIntoRunId: string | null;
   failureReason: string | null;
   completedAt: Date | null;

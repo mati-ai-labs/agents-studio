@@ -1,9 +1,11 @@
 import { createHmac, randomUUID } from "node:crypto";
+import { Readable } from "node:stream";
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   activityLog,
   agents,
+  assets,
   companies,
   companySecretBindings,
   companySecrets,
@@ -16,10 +18,13 @@ import {
   heartbeatRuns,
   instanceSettings,
   issueInboxArchives,
+  issueAttachments,
+  issueComments,
   issueReadStates,
   issues,
   projectWorkspaces,
   projects,
+  routineResultDeliveries,
   routineDocuments,
   routineRuns,
   routines,
@@ -34,6 +39,7 @@ import { issueService } from "../services/issues.ts";
 import { instanceSettingsService } from "../services/instance-settings.ts";
 import * as providerRegistry from "../secrets/provider-registry.ts";
 import { routineService } from "../services/routines.ts";
+import { routineResultDeliveryService } from "../services/routine-result-deliveries.ts";
 import { secretService } from "../services/secrets.ts";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
@@ -64,8 +70,12 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
     await db.delete(activityLog);
     await db.delete(issueInboxArchives);
     await db.delete(issueReadStates);
+    await db.delete(issueAttachments);
+    await db.delete(assets);
+    await db.delete(issueComments);
     await db.delete(secretAccessEvents);
     await db.delete(companySecretBindings);
+    await db.delete(routineResultDeliveries);
     await db.delete(routineRuns);
     await db.delete(routineTriggers);
     await db.delete(routines);
@@ -2030,6 +2040,129 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
 
     expect(run.source).toBe("webhook");
     expect(run.status).toBe("issue_created");
+  });
+
+  it("keeps a webhook execution independent and queues its result relay to source_issue_id", async () => {
+    const { companyId, issueSvc, projectId, routine, svc } = await seedFixture();
+    const sourceIssue = await issueSvc.create(companyId, {
+      projectId,
+      title: "Find an acquisition target",
+      status: "todo",
+      priority: "medium",
+    });
+    const { trigger } = await svc.createTrigger(
+      routine.id,
+      { kind: "webhook", signingMode: "none" },
+      {},
+    );
+
+    const run = await svc.firePublicTrigger(trigger.publicId!, {
+      payload: {
+        source_issue_id: sourceIssue.id,
+        micro_niche: "Freight bill audit",
+        source_data_pack: "Seed research",
+      },
+    });
+
+    expect(run.callbackIssueId).toBe(sourceIssue.id);
+    expect(run.linkedIssueId).toBeTruthy();
+    const executionIssue = await db
+      .select({ id: issues.id, parentId: issues.parentId })
+      .from(issues)
+      .where(eq(issues.id, run.linkedIssueId!))
+      .then((rows) => rows[0] ?? null);
+    expect(executionIssue?.parentId).toBeNull();
+
+    await db.update(issues).set({ status: "done" }).where(eq(issues.id, executionIssue!.id));
+    await svc.syncRunStatusForIssue(executionIssue!.id);
+
+    const delivery = await db
+      .select()
+      .from(routineResultDeliveries)
+      .where(eq(routineResultDeliveries.routineRunId, run.id))
+      .then((rows) => rows[0] ?? null);
+    expect(delivery).toMatchObject({
+      sourceIssueId: sourceIssue.id,
+      executionIssueId: executionIssue!.id,
+      status: "pending",
+    });
+  });
+
+  it("copies the final output and artifacts from a completed webhook routine to its source issue", async () => {
+    const { companyId, issueSvc, projectId, routine, svc } = await seedFixture();
+    const sourceIssue = await issueSvc.create(companyId, {
+      projectId,
+      title: "Research request",
+      status: "todo",
+      priority: "medium",
+    });
+    const { trigger } = await svc.createTrigger(routine.id, { kind: "webhook", signingMode: "none" }, {});
+    const run = await svc.firePublicTrigger(trigger.publicId!, {
+      payload: { source_issue_id: sourceIssue.id },
+    });
+    const executionIssueId = run.linkedIssueId!;
+    await issueSvc.addComment(executionIssueId, "## Final research\n\nThe market is attractive.", {});
+    const sourceAssetId = randomUUID();
+    await db.insert(assets).values({
+      id: sourceAssetId,
+      companyId,
+      provider: "local_disk",
+      objectKey: `${companyId}/routine-output/report.json`,
+      contentType: "application/json",
+      byteSize: 15,
+      sha256: "a".repeat(64),
+      originalFilename: "report.json",
+    });
+    await db.insert(issueAttachments).values({
+      companyId,
+      issueId: executionIssueId,
+      assetId: sourceAssetId,
+    });
+    await db.update(issues).set({ status: "done" }).where(eq(issues.id, executionIssueId));
+    await svc.syncRunStatusForIssue(executionIssueId);
+
+    const writtenFiles = new Map<string, Buffer>();
+    const storage = {
+      provider: "local_disk" as const,
+      getObject: async (_companyId: string, objectKey: string) => ({
+        stream: Readable.from([objectKey.endsWith("report.json") ? Buffer.from('{"result":"ok"}') : Buffer.alloc(0)]),
+      }),
+      putFile: async (input: { companyId: string; originalFilename: string | null; contentType: string; body: Buffer }) => {
+        const objectKey = `${input.companyId}/routine-result-deliveries/copied-${randomUUID()}`;
+        writtenFiles.set(objectKey, input.body);
+        return {
+          provider: "local_disk" as const,
+          objectKey,
+          contentType: input.contentType,
+          byteSize: input.body.length,
+          sha256: "b".repeat(64),
+          originalFilename: input.originalFilename,
+        };
+      },
+      headObject: async () => ({ exists: false }),
+      deleteObject: async () => undefined,
+    };
+
+    const processed = await routineResultDeliveryService(db, storage).processDueDeliveries();
+    expect(processed).toMatchObject({ claimed: 1, sent: 1, retried: 0, failed: 0 });
+    expect(writtenFiles.size).toBe(1);
+
+    const [sourceComment, sourceAttachment] = await Promise.all([
+      db
+        .select({ body: issueComments.body })
+        .from(issueComments)
+        .where(eq(issueComments.issueId, sourceIssue.id))
+        .then((rows) => rows[0] ?? null),
+      db
+        .select({ objectKey: assets.objectKey, issueCommentId: issueAttachments.issueCommentId })
+        .from(issueAttachments)
+        .innerJoin(assets, eq(issueAttachments.assetId, assets.id))
+        .where(eq(issueAttachments.issueId, sourceIssue.id))
+        .then((rows) => rows[0] ?? null),
+    ]);
+    expect(sourceComment?.body).toContain("The market is attractive.");
+    expect(sourceAttachment?.objectKey).toContain("routine-result-deliveries/");
+    expect(sourceAttachment?.issueCommentId).toBeTruthy();
   });
 
   it("records suppressed automatic runs when worktree execution is disabled while allowing manual runs", async () => {
