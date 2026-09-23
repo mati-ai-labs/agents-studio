@@ -59,7 +59,6 @@ import {
   projects,
   projectWorkspaces,
   routineRevisions,
-  routineResultDeliveries,
   routineRuns,
   routines,
   toolMcpGateways,
@@ -90,6 +89,7 @@ import { costService } from "./costs.js";
 import { trackAgentFirstHeartbeat } from "@paperclipai/shared/telemetry";
 import { getTelemetryClient } from "../telemetry.js";
 import { companySkillService } from "./company-skills.js";
+import { hasActiveRoutineContinuation } from "./routine-continuation-guard.js";
 import { budgetService, type BudgetEnforcementScope } from "./budgets.js";
 import { secretService, type MissingRuntimeBinding } from "./secrets.js";
 import { resolveDefaultAgentWorkspaceDir, resolveManagedProjectWorkspaceDir } from "../home-paths.js";
@@ -8136,26 +8136,11 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         ? treeControlSvc.getActivePauseHoldGate(issue.companyId, issue.id)
         : Promise.resolve(null),
       issue
-        ? db
-          .select({ id: routineRuns.id })
-          .from(routineRuns)
-          .leftJoin(
-            routineResultDeliveries,
-            eq(routineResultDeliveries.routineRunId, routineRuns.id),
-          )
-          .where(
-            and(
-              eq(routineRuns.companyId, issue.companyId),
-              eq(routineRuns.callbackIssueId, issue.id),
-              or(
-                inArray(routineRuns.status, ["received", "issue_created"]),
-                inArray(routineResultDeliveries.status, ["pending", "sending"]),
-              ),
-            ),
-          )
-          .limit(1)
-          .then((rows) => rows[0] ?? null)
-        : Promise.resolve(null),
+        ? hasActiveRoutineContinuation(db, {
+          companyId: issue.companyId,
+          issueId: issue.id,
+        })
+        : Promise.resolve(false),
     ]);
 
     const decision = decideSuccessfulRunHandoff({
@@ -8172,7 +8157,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       hasExplicitBlockerPath: Boolean(explicitBlocker),
       hasOpenRecoveryIssue: Boolean(openRecoveryIssue),
       hasPauseHold: Boolean(pauseHold),
-      hasActiveRoutineContinuation: Boolean(activeRoutineContinuation),
+      hasActiveRoutineContinuation: activeRoutineContinuation,
       budgetBlocked: Boolean(budgetBlock),
       idempotentWakeExists: Boolean(existingWake),
     });
@@ -15233,6 +15218,13 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       }
 
       if (await isAutomaticRecoverySuppressedByPauseHold(db, issue.companyId, issue.id, treeControlSvc)) {
+        return { kind: "released" as const };
+      }
+
+      if (await hasActiveRoutineContinuation(db, {
+        companyId: issue.companyId,
+        issueId: issue.id,
+      })) {
         return { kind: "released" as const };
       }
 

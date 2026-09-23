@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, gte, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { clampIssueRequestDepth } from "@paperclipai/shared";
 import {
@@ -10,8 +10,6 @@ import {
   issueComments,
   issues,
   projects,
-  routineResultDeliveries,
-  routineRuns,
 } from "@paperclipai/db";
 import { logger } from "../middleware/logger.js";
 import { logActivity } from "./activity-log.js";
@@ -23,6 +21,7 @@ import {
   withRecoveryModelProfileHint,
 } from "./recovery/model-profile-hint.js";
 import { RECOVERY_ORIGIN_KINDS } from "./recovery/origins.js";
+import { listActiveRoutineContinuationIssueIds } from "./routine-continuation-guard.js";
 
 export const PRODUCTIVITY_REVIEW_ORIGIN_KIND = RECOVERY_ORIGIN_KINDS.issueProductivityReview;
 export const DEFAULT_PRODUCTIVITY_REVIEW_NO_COMMENT_STREAK_RUNS = 10;
@@ -854,27 +853,9 @@ export function productivityReviewService(db: Db, deps?: { enqueueWakeup?: Enque
     // A source issue waiting on an independently executing routine is not
     // stalled. Suppress productivity-review escalation until the routine has
     // completed and its durable callback delivery has finished.
-    const activeRoutineCallbackRows = candidates.length === 0
-      ? []
-      : await db
-        .select({ callbackIssueId: routineRuns.callbackIssueId })
-        .from(routineRuns)
-        .leftJoin(
-          routineResultDeliveries,
-          eq(routineResultDeliveries.routineRunId, routineRuns.id),
-        )
-        .where(and(
-          inArray(routineRuns.callbackIssueId, candidates.map((candidate) => candidate.id)),
-          or(
-            inArray(routineRuns.status, ["received", "issue_created"]),
-            inArray(routineResultDeliveries.status, ["pending", "sending"]),
-          ),
-        ));
-    const activeRoutineCallbackIssueIds = new Set(
-      activeRoutineCallbackRows
-        .map((row) => row.callbackIssueId)
-        .filter((issueId): issueId is string => Boolean(issueId)),
-    );
+    const activeRoutineCallbackIssueIds = await listActiveRoutineContinuationIssueIds(db, {
+      issueIds: candidates.map((candidate) => candidate.id),
+    });
 
     const result = {
       scanned: candidates.length,
