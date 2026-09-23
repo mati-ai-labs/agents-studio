@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildOpenCodeModelProfiles, DEFAULT_OPENCODE_CHEAP_MODEL } from "./index.js";
 
 describe("buildOpenCodeModelProfiles cheap lane", () => {
-  it("defaults to the upstream Codex mini model with variant low", () => {
+  it("defaults to the deployed OpenCode model with variant low", () => {
     const [cheap] = buildOpenCodeModelProfiles({});
     expect(cheap.key).toBe("cheap");
     expect(cheap.adapterConfig).toEqual({ model: DEFAULT_OPENCODE_CHEAP_MODEL, variant: "low" });

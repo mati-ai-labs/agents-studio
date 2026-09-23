@@ -45,6 +45,7 @@ export const SANDBOX_INSTALL_COMMAND =
   'fi';
 
 export const DEFAULT_OPENCODE_LOCAL_MODEL = "opencode-go/deepseek-v4-flash";
+export const DEFAULT_OPENCODE_CHEAP_MODEL = DEFAULT_OPENCODE_LOCAL_MODEL;
 
 export function isValidOpenCodeModelId(value: unknown): value is string {
   if (typeof value !== "string") return false;
@@ -83,18 +84,25 @@ export const models: Array<{ id: string; label: string }> = [
   { id: "opencode-go/qwen3.8-max", label: "opencode-go/qwen3.8-max" },
 ];
 
-export const modelProfiles: AdapterModelProfileDefinition[] = [
-  {
-    key: "cheap",
-    label: "Cheap",
-    description: "Use the deployed OpenCode deepseek-v4-flash model as the budget lane.",
-    adapterConfig: {
-      model: DEFAULT_OPENCODE_LOCAL_MODEL,
-      variant: "low",
+export function buildOpenCodeModelProfiles(
+  env: NodeJS.ProcessEnv = typeof process === "undefined" ? {} : process.env,
+): AdapterModelProfileDefinition[] {
+  const override = (env.PAPERCLIP_OPENCODE_CHEAP_MODEL ?? env.PAPERCLIP_OPENCODE_SMALL_MODEL)?.trim();
+
+  return [
+    {
+      key: "cheap",
+      label: "Cheap",
+      description: "Use the deployed OpenCode model as the budget lane.",
+      adapterConfig: override
+        ? { model: override }
+        : { model: DEFAULT_OPENCODE_CHEAP_MODEL, variant: "low" },
+      source: "adapter_default",
     },
-    source: "adapter_default",
-  },
-];
+  ];
+}
+
+export const modelProfiles: AdapterModelProfileDefinition[] = buildOpenCodeModelProfiles();
 
 export const agentConfigurationDoc = `# opencode_local agent configuration
 

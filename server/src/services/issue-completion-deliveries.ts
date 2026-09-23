@@ -306,12 +306,15 @@ export function issueCompletionDeliveryService(db: Db) {
 
     for (const chunkStart of Array.from({ length: Math.ceil(uniqueIssueIds.length / 200) }, (_, index) => index * 200)) {
       const issueIdChunk = uniqueIssueIds.slice(chunkStart, chunkStart + 200);
-      const rows = Array.from(await db.execute(sql<IssueCompletionDeliveryRow>`
-        select distinct on (issue_id) *
-        from issue_completion_deliveries
-        where issue_id in (${sql.join(issueIdChunk.map((issueId) => sql`${issueId}::uuid`), sql`, `)})
-        order by issue_id, created_at desc, id desc
-      `));
+      const rows = await db
+        .selectDistinctOn([issueCompletionDeliveries.issueId])
+        .from(issueCompletionDeliveries)
+        .where(inArray(issueCompletionDeliveries.issueId, issueIdChunk))
+        .orderBy(
+          issueCompletionDeliveries.issueId,
+          desc(issueCompletionDeliveries.createdAt),
+          desc(issueCompletionDeliveries.id),
+        );
       for (const row of rows) {
         map.set(row.issueId, summarizeIssueCompletionDelivery(row));
       }
@@ -389,8 +392,28 @@ export function issueCompletionDeliveryService(db: Db) {
         updated_at = ${nowIso}
       from due
       where delivery.id = due.id
-      returning delivery.*
-    `));
+      returning
+        delivery.id as "id",
+        delivery.company_id as "companyId",
+        delivery.issue_id as "issueId",
+        delivery.source_activity_id as "sourceActivityId",
+        delivery.completion_transition_key as "completionTransitionKey",
+        delivery.status as "status",
+        delivery.destination as "destination",
+        delivery.payload as "payload",
+        delivery.attempt_count as "attemptCount",
+        delivery.next_attempt_at as "nextAttemptAt",
+        delivery.last_attempt_at as "lastAttemptAt",
+        delivery.leased_at as "leasedAt",
+        delivery.lease_expires_at as "leaseExpiresAt",
+        delivery.lease_token as "leaseToken",
+        delivery.delivered_at as "deliveredAt",
+        delivery.provider_message_id as "providerMessageId",
+        delivery.last_error as "lastError",
+        delivery.completed_at as "completedAt",
+        delivery.created_at as "createdAt",
+        delivery.updated_at as "updatedAt"
+    `)) as IssueCompletionDeliveryRow[];
 
     const result: ProcessIssueCompletionDeliveriesResult = {
       claimed: claimedRows.length,
