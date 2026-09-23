@@ -659,6 +659,7 @@ export function routineRoutes(
       signatureHeader: req.header("x-paperclip-signature"),
       hubSignatureHeader: req.header("x-hub-signature-256"),
       timestampHeader: req.header("x-paperclip-timestamp"),
+      callerRunId: req.header("x-paperclip-run-id"),
       idempotencyKey: req.header("idempotency-key"),
       rawBody: (req as { rawBody?: Buffer }).rawBody ?? null,
       payload: typeof req.body === "object" && req.body !== null ? req.body as Record<string, unknown> : null,

@@ -286,6 +286,10 @@ function makeContext(
     updateTrigger: stubMutation(),
     deleteTrigger: stubMutation(),
     rotateTrigger: stubMutation(),
+    connectTrigger: async () => ({
+      trigger: routineDetail.triggers[0]!,
+      secretMaterial: { webhookUrl: "https://example.test/webhook", webhookSecret: "storybook-secret" },
+    }),
     secretMessage: null,
     setSecretMessage: () => {},
     copySecretValue: () => {},

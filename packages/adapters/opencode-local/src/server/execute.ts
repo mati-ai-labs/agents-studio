@@ -258,6 +258,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     (typeof context.taskId === "string" && context.taskId.trim().length > 0 && context.taskId.trim()) ||
     (typeof context.issueId === "string" && context.issueId.trim().length > 0 && context.issueId.trim()) ||
     null;
+  const sourceIssueId =
+    typeof context.sourceIssueId === "string" && context.sourceIssueId.trim().length > 0
+      ? context.sourceIssueId.trim()
+      : null;
   const wakeReason =
     typeof context.wakeReason === "string" && context.wakeReason.trim().length > 0
       ? context.wakeReason.trim()
@@ -280,6 +284,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const wakePayloadJson = stringifyPaperclipWakePayload(context.paperclipWake);
   const issueWorkMode = readPaperclipIssueWorkModeFromContext(context);
   if (wakeTaskId) env.PAPERCLIP_TASK_ID = wakeTaskId;
+  if (sourceIssueId) env.PAPERCLIP_SOURCE_ISSUE_ID = sourceIssueId;
   if (issueWorkMode) env.PAPERCLIP_ISSUE_WORK_MODE = issueWorkMode;
   if (wakeReason) env.PAPERCLIP_WAKE_REASON = wakeReason;
   if (wakeCommentId) env.PAPERCLIP_WAKE_COMMENT_ID = wakeCommentId;

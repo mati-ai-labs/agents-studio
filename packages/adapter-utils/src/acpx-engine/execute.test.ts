@@ -672,6 +672,7 @@ describe("shared ACPX engine runtime behavior", () => {
           OPENROUTER_API_KEY: "resolved-secret-value",
           // Reserved-namespace config keys must not clobber runtime identity/wake.
           PAPERCLIP_TASK_ID: "attacker-issue",
+          PAPERCLIP_SOURCE_ISSUE_ID: "attacker-source",
           // PAPERCLIP_API_KEY is never accepted from config.
           PAPERCLIP_API_KEY: "config-key",
           // A PAPERCLIP_*-named key the harness does not assign flows through.
@@ -680,13 +681,18 @@ describe("shared ACPX engine runtime behavior", () => {
       },
       {
         authToken: "runtime-secret-token",
-        context: { taskId: "issue-real", wakeReason: "issue_assigned" },
+        context: {
+          taskId: "issue-real",
+          sourceIssueId: "issue-original",
+          wakeReason: "issue_assigned",
+        },
       },
     );
     const env = (sessionInputs[0]!.sessionOptions as { env: Record<string, string> }).env;
     expect(env.OOGA_BOOGA_123).toBe("plain-value");
     expect(env.OPENROUTER_API_KEY).toBe("resolved-secret-value");
     expect(env.PAPERCLIP_TASK_ID).toBe("issue-real");
+    expect(env.PAPERCLIP_SOURCE_ISSUE_ID).toBe("issue-original");
     expect(env.PAPERCLIP_API_KEY).toBe("runtime-secret-token");
     expect(env.PAPERCLIP_CLOUD_PROVIDER_TOKEN).toBe("cloud-token");
   });

@@ -855,7 +855,39 @@ export async function startServer(): Promise<StartedServer> {
     prepareHotRestartShutdown = heartbeat.prepareHotRestartShutdown;
     const environmentCustomImages = environmentCustomImageService(db as any, { pluginWorkerManager });
     const issueCompletionDeliveries = issueCompletionDeliveryService(db as any);
-    const routineResultDeliveries = routineResultDeliveryService(db as any, storageService);
+    const routineResultDeliveries = routineResultDeliveryService(db as any, storageService, {
+      onDelivered: async ({
+        sourceIssueId,
+        sourceAssigneeAgentId,
+        commentId,
+        routineRunId,
+        executionIssueId,
+      }) => {
+        if (!sourceAssigneeAgentId) return;
+        await heartbeat.wakeup(sourceAssigneeAgentId, {
+          source: "automation",
+          triggerDetail: "callback",
+          reason: "routine_result_delivered",
+          payload: {
+            issueId: sourceIssueId,
+            mutation: "routine_result_delivered",
+            routineRunId,
+            executionIssueId,
+          },
+          requestedByActorType: "system",
+          requestedByActorId: "routine-result-delivery",
+          contextSnapshot: {
+            issueId: sourceIssueId,
+            taskId: sourceIssueId,
+            wakeReason: "routine_result_delivered",
+            wakeCommentId: commentId,
+            routineRunId,
+            executionIssueId,
+            instruction: "A routine result and its artifacts were delivered to this source issue. Continue orchestration from the delivered result. Keep the source issue in progress while waiting; do not mark it blocked merely because another routine is running. Track every expected routine delivery on this source issue, trigger the next required routine with the same original source issue, and do not complete the source issue while any routine callback or delivery is active. Once all expected stages are present, compile and attach the required canonical final deliverable, post the final synthesis, and only then mark the source issue done.",
+          },
+        });
+      },
+    });
     const routines = routineService(db as any, { pluginWorkerManager });
     const tools = toolAccessService(db as any, {
       deploymentMode: config.deploymentMode,

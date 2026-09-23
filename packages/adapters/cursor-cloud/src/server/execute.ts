@@ -113,6 +113,7 @@ function buildWakeEnv(ctx: AdapterExecutionContext, configEnv: Record<string, st
   delete env.PAPERCLIP_API_KEY;
 
   const wakeTaskId = trimNullable(context.taskId) ?? trimNullable(context.issueId);
+  const sourceIssueId = trimNullable(context.sourceIssueId);
   const wakeReason = trimNullable(context.wakeReason);
   const wakeCommentId = trimNullable(context.wakeCommentId) ?? trimNullable(context.commentId);
   const approvalId = trimNullable(context.approvalId);
@@ -124,6 +125,7 @@ function buildWakeEnv(ctx: AdapterExecutionContext, configEnv: Record<string, st
   const issueWorkMode = readPaperclipIssueWorkModeFromContext(context);
 
   if (wakeTaskId) env.PAPERCLIP_TASK_ID = wakeTaskId;
+  if (sourceIssueId) env.PAPERCLIP_SOURCE_ISSUE_ID = sourceIssueId;
   if (wakeReason) env.PAPERCLIP_WAKE_REASON = wakeReason;
   if (wakeCommentId) env.PAPERCLIP_WAKE_COMMENT_ID = wakeCommentId;
   if (approvalId) env.PAPERCLIP_APPROVAL_ID = approvalId;

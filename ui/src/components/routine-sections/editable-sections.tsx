@@ -390,7 +390,7 @@ function SummaryCard({
 
 export function TriggersSection() {
   const ctx = useRoutineDetail();
-  const { routine, newTrigger, setNewTrigger, createTrigger, updateTrigger, deleteTrigger, rotateTrigger } = ctx;
+  const { routine, newTrigger, setNewTrigger, createTrigger, updateTrigger, deleteTrigger, rotateTrigger, connectTrigger } = ctx;
   const [addOpen, setAddOpen] = useState(false);
   const [newScheduleEditorValid, setNewScheduleEditorValid] = useState(true);
   const newScheduleValidation = useMemo(
@@ -450,9 +450,8 @@ export function TriggersSection() {
               </SelectTrigger>
               <SelectContent>
                 {triggerKinds.map((kind) => (
-                  <SelectItem key={kind} value={kind} disabled={kind === "webhook"}>
+                  <SelectItem key={kind} value={kind}>
                     {kind}
-                    {kind === "webhook" ? " — COMING SOON" : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -545,8 +544,10 @@ export function TriggersSection() {
             <RoutineTriggerCard
               key={trigger.id}
               trigger={trigger}
+              variables={routine.variables}
               onSave={(id, patch) => updateTrigger.mutate({ id, patch })}
               onRotate={(id) => rotateTrigger.mutate(id)}
+              onConnect={connectTrigger}
               onDelete={(id) => deleteTrigger.mutate(id)}
             />
           ))}

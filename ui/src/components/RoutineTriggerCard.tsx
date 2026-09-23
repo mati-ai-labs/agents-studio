@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
-import { Clock3, RefreshCw, Save, Trash2, Webhook, Zap } from "lucide-react";
-import type { RoutineTrigger } from "@paperclipai/shared";
+import { useEffect, useMemo, useState } from "react";
+import { Clock3, Copy, Link2, RefreshCw, Save, Trash2, Webhook, Zap } from "lucide-react";
+import type { RoutineTrigger, RoutineTriggerSecretMaterial, RoutineVariable } from "@paperclipai/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,6 +15,7 @@ import {
 import { ScheduleEditor } from "./ScheduleEditor";
 import { buildRoutineTriggerPatch } from "../lib/routine-trigger-patch";
 import { describeCron } from "../lib/cron-readable";
+import { buildRoutineAgentConnectionCommand } from "../lib/routine-agent-connection";
 
 const signingModes = ["bearer", "hmac_sha256", "github_hmac", "none"];
 const SIGNING_MODES_WITHOUT_REPLAY_WINDOW = new Set(["github_hmac", "none"]);
@@ -33,14 +34,18 @@ function getLocalTimezone(): string {
  */
 export function RoutineTriggerCard({
   trigger,
+  variables,
   onSave,
   onRotate,
+  onConnect,
   onDelete,
   disabled,
 }: {
   trigger: RoutineTrigger;
+  variables: RoutineVariable[];
   onSave: (id: string, patch: Record<string, unknown>) => void;
   onRotate: (id: string) => void;
+  onConnect: (id: string) => Promise<{ secretMaterial: RoutineTriggerSecretMaterial }>;
   onDelete: (id: string) => void;
   disabled?: boolean;
 }) {
@@ -50,6 +55,8 @@ export function RoutineTriggerCard({
     signingMode: trigger.signingMode ?? "bearer",
     replayWindowSec: String(trigger.replayWindowSec ?? 300),
   });
+  const [connection, setConnection] = useState<RoutineTriggerSecretMaterial | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
 
   useEffect(() => {
     setDraft({
@@ -66,6 +73,10 @@ export function RoutineTriggerCard({
   const lastResultOk =
     trigger.lastResult != null &&
     /succeed|success|ok|200|delivered/i.test(String(trigger.lastResult));
+  const connectionCommand = useMemo(() => {
+    if (!connection) return "";
+    return buildRoutineAgentConnectionCommand({ connection, variables });
+  }, [connection, variables]);
 
   return (
     <form
@@ -172,10 +183,29 @@ export function RoutineTriggerCard({
             Delete
           </Button>
           {trigger.kind === "webhook" && (
-            <Button variant="outline" size="sm" onClick={() => onRotate(trigger.id)}>
-              <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-              Rotate secret
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isConnecting}
+                onClick={async () => {
+                  setIsConnecting(true);
+                  try {
+                    const result = await onConnect(trigger.id);
+                    setConnection(result.secretMaterial);
+                  } finally {
+                    setIsConnecting(false);
+                  }
+                }}
+              >
+                <Link2 className="mr-1.5 h-3.5 w-3.5" />
+                {isConnecting ? "Preparing…" : "Connect to your agent"}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => onRotate(trigger.id)}>
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                Rotate secret
+              </Button>
+            </>
           )}
           <Button
             variant="outline"
@@ -189,6 +219,22 @@ export function RoutineTriggerCard({
           </Button>
         </div>
       )}
+      {connection ? (
+        <div className="space-y-3 rounded-md border border-blue-500/30 bg-blue-500/5 p-3 text-sm">
+          <div>
+            <p className="font-medium">Agent connection instructions</p>
+            <p className="text-xs text-muted-foreground">
+              A new bearer token was generated. Copy this into the calling agent now; Paperclip will not show it again.
+              The command preserves the original source issue across downstream routines; completed results and artifacts return there automatically.
+            </p>
+          </div>
+          <pre className="max-h-48 overflow-auto rounded bg-background p-3 text-xs leading-relaxed whitespace-pre-wrap">{connectionCommand}</pre>
+          <Button variant="outline" size="sm" onClick={() => void navigator.clipboard.writeText(connectionCommand)}>
+            <Copy className="mr-1.5 h-3.5 w-3.5" />
+            Copy invocation
+          </Button>
+        </div>
+      ) : null}
     </form>
   );
 }

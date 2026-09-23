@@ -474,6 +474,8 @@ export async function execute(
   const ctxContext = (ctx as any).context || {};
   const envTaskId = cfgString(ctxContext.taskId) || cfgString(ctxContext.issueId) || cfgString(ctx.config?.taskId);
   if (envTaskId) env.PAPERCLIP_TASK_ID = envTaskId;
+  const sourceIssueId = cfgString(ctxContext.sourceIssueId);
+  if (sourceIssueId) env.PAPERCLIP_SOURCE_ISSUE_ID = sourceIssueId;
   const envWakeReason = cfgString(ctxContext.wakeReason) || cfgString(ctx.config?.wakeReason);
   if (envWakeReason) env.PAPERCLIP_WAKE_REASON = envWakeReason;
   const envCommentId = cfgString(ctxContext.commentId) || cfgString(ctxContext.wakeCommentId) || cfgString(ctx.config?.commentId);

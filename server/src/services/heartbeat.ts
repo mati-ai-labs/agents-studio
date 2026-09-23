@@ -59,6 +59,7 @@ import {
   projects,
   projectWorkspaces,
   routineRevisions,
+  routineResultDeliveries,
   routineRuns,
   routines,
   toolMcpGateways,
@@ -6030,7 +6031,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     issueContext: Awaited<ReturnType<typeof getIssueExecutionContext>> | null,
   ) {
     if (!issueContext || issueContext.originKind !== "routine_execution" || !issueContext.originId) {
-      return { routineId: null, env: null, responsibleUserId: null };
+      return { routineId: null, env: null, responsibleUserId: null, callbackIssueId: null };
     }
 
     const routineRun = issueContext.originRunId
@@ -6038,6 +6039,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           .select({
             routineRevisionId: routineRuns.routineRevisionId,
             responsibleUserId: routineRuns.responsibleUserId,
+            callbackIssueId: routineRuns.callbackIssueId,
           })
           .from(routineRuns)
           .where(
@@ -6071,6 +6073,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           routineId: issueContext.originId,
           env: snapshot.routine.env ?? null,
           responsibleUserId: revision?.responsibleUserId ?? snapshot.routine.responsibleUserId ?? null,
+          callbackIssueId: routineRun.callbackIssueId ?? null,
         };
       }
     }
@@ -6084,6 +6087,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       routineId: issueContext.originId,
       env: routine?.env ?? null,
       responsibleUserId: routineRun?.responsibleUserId ?? routine?.responsibleUserId ?? null,
+      callbackIssueId: routineRun?.callbackIssueId ?? null,
     };
   }
 
@@ -8133,13 +8137,20 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         : Promise.resolve(null),
       issue
         ? db
-          .select({ id: routines.id })
-          .from(routines)
+          .select({ id: routineRuns.id })
+          .from(routineRuns)
+          .leftJoin(
+            routineResultDeliveries,
+            eq(routineResultDeliveries.routineRunId, routineRuns.id),
+          )
           .where(
             and(
-              eq(routines.companyId, issue.companyId),
-              eq(routines.parentIssueId, issue.id),
-              eq(routines.status, "active"),
+              eq(routineRuns.companyId, issue.companyId),
+              eq(routineRuns.callbackIssueId, issue.id),
+              or(
+                inArray(routineRuns.status, ["received", "issue_created"]),
+                inArray(routineResultDeliveries.status, ["pending", "sending"]),
+              ),
             ),
           )
           .limit(1)
@@ -10785,7 +10796,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       run,
       contextSnapshot: context,
       issueContext: issueId ? await getIssueExecutionContext(run.companyId, issueId) : null,
-      routineEnvContext: { routineId: null, env: null, responsibleUserId: null },
+      routineEnvContext: { routineId: null, env: null, responsibleUserId: null, callbackIssueId: null },
     });
     const claimed = await db
       .update(heartbeatRuns)
@@ -12002,6 +12013,9 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       delete context.acceptedPlanWakeRouting;
     }
     const routineEnvContext = await getRoutineEnvForExecutionIssue(agent.companyId, issueContext);
+    if (routineEnvContext.callbackIssueId) {
+      context.sourceIssueId = routineEnvContext.callbackIssueId;
+    }
     const responsibleUserId = await resolveResponsibleUserIdForRun({
       run,
       contextSnapshot: context,
