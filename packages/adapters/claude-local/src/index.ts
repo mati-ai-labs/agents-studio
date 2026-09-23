@@ -44,7 +44,7 @@ Core fields:
 - maxTurnsPerRun (number, optional): max turns for one run
 - dangerouslySkipPermissions (boolean, optional, default true): pass --dangerously-skip-permissions to local Claude runs; remote targets receive a curated --allowedTools list so they do not inherit local bypass permissions
 - enableGoogleWorkspaceMcp (boolean, optional, default true): when true, Paperclip injects a run-scoped Google Workspace MCP config using the company's connector OAuth token
-- googleWorkspaceMcpUrl (string, optional): Google Workspace MCP endpoint URL (defaults to GOOGLE_WORKSPACE_MCP_URL or http://localhost:8080/mcp)
+- googleWorkspaceMcpUrl (string, optional): Google Workspace MCP endpoint URL (defaults to GOOGLE_WORKSPACE_MCP_URL or http://localhost:8000/mcp)
 - enableJiraMcp (boolean, optional, default true): when true, Paperclip can inject Jira MCP config when Jira credentials are present in adapter config
 - jiraMcpUrl (string, optional): Jira MCP endpoint URL (defaults to JIRA_MCP_URL or http://localhost:8090/mcp)
 - jiraMcpServerName (string, optional, default jira): MCP server name key for injected Jira config

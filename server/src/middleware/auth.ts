@@ -226,6 +226,10 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
   };
 }
 
+export function isCloudManagedInstance(): boolean {
+  return Boolean(process.env.PAPERCLIP_CLOUD_TENANT_SERVER_TOKEN?.trim());
+}
+
 async function resolveCloudTenantActor(db: Db, req: Request): Promise<Express.Request["actor"] | null> {
   const expectedToken = process.env.PAPERCLIP_CLOUD_TENANT_SERVER_TOKEN?.trim();
   if (!expectedToken) return null;

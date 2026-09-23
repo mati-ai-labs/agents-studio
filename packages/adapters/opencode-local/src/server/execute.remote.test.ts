@@ -149,6 +149,9 @@ describe("opencode remote execution", () => {
       config: {
         command: "opencode",
         model: "opencode/gpt-5-nano",
+        env: {
+          OPENAI_API_KEY: "configured-openai-key",
+        },
       },
       context: {
         paperclipWorkspace: {
@@ -224,6 +227,7 @@ describe("opencode remote execution", () => {
     expect(modelProbeCall?.[3].env.XDG_CONFIG_HOME).toBe(
       `${managedRemoteWorkspace}/.paperclip-runtime/opencode/xdgConfig`,
     );
+    expect(modelProbeCall?.[3].env.OPENAI_API_KEY).toBe("configured-openai-key");
     expect(modelProbeCall?.[3].remoteExecution?.remoteCwd).toBe("/remote/workspace");
     const call = runCall as
       | [string, string, string[], { env: Record<string, string>; remoteExecution?: { remoteCwd: string } | null }]
@@ -245,6 +249,7 @@ describe("opencode remote execution", () => {
     expect(call?.[3].env.PAPERCLIP_API_URL).toBe("http://127.0.0.1:4310");
     expect(call?.[3].env.PAPERCLIP_API_BRIDGE_MODE).toBe("queue_v1");
     expect(call?.[3].env.XDG_CONFIG_HOME).toBe(`${managedRemoteWorkspace}/.paperclip-runtime/opencode/xdgConfig`);
+    expect(call?.[3].env.OPENAI_API_KEY).toBe("configured-openai-key");
     expect(call?.[3].remoteExecution?.remoteCwd).toBe(managedRemoteWorkspace);
     expect(startAdapterExecutionTargetPaperclipBridge).toHaveBeenCalledTimes(1);
     expect(restoreWorkspaceFromSshExecution).toHaveBeenCalledTimes(1);

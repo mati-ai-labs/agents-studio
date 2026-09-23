@@ -260,4 +260,47 @@ describe("prepareOpenCodeRuntimeConfig", () => {
     expect(prepared.notes).toEqual([]);
     await prepared.cleanup();
   });
+
+  it("injects MCP servers while preserving the existing config", async () => {
+    const configHome = await makeConfigHome({
+      theme: "system",
+      mcp: {
+        existing: { type: "remote", url: "https://existing.example/mcp" },
+      },
+    });
+
+    const prepared = await prepareOpenCodeRuntimeConfig({
+      env: { XDG_CONFIG_HOME: configHome },
+      config: { dangerouslySkipPermissions: false },
+      mcp: {
+        github: {
+          type: "remote",
+          url: "https://github.example/mcp",
+          headers: { Authorization: "Bearer test-token" },
+        },
+      },
+    });
+    cleanupPaths.add(prepared.env.XDG_CONFIG_HOME);
+
+    const runtimeConfig = JSON.parse(
+      await fs.readFile(
+        path.join(prepared.env.XDG_CONFIG_HOME, "opencode", "opencode.json"),
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+    expect(runtimeConfig).toMatchObject({
+      theme: "system",
+      mcp: {
+        existing: { type: "remote", url: "https://existing.example/mcp" },
+        github: {
+          type: "remote",
+          url: "https://github.example/mcp",
+          headers: { Authorization: "Bearer test-token" },
+        },
+      },
+    });
+    expect(prepared.notes).toContain("Injected 1 run-scoped OpenCode MCP server(s): github.");
+    await prepared.cleanup();
+    cleanupPaths.delete(prepared.env.XDG_CONFIG_HOME);
+  });
 });

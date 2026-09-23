@@ -146,13 +146,41 @@ export function rewritePreviewSetCookie(value: string, slug: string): string {
   });
 }
 
+const PREVIEW_SINGLE_URL_ATTRS =
+  "href|src|action|poster|data-src|data-lazy-src|data-original|data-bg|data-lazyload";
+const PREVIEW_SRCSET_ATTRS = "srcset|imagesrcset|data-srcset";
+
+/**
+ * Rewrite root-relative references inside the preview HTML shell so every
+ * asset stays under the lease prefix. In addition to the single-URL
+ * attributes and inline `url(...)`/`fetch(...)`/`import(...)` calls, this
+ * handles the comma-separated `srcset`/`imagesrcset`/`data-srcset` lists that
+ * responsive-image frameworks emit, plus the common lazy-load attribute names.
+ */
 export function rewritePreviewHtml(html: string, slug: string): string {
   const prefix = previewPathPrefix(slug);
   const prefixRootReference = (_match: string, start: string) => `${start}${prefix}/`;
+
   let rewritten = html.replace(
-    /((?:href|src|action|poster|data-src)\s*=\s*["'])\/(?!\/|preview\/)/gi,
+    new RegExp(
+      `((?:${PREVIEW_SINGLE_URL_ATTRS})\\s*=\\s*["'])\\/(?!\\/|preview\\/)`,
+      "gi",
+    ),
     prefixRootReference,
   );
+
+  // srcset-style lists: "…, /path/a.png 1x, /path/b.png 2x". Each entry keeps
+  // its descriptor; data: URLs (which contain commas and slashes in base64)
+  // are left untouched because they never begin with a root-relative slash.
+  rewritten = rewritten.replace(
+    new RegExp(
+      `((?:${PREVIEW_SRCSET_ATTRS})\\s*=\\s*["'])([^"']*)(["'])`,
+      "gi",
+    ),
+    (_match, start: string, value: string, end: string) =>
+      `${start}${rewritePreviewSrcset(value, prefix)}${end}`,
+  );
+
   rewritten = rewritten.replace(
     /((?:fetch|import)\s*\(\s*["'])\/(?!\/|preview\/)/gi,
     prefixRootReference,
@@ -160,6 +188,19 @@ export function rewritePreviewHtml(html: string, slug: string): string {
   return rewritten.replace(
     /(url\(\s*["']?)\/(?!\/|preview\/)/gi,
     prefixRootReference,
+  );
+}
+
+/**
+ * Prefix every root-relative URL in a srcset attribute value. The separator
+ * class deliberately excludes `/` so already-prefixed, external
+ * (`https://…`, `//cdn…`) and `data:` URLs are never split.
+ */
+function rewritePreviewSrcset(value: string, prefix: string): string {
+  return value.replace(
+    /(^|[\s,"'])(\/)(?!\/|preview\/)([^\s,"']+)/g,
+    (_match, lead: string, slash: string, path: string) =>
+      `${lead}${prefix}${slash}${path}`,
   );
 }
 
@@ -211,6 +252,58 @@ function isModuleSpecifierString(history: RewriteModuleToken[]): boolean {
     }
   }
   return false;
+}
+
+/**
+ * True when the token stream shows the string being read is the CSS payload
+ * of a Vite CSS JS module, e.g. `const __vite__css = "…css…"`. Vite compiles
+ * `.css` imports to JS modules whose stylesheet text lives in a single string
+ * literal, with root-relative asset URLs inside (`url("/fonts/x.woff2")`,
+ * `@import "/styles/x.css"`). Those must be rewritten along with the module.
+ */
+function isViteCssString(history: RewriteModuleToken[]): boolean {
+  const last = history[history.length - 1];
+  if (!last) return false;
+  if (last.kind === "id" && last.value === "__vite__css") return true;
+  return (
+    last.kind === "punct" &&
+    last.value === "=" &&
+    history[history.length - 2]?.kind === "id" &&
+    history[history.length - 2]?.value === "__vite__css"
+  );
+}
+
+/**
+ * True when the token stream shows the string being read is the default
+ * export of a Vite asset module, e.g. `export default "/src/assets/logo.png"`.
+ * Vite compiles `import logo from "./logo.png"` to a tiny JS module whose only
+ * body is the root-relative URL of the served asset. That URL must be prefixed
+ * so the browser requests it under the lease instead of the Paperclip root.
+ */
+function isDefaultExportAssetString(history: RewriteModuleToken[]): boolean {
+  const last = history[history.length - 1];
+  if (!last || last.kind !== "kw" || last.value !== "default") return false;
+  const prev = history[history.length - 2];
+  return !!prev && prev.kind === "kw" && prev.value === "export";
+}
+
+// Extensions Vite serves as static assets when imported as URLs.
+const PREVIEW_ASSET_EXTENSION_RE =
+  /\.(?:png|jpe?g|gif|webp|avif|svg|ico|woff2?|ttf|otf|eot|css|js|mjs|mp4|webm|mp3|wav|ogg|pdf)(?:[?#].*)?$/i;
+
+/**
+ * True when `value` is a root-relative URL that points at a static asset (the
+ * kind Vite emits as the default export of an asset module). Asset-directory
+ * paths and known asset extensions match; API routes, external/protocol-relative
+ * URLs, and already-prefixed paths do not.
+ */
+function isRootRelativeAssetUrl(value: string, prefix: string): boolean {
+  if (!value.startsWith("/") || value.startsWith("//")) return false;
+  if (value.startsWith(prefix + "/") || /^\/preview\//.test(value)) return false;
+  return (
+    /\/(?:assets|public|images|img|fonts|media|static|files)\//.test(value) ||
+    PREVIEW_ASSET_EXTENSION_RE.test(value)
+  );
 }
 
 const HMR_LOOPBACK_RE = /^(?:127\.0\.0\.1|localhost):(\d+)\/?$/;
@@ -277,6 +370,19 @@ export function rewritePreviewModuleReferences(
 
       if (isModuleSpecifierString(history)) {
         if (inner.startsWith("/") && !inner.startsWith("//") && !inner.startsWith(prefix)) {
+          rewritten = quote + prefix + inner + quote;
+        }
+      } else if (isViteCssString(history)) {
+        // Vite CSS JS module — the string body is stylesheet text. Rewrite its
+        // root-relative url()/@import references so fonts, images, and @imports
+        // resolve under the lease prefix (quote characters stay escaped as
+        // Vite emitted them; only the referenced paths change).
+        rewritten = quote + rewritePreviewCssReferences(inner, slug) + quote;
+      } else if (isDefaultExportAssetString(history)) {
+        // Vite asset module — the string is the served asset URL
+        // (`export default "/src/assets/logo.png"`). Prefix root-relative asset
+        // paths; API strings, external/data URLs, and non-asset paths pass through.
+        if (isRootRelativeAssetUrl(inner, prefix)) {
           rewritten = quote + prefix + inner + quote;
         }
       } else if (opts?.browserHost && opts.upstreamPort && HMR_LOOPBACK_RE.test(inner)) {
@@ -418,16 +524,53 @@ export function rewritePreviewModuleReferences(
 }
 
 /**
- * Rewrite root-relative `url(...)` references in CSS responses so they stay
- * inside the preview lease prefix. CSS has no regex literals, so a targeted
- * url()-anchored rewrite is safe (it cannot corrupt JS-style literals).
+ * Rewrite root-relative references inside CSS so they stay under the preview
+ * lease prefix. CSS has no regex literals, so a targeted rewrite is safe (it
+ * cannot corrupt JS-style literals).
+ *
+ * Handled forms:
+ *   - `url(/images/x.png)`, `url("/fonts/x.woff2")`, `url('/fonts/x.woff2')`,
+ *     including the JS-escaped `\"` / `\'` quotes emitted inside Vite
+ *     `__vite__css` string payloads,
+ *   - `@import "/styles/other.css"` and `@import url("/styles/other.css")`.
+ *
+ * External and special URLs (`https:`, `http:`, protocol-relative `//`,
+ * `data:`, `blob:`) and already-prefixed `/preview/<slug>/…` paths are left
+ * untouched.
  */
 export function rewritePreviewCssReferences(source: string, slug: string): string {
   const prefix = previewPathPrefix(slug);
-  return source.replace(
-    /(url\(\s*["']?)\/(?!\/|preview\/)/gi,
-    (_match, start: string) => `${start}${prefix}/`,
-  );
+  return source
+    // url( ... ) with an optional quoted (incl. JS-escaped) argument.
+    .replace(
+      /url\(\s*(\\?["']?)(.*?)\1\s*\)/gi,
+      (_match, quote: string, url: string) =>
+        `url(${quote}${prefixCssPath(url, prefix)}${quote})`,
+    )
+    // @import "<path>" — bare string form (the url(...) form is matched above).
+    .replace(
+      /(@import\s+)(\\?["'])(.*?)\2/gi,
+      (_match, lead: string, quote: string, url: string) =>
+        `${lead}${quote}${prefixCssPath(url, prefix)}${quote}`,
+    );
+}
+
+/**
+ * Prefix `path` with the lease prefix when it is a root-relative URL; return
+ * it unchanged for external, protocol-relative, data/blob, and already-prefixed
+ * URLs.
+ */
+function prefixCssPath(path: string, prefix: string): string {
+  const trimmed = path.trim();
+  if (
+    !trimmed.startsWith("/") ||
+    trimmed.startsWith("//") ||
+    trimmed.startsWith(prefix + "/") ||
+    /^\/preview\//.test(trimmed)
+  ) {
+    return path;
+  }
+  return `${prefix}${path}`;
 }
 
 function getSetCookies(headers: Headers): string[] {

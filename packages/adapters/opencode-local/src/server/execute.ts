@@ -51,9 +51,11 @@ import {
   isTruthyEnvFlag,
   parseOpenCodeModelsOutput,
   requireOpenCodeModelId,
+  resolveOpenCodeCommand,
 } from "./models.js";
 import { removeMaintainerOnlySkillSymlinks } from "@paperclipai/adapter-utils/server-utils";
 import { prepareOpenCodeRuntimeConfig } from "./runtime-config.js";
+import { buildOpenCodeMcpConfig } from "./mcp.js";
 import { SANDBOX_INSTALL_COMMAND } from "../index.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -219,7 +221,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     config.promptTemplate,
     DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   );
-  const command = asString(config.command, "opencode");
+  const command = resolveOpenCodeCommand(config.command);
   const model = asString(config.model, "").trim();
   const variant = asString(config.variant, "").trim();
 
@@ -253,6 +255,15 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const envConfig = parseObject(config.env);
   const env: Record<string, string> = { ...buildPaperclipEnv(agent) };
+  // Keep provider credentials from the resolved adapter config on the exact
+  // environment used by both `opencode models` and `opencode run`.  The
+  // heartbeat resolves secret bindings into config.env before invoking the
+  // adapter; relying only on the workspace-env helper made this handoff easy
+  // to regress and left OpenAI-compatible providers making unauthenticated
+  // requests when the server process itself had no OPENAI_API_KEY.
+  for (const [key, value] of Object.entries(envConfig)) {
+    if (typeof value === "string") env[key] = value;
+  }
   env.PAPERCLIP_RUN_ID = runId;
   const wakeTaskId =
     (typeof context.taskId === "string" && context.taskId.trim().length > 0 && context.taskId.trim()) ||
@@ -313,7 +324,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   if (authToken) {
     env.PAPERCLIP_API_KEY = authToken;
   }
-  const preparedRuntimeConfig = await prepareOpenCodeRuntimeConfig({ env, config });
+  const preparedRuntimeConfig = await prepareOpenCodeRuntimeConfig({
+    env,
+    config,
+    mcp: buildOpenCodeMcpConfig(ctx.mcpConfig),
+  });
   const localRuntimeConfigHome =
     preparedRuntimeConfig.notes.length > 0 ? preparedRuntimeConfig.env.XDG_CONFIG_HOME : "";
   try {

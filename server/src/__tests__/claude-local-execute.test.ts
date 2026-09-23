@@ -496,7 +496,7 @@ describe("claude execute", () => {
         context: {},
         mcpConfig: {
           googleWorkspace: {
-            url: "http://localhost:8080/mcp",
+            url: "http://localhost:8000/mcp",
             accessToken: "google-access-token-for-test",
           },
         },
@@ -534,7 +534,7 @@ describe("claude execute", () => {
         context: {},
         mcpConfig: {
           googleWorkspace: {
-            url: "http://localhost:8080/mcp",
+            url: "http://localhost:8000/mcp",
             accessToken: "google-access-token-for-test",
           },
           jira: {
@@ -660,7 +660,7 @@ describe("claude execute", () => {
         context: {},
         mcpConfig: {
           googleWorkspace: {
-            url: "http://localhost:8080/mcp",
+            url: "http://localhost:8000/mcp",
             accessToken: "google-access-token-for-test",
           },
           metaAds: {

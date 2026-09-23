@@ -105,10 +105,13 @@ async function readJsonObject(filepath: string): Promise<Record<string, unknown>
 export async function prepareOpenCodeRuntimeConfig(input: {
   env: Record<string, string>;
   config: Record<string, unknown>;
+  mcp?: Record<string, unknown> | null;
   targetIsRemote?: boolean;
 }): Promise<PreparedOpenCodeRuntimeConfig> {
   const skipPermissions = asBoolean(input.config.dangerouslySkipPermissions, true);
-  if (!skipPermissions) {
+  const mcp = isPlainObject(input.mcp) ? input.mcp : {};
+  const mcpNames = Object.keys(mcp).filter((name) => name.trim().length > 0);
+  if (!skipPermissions && mcpNames.length === 0) {
     return {
       env: input.env,
       notes: [],
@@ -184,10 +187,22 @@ export async function prepareOpenCodeRuntimeConfig(input: {
 
   const nextConfig: Record<string, unknown> = {
     ...existingConfig,
-    permission: {
-      ...existingPermission,
-      external_directory: "allow",
-    },
+    ...(skipPermissions
+      ? {
+          permission: {
+            ...existingPermission,
+            external_directory: "allow",
+          },
+        }
+      : {}),
+    ...(mcpNames.length > 0
+      ? {
+          mcp: {
+            ...(isPlainObject(existingConfig.mcp) ? existingConfig.mcp : {}),
+            ...mcp,
+          },
+        }
+      : {}),
   };
   if (Object.keys(nextProvider).length > 0) {
     nextConfig.provider = nextProvider;
@@ -205,6 +220,8 @@ export async function prepareOpenCodeRuntimeConfig(input: {
     notes.push(`Pinned OpenCode small_model to ${smallModel}.`);
   }
   await fs.writeFile(runtimeConfigPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
+  await fs.chmod(runtimeConfigPath, 0o600);
+
 
   return {
     env: {

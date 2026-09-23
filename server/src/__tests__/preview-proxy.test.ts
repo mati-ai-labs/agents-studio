@@ -70,6 +70,26 @@ describe("preview proxy", () => {
       .toBe("sid=abc; Path=/preview/site-abc/; HttpOnly");
   });
 
+  it("rewrites srcset/imagesrcset/lazy-load attributes and preserves data:/external entries", () => {
+    expect(
+      rewritePreviewHtml(
+        '<img srcset="/img/a.png 1x, /img/b.png 2x" imagesrcset="/img/c.png 640w">' +
+          '<img data-srcset="/img/d.png 480w" data-src="/img/e.png">' +
+          '<img data-lazy-src="/img/f.png">' +
+          '<picture><img srcset="data:image/png;base64,AA/BB 1x, https://cdn.example.com/x.png 2x, //cdn.example.com/bg.png 3x"></picture>' +
+          '<img src="/logo.png" data-original="/img/g.png">',
+        "site-abc",
+      ),
+    ).toBe(
+      '<img srcset="/preview/site-abc/img/a.png 1x, /preview/site-abc/img/b.png 2x" ' +
+        'imagesrcset="/preview/site-abc/img/c.png 640w">' +
+        '<img data-srcset="/preview/site-abc/img/d.png 480w" data-src="/preview/site-abc/img/e.png">' +
+        '<img data-lazy-src="/preview/site-abc/img/f.png">' +
+        '<picture><img srcset="data:image/png;base64,AA/BB 1x, https://cdn.example.com/x.png 2x, //cdn.example.com/bg.png 3x"></picture>' +
+        '<img src="/preview/site-abc/logo.png" data-original="/preview/site-abc/img/g.png">',
+    );
+  });
+
   it("rewrites module specifiers without corrupting regex literals or strings", async () => {
     const slug = "site-abc";
     const source = `import x from "/node_modules/foo.js";
@@ -128,6 +148,96 @@ const msg = "a plain string with /slashes/ inside";
     );
   });
 
+  it("rewrites CSS @import and url() root references and preserves external/special URLs", () => {
+    const css = `@font-face { src: url("/fonts/LeagueSpartan-VariableFont_wght.ttf"); }
+@import "/styles/base.css";
+@import url("/styles/theme.css");
+.bg { background: url(/img/a.png), url("https://cdn.example.com/x.png"), url(data:image/png;base64,AA/BB), url(blob:https://app.example.com/abc), url(//cdn.example.com/bg.png); }
+.link { background: url(/preview/site-abc/img/keep.png); }`;
+    expect(rewritePreviewCssReferences(css, "site-abc")).toBe(
+      `@font-face { src: url("/preview/site-abc/fonts/LeagueSpartan-VariableFont_wght.ttf"); }
+@import "/preview/site-abc/styles/base.css";
+@import url("/preview/site-abc/styles/theme.css");
+.bg { background: url(/preview/site-abc/img/a.png), url("https://cdn.example.com/x.png"), url(data:image/png;base64,AA/BB), url(blob:https://app.example.com/abc), url(//cdn.example.com/bg.png); }
+.link { background: url(/preview/site-abc/img/keep.png); }`,
+    );
+  });
+
+  it("rewrites root-relative url()/@import inside a Vite __vite__css payload without touching other strings", async () => {
+    const slug = "site-abc";
+    const source = `const __vite__id = "/src/index.scss";
+const __vite__css = "@font-face{font-family: \\"League Spartan\\";src:url(\\"/fonts/League_Spartan/LeagueSpartan-VariableFont_wght.ttf\\")}@import \\"/styles/other.css\\";.a{background:url('/img/x.png') url(data:image/png;base64,AA/BB) url(//cdn.example.com/bg.png) url('/preview/site-abc/img/keep.png')}";
+const plain = "/not-a-css-payload";
+const msg = "leave /fonts/x alone";`;
+    const rewritten = rewritePreviewModuleReferences(source, slug);
+
+    expect(rewritten).toContain(
+      'src:url(\\"/preview/site-abc/fonts/League_Spartan/LeagueSpartan-VariableFont_wght.ttf\\")',
+    );
+    expect(rewritten).toContain('@import \\"/preview/site-abc/styles/other.css\\"');
+    expect(rewritten).toContain("url('/preview/site-abc/img/x.png')");
+    expect(rewritten).toContain("url('/preview/site-abc/img/keep.png')");
+    // External/special URLs inside the payload stay untouched.
+    expect(rewritten).toContain("url(data:image/png;base64,AA/BB)");
+    expect(rewritten).toContain("url(//cdn.example.com/bg.png)");
+    // Ordinary strings must survive byte-for-byte.
+    expect(rewritten).toContain('const __vite__id = "/src/index.scss";');
+    expect(rewritten).toContain('const plain = "/not-a-css-payload";');
+    expect(rewritten).toContain('const msg = "leave /fonts/x alone";');
+
+    const { createSourceFile, ScriptTarget, ScriptKind } = await import("typescript");
+    const diagnostics = createSourceFile(
+      "module.js",
+      rewritten,
+      ScriptTarget.Latest,
+      false,
+      ScriptKind.JS,
+    ).parseDiagnostics;
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("rewrites Vite asset-module default-export URLs for PNG/SVG/font/CSS assets", () => {
+    const slug = "site-abc";
+    const prefix = "/preview/site-abc";
+    const cases: Array<[string, string]> = [
+      // Rewritten asset modules (the real Vite `export default "…"` form).
+      ['export default "/src/assets/bg-login.png"', `export default "${prefix}/src/assets/bg-login.png"`],
+      ['export default "/src/assets/icons/check.svg"', `export default "${prefix}/src/assets/icons/check.svg"`],
+      ['export default "/fonts/LeagueSpartan-VariableFont_wght.ttf"', `export default "${prefix}/fonts/LeagueSpartan-VariableFont_wght.ttf"`],
+      ['export default "/src/assets/theme.css"', `export default "${prefix}/src/assets/theme.css"`],
+      // Preserved verbatim — API strings, external/data/protocol-relative, already-prefixed.
+      ['export default "/api/health"', 'export default "/api/health"'],
+      ['export default "https://cdn.example.com/x.png"', 'export default "https://cdn.example.com/x.png"'],
+      ['export default "data:image/png;base64,AA/BB"', 'export default "data:image/png;base64,AA/BB"'],
+      ['export default "//cdn.example.com/bg.png"', 'export default "//cdn.example.com/bg.png"'],
+      ['export default "/preview/site-abc/src/assets/logo.png"', 'export default "/preview/site-abc/src/assets/logo.png"'],
+    ];
+    for (const [input, expected] of cases) {
+      expect(rewritePreviewModuleReferences(input, slug)).toBe(expected);
+    }
+  });
+
+  it("rewrites a real Vite asset module (with sourcemap comment) and keeps it valid JavaScript", async () => {
+    const slug = "site-abc";
+    const source = `export default "/src/assets/bg-login.png"
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbImJnLWxvZ2luLnBuZz9pbXBvcnQiXSwic291cmNlc0NvbnRlbnQiOlsiZXhwb3J0IGRlZmF1bHQgXCIvc3JjL2Fzc2V0cy9iZy1sb2dpbi5wbmdcIiJdLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiQUFBQSIsInNvdXJjZVJvb3QiOiIiLCJzb3VyY2VzQ29udGVudCI6W119`;
+    const rewritten = rewritePreviewModuleReferences(source, slug);
+
+    expect(rewritten).toContain('export default "/preview/site-abc/src/assets/bg-login.png"');
+    // The sourcemap comment must survive untouched (it embeds the asset URL in base64).
+    expect(rewritten).toContain("//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjoz");
+
+    const { createSourceFile, ScriptTarget, ScriptKind } = await import("typescript");
+    const diagnostics = createSourceFile(
+      "asset.js",
+      rewritten,
+      ScriptTarget.Latest,
+      false,
+      ScriptKind.JS,
+    ).parseDiagnostics;
+    expect(diagnostics).toEqual([]);
+  });
+
   it("proxies HTML and request bodies to a registered localhost service", async () => {
     let receivedBody = "";
     let receivedAuth: string | undefined;
@@ -170,5 +280,37 @@ const msg = "a plain string with /slashes/ inside";
     expect(response.headers["set-cookie"]).toEqual(["sid=abc; Path=/preview/site-abc/; HttpOnly"]);
     expect(receivedBody).toBe('{"ok":true}');
     expect(receivedAuth).toBeUndefined();
+  });
+
+  it("proxies binary assets byte-for-byte and keeps their content type", async () => {
+    const fontBytes = Buffer.from([0x00, 0x01, 0x02, 0xff, 0xfe, 0x80, 0x40, 0x03, 0x01, 0x00]);
+    upstream = createServer((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader("content-type", "font/woff2");
+      res.end(fontBytes);
+    });
+    await new Promise<void>((resolve) => upstream!.listen(0, "127.0.0.1", resolve));
+    const address = upstream.address();
+    if (!address || typeof address === "string") throw new Error("upstream did not bind");
+
+    const preview = {
+      lease: { status: "active", slug: "site-abc", expiresAt: new Date(Date.now() + 60_000) },
+      runtimeService: { provider: "local_process", port: address.port, status: "running" },
+    } as PreviewLeaseWithRuntimeService;
+    const app = express();
+    app.use(async (req, res, next) => {
+      const target = parsePreviewRequestTarget(req.originalUrl);
+      if (!target) return next();
+      await proxyPreviewHttp(req, res, preview, target);
+    });
+
+    const response = await request(app)
+      .get("/preview/site-abc/fonts/LeagueSpartan-VariableFont_wght.ttf")
+      .buffer(true);
+
+    expect(response.status).toBe(200);
+    expect(response.headers["content-type"]).toContain("font/woff2");
+    expect(Buffer.isBuffer(response.body)).toBe(true);
+    expect(response.body).toEqual(fontBytes);
   });
 });
