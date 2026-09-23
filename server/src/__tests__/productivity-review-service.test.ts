@@ -9,6 +9,8 @@ import {
   heartbeatRuns,
   issueComments,
   issues,
+  routineRuns,
+  routines,
 } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
@@ -208,6 +210,43 @@ describeEmbeddedPostgres("productivity review service", () => {
     expect(reviews[0]?.description).toContain("No-comment completed-run streak: 10");
 
     expect(await listRefreshComments(reviews[0]!.id)).toHaveLength(0);
+  });
+
+  it("does not create a productivity review while a routine callback is still active", async () => {
+    const now = new Date("2026-04-28T12:00:00.000Z");
+    const seeded = await seedAssignedIssue();
+    await insertRuns({
+      companyId: seeded.companyId,
+      agentId: seeded.coderId,
+      issueId: seeded.issueId,
+      count: DEFAULT_PRODUCTIVITY_REVIEW_NO_COMMENT_STREAK_RUNS,
+      now,
+    });
+
+    const routineId = randomUUID();
+    await db.insert(routines).values({
+      id: routineId,
+      companyId: seeded.companyId,
+      title: "Independent source discovery",
+      assigneeAgentId: seeded.coderId,
+    });
+    await db.insert(routineRuns).values({
+      companyId: seeded.companyId,
+      routineId,
+      source: "webhook",
+      status: "issue_created",
+      callbackIssueId: seeded.issueId,
+      triggeredAt: now,
+    });
+
+    const result = await productivityReviewService(db).reconcileProductivityReviews({
+      now,
+      companyId: seeded.companyId,
+    });
+
+    expect(result.created).toBe(0);
+    expect(result.routineCallbackSuppressed).toBe(1);
+    expect(await listProductivityReviews(seeded.companyId)).toHaveLength(0);
   });
 
   it("refreshes open productivity reviews only once per interval and caps refresh comments", async () => {

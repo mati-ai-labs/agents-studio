@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, gte, inArray, isNull, notInArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { clampIssueRequestDepth } from "@paperclipai/shared";
 import {
@@ -10,6 +10,8 @@ import {
   issueComments,
   issues,
   projects,
+  routineResultDeliveries,
+  routineRuns,
 } from "@paperclipai/db";
 import { logger } from "../middleware/logger.js";
 import { logActivity } from "./activity-log.js";
@@ -849,6 +851,31 @@ export function productivityReviewService(db: Db, deps?: { enqueueWakeup?: Enque
       .orderBy(asc(issues.updatedAt), asc(issues.id))
       .limit(MAX_CANDIDATE_ISSUES);
 
+    // A source issue waiting on an independently executing routine is not
+    // stalled. Suppress productivity-review escalation until the routine has
+    // completed and its durable callback delivery has finished.
+    const activeRoutineCallbackRows = candidates.length === 0
+      ? []
+      : await db
+        .select({ callbackIssueId: routineRuns.callbackIssueId })
+        .from(routineRuns)
+        .leftJoin(
+          routineResultDeliveries,
+          eq(routineResultDeliveries.routineRunId, routineRuns.id),
+        )
+        .where(and(
+          inArray(routineRuns.callbackIssueId, candidates.map((candidate) => candidate.id)),
+          or(
+            inArray(routineRuns.status, ["received", "issue_created"]),
+            inArray(routineResultDeliveries.status, ["pending", "sending"]),
+          ),
+        ));
+    const activeRoutineCallbackIssueIds = new Set(
+      activeRoutineCallbackRows
+        .map((row) => row.callbackIssueId)
+        .filter((issueId): issueId is string => Boolean(issueId)),
+    );
+
     const result = {
       scanned: candidates.length,
       created: 0,
@@ -857,6 +884,7 @@ export function productivityReviewService(db: Db, deps?: { enqueueWakeup?: Enque
       snoozed: 0,
       creationCapped: 0,
       noActionSuppressed: 0,
+      routineCallbackSuppressed: 0,
       skipped: 0,
       failed: 0,
       reviewIssueIds: [] as string[],
@@ -865,6 +893,10 @@ export function productivityReviewService(db: Db, deps?: { enqueueWakeup?: Enque
 
     const prefixCache = new Map<string, string>();
     for (const candidate of candidates) {
+      if (activeRoutineCallbackIssueIds.has(candidate.id)) {
+        result.routineCallbackSuppressed += 1;
+        continue;
+      }
       if (!candidate.assigneeAgentId) {
         result.skipped += 1;
         continue;
