@@ -39,6 +39,8 @@ import {
   issues,
   projects,
   projectWorkspaces,
+  routineRuns,
+  routines,
   workspaceOperations,
 } from "@paperclipai/db";
 import {
@@ -3438,6 +3440,50 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       timeoutConfigured: false,
       timeoutFired: false,
     });
+  });
+
+  it("does not enqueue immediate recovery while a callback-linked routine is active", async () => {
+    const { companyId, agentId, runId, issueId } = await seedRunFixture({
+      agentStatus: "idle",
+      includeIssue: true,
+    });
+    const routineId = randomUUID();
+    await db.insert(routines).values({
+      id: routineId,
+      companyId,
+      title: "Independent research",
+    });
+    await db.insert(routineRuns).values({
+      companyId,
+      routineId,
+      source: "webhook",
+      status: "issue_created",
+      callbackIssueId: issueId,
+    });
+
+    const heartbeat = heartbeatService(db);
+    await heartbeat.cancelRun(runId);
+
+    const issue = await db
+      .select()
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0] ?? null);
+    expect(issue).toMatchObject({
+      status: "in_progress",
+      executionRunId: null,
+      checkoutRunId: null,
+    });
+
+    const recoveryRuns = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(and(
+        eq(heartbeatRuns.companyId, companyId),
+        eq(heartbeatRuns.agentId, agentId),
+        sql`${heartbeatRuns.contextSnapshot} ->> 'retryReason' = 'issue_continuation_needed'`,
+      ));
+    expect(recoveryRuns).toHaveLength(0);
   });
 
   it("records operator interrupt cancellation metadata without changing terminal status", async () => {

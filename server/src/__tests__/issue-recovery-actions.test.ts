@@ -16,6 +16,8 @@ import {
   issueRecoveryActions,
   issueRelations,
   issues,
+  routineRuns,
+  routines,
 } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
@@ -426,6 +428,44 @@ describeEmbeddedPostgres("issue recovery actions", () => {
     const secondResult = await recovery.reconcileStrandedAssignedIssues();
     expect(secondResult).toMatchObject({ providerQuotaMonitored: 0, skipped: 1 });
     expect(await db.select().from(issueRecoveryActions)).toHaveLength(0);
+  });
+
+  it("skips periodic stranded recovery while a callback-linked routine is active", async () => {
+    const { companyId, coderId, sourceIssueId } = await seedCompany();
+    await db.insert(heartbeatRuns).values({
+      id: randomUUID(),
+      companyId,
+      agentId: coderId,
+      invocationSource: "manual",
+      status: "failed",
+      error: "source agent yielded while independent research runs",
+      errorCode: "adapter_failed",
+      startedAt: new Date("2026-07-15T20:00:00.000Z"),
+      finishedAt: new Date("2026-07-15T20:01:00.000Z"),
+      contextSnapshot: { issueId: sourceIssueId },
+    });
+    const routineId = randomUUID();
+    await db.insert(routines).values({
+      id: routineId,
+      companyId,
+      title: "Independent research",
+    });
+    await db.insert(routineRuns).values({
+      companyId,
+      routineId,
+      source: "webhook",
+      status: "issue_created",
+      callbackIssueId: sourceIssueId,
+    });
+    const enqueueWakeup = vi.fn(async () => null);
+
+    const result = await recoveryService(db, { enqueueWakeup }).reconcileStrandedAssignedIssues();
+
+    expect(result).toMatchObject({ continuationRequeued: 0, escalated: 0, skipped: 1 });
+    expect(enqueueWakeup).not.toHaveBeenCalled();
+    expect(await db.select().from(issueRecoveryActions)).toHaveLength(0);
+    const [sourceIssue] = await db.select().from(issues).where(eq(issues.id, sourceIssueId));
+    expect(sourceIssue).toMatchObject({ status: "in_progress", assigneeAgentId: coderId });
   });
 
   it("schedules another provider-quota monitor after a prior quota monitor fired", async () => {
