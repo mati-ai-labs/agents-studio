@@ -1,0 +1,88 @@
+name: Deploy Agents Studio to EC2
+
+on:
+  push:
+    branches:
+      - deployment
+
+concurrency:
+  group: agents-studio-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Build and deploy on EC2
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.AGENTS_STUDIO_EC2_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.AGENTS_STUDIO_EC2_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/agents-studio.pem
+          chmod 600 ~/.ssh/agents-studio.pem
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy pushed revision
+        env:
+          DEPLOY_SHA: ${{ github.sha }}
+        run: |
+          ssh \
+            -i ~/.ssh/agents-studio.pem \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            ubuntu@ec2-3-110-115-154.ap-south-1.compute.amazonaws.com \
+            "DEPLOY_SHA=$DEPLOY_SHA bash -s" <<'DEPLOY_SCRIPT'
+          set -Eeuo pipefail
+
+          repo=/home/ubuntu/agents-studio
+          export PATH=/home/ubuntu/.nvm/versions/node/v24.16.0/bin:$PATH
+
+          cd "$repo"
+
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            echo "Refusing to deploy: tracked files on EC2 contain uncommitted changes." >&2
+            git status --short >&2
+            exit 1
+          fi
+
+          git fetch --prune origin deployment
+
+          remote_sha=$(git rev-parse origin/deployment)
+          if [[ "$remote_sha" != "$DEPLOY_SHA" ]]; then
+            echo "Refusing to deploy: origin/deployment is $remote_sha, expected $DEPLOY_SHA." >&2
+            exit 1
+          fi
+
+          # The tracked worktree is clean at this point, so make the local
+          # deployment branch exactly match the revision that triggered CI.
+          # EC2-only untracked runtime files are intentionally preserved.
+          git switch --force-create deployment origin/deployment
+
+          corepack pnpm install --frozen-lockfile
+          corepack pnpm build
+
+          npx --yes pm2 reload ecosystem.config.cjs --update-env
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:3100/api/health >/dev/null \
+              && curl --fail --silent --show-error http://127.0.0.1:3101/orchestrator/health >/dev/null; then
+              echo "Agents Studio deployed successfully at $DEPLOY_SHA."
+              exit 0
+            fi
+
+            echo "Waiting for services to become healthy ($attempt/30)..."
+            sleep 2
+          done
+
+          echo "Deployment completed, but one or more health checks failed." >&2
+          npx --yes pm2 status >&2
+          exit 1
+          DEPLOY_SCRIPT
