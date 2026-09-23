@@ -23,6 +23,17 @@ export interface ProcessRoutineResultDeliveriesResult {
   failed: number;
 }
 
+export interface RoutineResultDeliveryServiceOptions {
+  onDelivered?: (input: {
+    companyId: string;
+    sourceIssueId: string;
+    sourceAssigneeAgentId: string | null;
+    commentId: string;
+    routineRunId: string;
+    executionIssueId: string;
+  }) => Promise<void>;
+}
+
 function retryDelayMs(attemptCount: number): number {
   return Math.min(30_000 * 2 ** Math.max(0, attemptCount - 1), 30 * 60 * 1_000);
 }
@@ -62,7 +73,7 @@ function buildRelayComment(input: {
 }
 
 /**
- * Queue a completion relay for a webhook run that supplied source_issue_id.
+ * Queue a completion relay for a webhook run linked to a source issue.
  * The unique run key makes repeated terminal-status sync calls idempotent.
  */
 export async function enqueueRoutineResultDelivery(
@@ -98,7 +109,11 @@ export async function enqueueRoutineResultDelivery(
     .then((rows) => rows[0] ?? null);
 }
 
-export function routineResultDeliveryService(db: Db, storage: StorageService) {
+export function routineResultDeliveryService(
+  db: Db,
+  storage: StorageService,
+  options: RoutineResultDeliveryServiceOptions = {},
+) {
   async function processDueDeliveries(limit = 10): Promise<ProcessRoutineResultDeliveriesResult> {
     const now = new Date();
     const leaseExpiresAt = new Date(now.getTime() + DELIVERY_LEASE_MS);
@@ -157,7 +172,11 @@ export function routineResultDeliveryService(db: Db, storage: StorageService) {
       try {
         const [sourceIssue, executionIssue] = await Promise.all([
           db
-            .select({ id: issues.id, companyId: issues.companyId })
+            .select({
+              id: issues.id,
+              companyId: issues.companyId,
+              assigneeAgentId: issues.assigneeAgentId,
+            })
             .from(issues)
             .where(and(eq(issues.id, delivery.sourceIssueId), eq(issues.companyId, delivery.companyId)))
             .then((rows) => rows[0] ?? null),
@@ -251,7 +270,7 @@ export function routineResultDeliveryService(db: Db, storage: StorageService) {
           });
         }
 
-        await db.transaction(async (tx) => {
+        const commentId = await db.transaction(async (tx) => {
           const [comment] = await tx
             .insert(issueComments)
             .values({
@@ -305,8 +324,28 @@ export function routineResultDeliveryService(db: Db, storage: StorageService) {
               eq(routineResultDeliveries.id, delivery.id),
               eq(routineResultDeliveries.leaseToken, leaseToken),
             ));
+          return comment.id;
         });
         result.sent += 1;
+        if (options.onDelivered) {
+          try {
+            await options.onDelivered({
+              companyId: delivery.companyId,
+              sourceIssueId: sourceIssue.id,
+              sourceAssigneeAgentId: sourceIssue.assigneeAgentId,
+              commentId,
+              routineRunId: delivery.routineRunId,
+              executionIssueId: executionIssue.id,
+            });
+          } catch (error) {
+            // The durable result relay has already succeeded. A wakeup failure
+            // must not retry the delivery and duplicate its comment/artifacts.
+            logger.warn(
+              { err: error, deliveryId: delivery.id, sourceIssueId: sourceIssue.id },
+              "routine result delivered but source assignee wakeup failed",
+            );
+          }
+        }
       } catch (error) {
         const attemptCount = delivery.attemptCount + 1;
         const retry = attemptCount < DELIVERY_MAX_ATTEMPTS;

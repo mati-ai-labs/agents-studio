@@ -1038,6 +1038,8 @@ async function buildRuntime(input: {
     (typeof context.taskId === "string" && context.taskId.trim()) ||
     (typeof context.issueId === "string" && context.issueId.trim()) ||
     "";
+  const sourceIssueId =
+    typeof context.sourceIssueId === "string" ? context.sourceIssueId.trim() : "";
   const wakeReason = typeof context.wakeReason === "string" ? context.wakeReason.trim() : "";
   const wakeCommentId =
     (typeof context.wakeCommentId === "string" && context.wakeCommentId.trim()) ||
@@ -1051,6 +1053,7 @@ async function buildRuntime(input: {
   const wakePayloadJson = stringifyPaperclipWakePayload(context.paperclipWake);
   const issueWorkMode = readPaperclipIssueWorkModeFromContext(context);
   if (wakeTaskId) env.PAPERCLIP_TASK_ID = wakeTaskId;
+  if (sourceIssueId) env.PAPERCLIP_SOURCE_ISSUE_ID = sourceIssueId;
   if (issueWorkMode) env.PAPERCLIP_ISSUE_WORK_MODE = issueWorkMode;
   if (wakeReason) env.PAPERCLIP_WAKE_REASON = wakeReason;
   if (wakeCommentId) env.PAPERCLIP_WAKE_COMMENT_ID = wakeCommentId;

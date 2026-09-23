@@ -29,6 +29,7 @@ import {
   issueComments,
   issueDocuments,
   issueReadStates,
+  routineResultDeliveries,
   issueThreadInteractions,
   issues,
   labels,
@@ -6503,6 +6504,40 @@ export function issueService(db: Db) {
 
       if (issueData.status) {
         assertTransition(existing.status, issueData.status);
+      }
+
+      if (issueData.status === "done" && existing.status !== "done") {
+        const [activeRoutineRun, pendingRoutineDelivery] = await Promise.all([
+          dbOrTx
+            .select({ id: routineRuns.id })
+            .from(routineRuns)
+            .where(and(
+              eq(routineRuns.companyId, existing.companyId),
+              eq(routineRuns.callbackIssueId, existing.id),
+              inArray(routineRuns.status, ["received", "issue_created"]),
+            ))
+            .limit(1)
+            .then((rows: Array<{ id: string }>) => rows[0] ?? null),
+          dbOrTx
+            .select({ id: routineResultDeliveries.id })
+            .from(routineResultDeliveries)
+            .where(and(
+              eq(routineResultDeliveries.companyId, existing.companyId),
+              eq(routineResultDeliveries.sourceIssueId, existing.id),
+              inArray(routineResultDeliveries.status, ["pending", "sending", "failed"]),
+            ))
+            .limit(1)
+            .then((rows: Array<{ id: string }>) => rows[0] ?? null),
+        ]);
+        if (activeRoutineRun || pendingRoutineDelivery) {
+          throw conflict(
+            "Issue cannot be completed while routine callbacks or result delivery are still active",
+            {
+              activeRoutineRunId: activeRoutineRun?.id ?? null,
+              pendingRoutineDeliveryId: pendingRoutineDelivery?.id ?? null,
+            },
+          );
+        }
       }
 
       const patch: Partial<typeof issues.$inferInsert> = {

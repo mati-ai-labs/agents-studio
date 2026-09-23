@@ -352,6 +352,8 @@ function buildPaperclipEnvForWake(ctx: AdapterExecutionContext, wakePayload: Wak
     paperclipEnv.PAPERCLIP_API_URL = paperclipApiUrlOverride;
   }
   if (wakePayload.taskId) paperclipEnv.PAPERCLIP_TASK_ID = wakePayload.taskId;
+  const sourceIssueId = nonEmpty(ctx.context.sourceIssueId);
+  if (sourceIssueId) paperclipEnv.PAPERCLIP_SOURCE_ISSUE_ID = sourceIssueId;
   const issueWorkMode = readPaperclipIssueWorkModeFromContext(ctx.context);
   if (issueWorkMode) paperclipEnv.PAPERCLIP_ISSUE_WORK_MODE = issueWorkMode;
   if (wakePayload.wakeReason) paperclipEnv.PAPERCLIP_WAKE_REASON = wakePayload.wakeReason;
@@ -377,6 +379,7 @@ function buildWakeText(
     "PAPERCLIP_COMPANY_ID",
     "PAPERCLIP_API_URL",
     "PAPERCLIP_TASK_ID",
+    "PAPERCLIP_SOURCE_ISSUE_ID",
     "PAPERCLIP_WAKE_REASON",
     "PAPERCLIP_WAKE_COMMENT_ID",
     "PAPERCLIP_APPROVAL_ID",

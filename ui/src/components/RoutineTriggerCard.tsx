@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Clock3, Copy, Link2, RefreshCw, Save, Trash2, Webhook, Zap } from "lucide-react";
-import type { RoutineTrigger, RoutineTriggerSecretMaterial } from "@paperclipai/shared";
+import type { RoutineTrigger, RoutineTriggerSecretMaterial, RoutineVariable } from "@paperclipai/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,6 +15,7 @@ import {
 import { ScheduleEditor } from "./ScheduleEditor";
 import { buildRoutineTriggerPatch } from "../lib/routine-trigger-patch";
 import { describeCron } from "../lib/cron-readable";
+import { buildRoutineAgentConnectionCommand } from "../lib/routine-agent-connection";
 
 const signingModes = ["bearer", "hmac_sha256", "github_hmac", "none"];
 const SIGNING_MODES_WITHOUT_REPLAY_WINDOW = new Set(["github_hmac", "none"]);
@@ -33,6 +34,7 @@ function getLocalTimezone(): string {
  */
 export function RoutineTriggerCard({
   trigger,
+  variables,
   onSave,
   onRotate,
   onConnect,
@@ -40,6 +42,7 @@ export function RoutineTriggerCard({
   disabled,
 }: {
   trigger: RoutineTrigger;
+  variables: RoutineVariable[];
   onSave: (id: string, patch: Record<string, unknown>) => void;
   onRotate: (id: string) => void;
   onConnect: (id: string) => Promise<{ secretMaterial: RoutineTriggerSecretMaterial }>;
@@ -72,8 +75,8 @@ export function RoutineTriggerCard({
     /succeed|success|ok|200|delivered/i.test(String(trigger.lastResult));
   const connectionCommand = useMemo(() => {
     if (!connection) return "";
-    return `curl -X POST '${connection.webhookUrl}' -H 'Authorization: Bearer ${connection.webhookSecret}' -H 'Content-Type: application/json' -d '{"variables":{"replace_with_your_variable":"value"}}'`;
-  }, [connection]);
+    return buildRoutineAgentConnectionCommand({ connection, variables });
+  }, [connection, variables]);
 
   return (
     <form
@@ -222,6 +225,7 @@ export function RoutineTriggerCard({
             <p className="font-medium">Agent connection instructions</p>
             <p className="text-xs text-muted-foreground">
               A new bearer token was generated. Copy this into the calling agent now; Paperclip will not show it again.
+              The command preserves the original source issue across downstream routines; completed results and artifacts return there automatically.
             </p>
           </div>
           <pre className="max-h-48 overflow-auto rounded bg-background p-3 text-xs leading-relaxed whitespace-pre-wrap">{connectionCommand}</pre>

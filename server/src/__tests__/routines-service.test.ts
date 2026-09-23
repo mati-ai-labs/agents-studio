@@ -2088,13 +2088,85 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
     });
   });
 
-  it("copies the final output and artifacts from a completed webhook routine to its source issue", async () => {
+  it("preserves the original source issue when one routine execution triggers another", async () => {
+    const { companyId, agentId, issueSvc, projectId, routine, svc } = await seedFixture();
+    const sourceIssue = await issueSvc.create(companyId, {
+      projectId,
+      title: "Run layered research",
+      status: "todo",
+      priority: "medium",
+      assigneeAgentId: agentId,
+    });
+    const downstreamRoutine = await svc.create(companyId, {
+      projectId,
+      goalId: null,
+      parentIssueId: null,
+      title: "Downstream layer",
+      description: "Continue layered research",
+      assigneeAgentId: agentId,
+      priority: "medium",
+      status: "active",
+      concurrencyPolicy: "parallel",
+      catchUpPolicy: "skip_missed",
+    }, {});
+    const { trigger: upstreamTrigger } = await svc.createTrigger(
+      routine.id,
+      { kind: "webhook", signingMode: "none" },
+      {},
+    );
+    const { trigger: downstreamTrigger } = await svc.createTrigger(
+      downstreamRoutine.id,
+      { kind: "webhook", signingMode: "none" },
+      {},
+    );
+
+    const upstreamRun = await svc.firePublicTrigger(upstreamTrigger.publicId!, {
+      payload: { source_issue_id: sourceIssue.id },
+    });
+    const callerHeartbeat = await db
+      .select({ id: heartbeatRuns.id, contextSnapshot: heartbeatRuns.contextSnapshot })
+      .from(heartbeatRuns)
+      .then((rows) => rows.find((row) => row.contextSnapshot?.issueId === upstreamRun.linkedIssueId) ?? null);
+
+    const downstreamRun = await svc.firePublicTrigger(downstreamTrigger.publicId!, {
+      callerRunId: callerHeartbeat!.id,
+      payload: { variables: { micro_niche: "Freight bill audit" } },
+    });
+
+    expect(downstreamRun.callbackIssueId).toBe(sourceIssue.id);
+    expect(downstreamRun.callbackIssueId).not.toBe(upstreamRun.linkedIssueId);
+  });
+
+  it("prevents a source issue from completing while a callback routine is active", async () => {
     const { companyId, issueSvc, projectId, routine, svc } = await seedFixture();
+    const sourceIssue = await issueSvc.create(companyId, {
+      projectId,
+      title: "Wait for research",
+      status: "todo",
+      priority: "medium",
+    });
+    const { trigger } = await svc.createTrigger(
+      routine.id,
+      { kind: "webhook", signingMode: "none" },
+      {},
+    );
+    await svc.firePublicTrigger(trigger.publicId!, {
+      payload: { source_issue_id: sourceIssue.id },
+    });
+
+    await expect(issueSvc.update(sourceIssue.id, { status: "done" })).rejects.toMatchObject({
+      status: 409,
+    });
+  });
+
+  it("copies the final output and artifacts from a completed webhook routine to its source issue", async () => {
+    const { companyId, agentId, issueSvc, projectId, routine, svc } = await seedFixture();
     const sourceIssue = await issueSvc.create(companyId, {
       projectId,
       title: "Research request",
       status: "todo",
       priority: "medium",
+      assigneeAgentId: agentId,
     });
     const { trigger } = await svc.createTrigger(routine.id, { kind: "webhook", signingMode: "none" }, {});
     const run = await svc.firePublicTrigger(trigger.publicId!, {
@@ -2143,7 +2215,8 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
       deleteObject: async () => undefined,
     };
 
-    const processed = await routineResultDeliveryService(db, storage).processDueDeliveries();
+    const onDelivered = vi.fn(async () => undefined);
+    const processed = await routineResultDeliveryService(db, storage, { onDelivered }).processDueDeliveries();
     expect(processed).toMatchObject({ claimed: 1, sent: 1, retried: 0, failed: 0 });
     expect(writtenFiles.size).toBe(1);
 
@@ -2163,6 +2236,12 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
     expect(sourceComment?.body).toContain("The market is attractive.");
     expect(sourceAttachment?.objectKey).toContain("routine-result-deliveries/");
     expect(sourceAttachment?.issueCommentId).toBeTruthy();
+    expect(onDelivered).toHaveBeenCalledWith(expect.objectContaining({
+      sourceIssueId: sourceIssue.id,
+      sourceAssigneeAgentId: agentId,
+      routineRunId: run.id,
+      executionIssueId,
+    }));
   });
 
   it("records suppressed automatic runs when worktree execution is disabled while allowing manual runs", async () => {

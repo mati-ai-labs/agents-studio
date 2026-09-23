@@ -2781,6 +2781,7 @@ export function routineService(
       signatureHeader?: string | null;
       hubSignatureHeader?: string | null;
       timestampHeader?: string | null;
+      callerRunId?: string | null;
       idempotencyKey?: string | null;
       rawBody?: Buffer | null;
       payload?: Record<string, unknown> | null;
@@ -2867,12 +2868,76 @@ export function routineService(
       // template variable. Keeping it outside `variables` lets an agent start
       // independent work without creating an issue-tree handoff.
       const sourceIssueIdRaw = input.payload?.source_issue_id;
-      let callbackIssueId: string | null = null;
+      let explicitCallbackIssueId: string | null = null;
       if (sourceIssueIdRaw !== undefined) {
         if (typeof sourceIssueIdRaw !== "string" || !isUuidLike(sourceIssueIdRaw.trim())) {
           throw unprocessable("source_issue_id must be a valid issue ID");
         }
-        callbackIssueId = sourceIssueIdRaw.trim();
+        explicitCallbackIssueId = sourceIssueIdRaw.trim();
+      }
+
+      // Agent-to-agent routine calls carry the caller heartbeat run. Resolve
+      // the original source issue from that trusted server-side context so a
+      // downstream routine cannot accidentally replace the callback target
+      // with its own independent execution issue.
+      let derivedCallbackIssueId: string | null = null;
+      const callerRunId = input.callerRunId?.trim() ?? "";
+      if (callerRunId) {
+        if (!isUuidLike(callerRunId)) {
+          throw unprocessable("X-Paperclip-Run-Id must be a valid run ID");
+        }
+        const callerRun = await db
+          .select({
+            companyId: heartbeatRuns.companyId,
+            contextSnapshot: heartbeatRuns.contextSnapshot,
+          })
+          .from(heartbeatRuns)
+          .where(eq(heartbeatRuns.id, callerRunId))
+          .then((rows) => rows[0] ?? null);
+        if (!callerRun || callerRun.companyId !== routine.companyId) {
+          throw unauthorized();
+        }
+        const context = isPlainRecord(callerRun.contextSnapshot) ? callerRun.contextSnapshot : null;
+        const callerIssueIdRaw = context?.issueId ?? context?.taskId;
+        if (typeof callerIssueIdRaw === "string" && isUuidLike(callerIssueIdRaw.trim())) {
+          const callerIssue = await db
+            .select({
+              id: issues.id,
+              originKind: issues.originKind,
+              originRunId: issues.originRunId,
+            })
+            .from(issues)
+            .where(and(eq(issues.id, callerIssueIdRaw.trim()), eq(issues.companyId, routine.companyId)))
+            .then((rows) => rows[0] ?? null);
+          if (callerIssue) {
+            derivedCallbackIssueId = callerIssue.id;
+            if (callerIssue.originKind === "routine_execution" && callerIssue.originRunId) {
+              const upstreamRun = await db
+                .select({ callbackIssueId: routineRuns.callbackIssueId })
+                .from(routineRuns)
+                .where(and(
+                  eq(routineRuns.id, callerIssue.originRunId),
+                  eq(routineRuns.companyId, routine.companyId),
+                ))
+                .then((rows) => rows[0] ?? null);
+              if (upstreamRun?.callbackIssueId) {
+                derivedCallbackIssueId = upstreamRun.callbackIssueId;
+              }
+            }
+          }
+        }
+      }
+
+      if (
+        explicitCallbackIssueId &&
+        derivedCallbackIssueId &&
+        explicitCallbackIssueId !== derivedCallbackIssueId
+      ) {
+        throw unprocessable("source_issue_id does not match the caller's original source issue");
+      }
+
+      const callbackIssueId = explicitCallbackIssueId ?? derivedCallbackIssueId;
+      if (callbackIssueId) {
         const sourceIssue = await db
           .select({ id: issues.id })
           .from(issues)
