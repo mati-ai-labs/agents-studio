@@ -11,7 +11,6 @@ import {
   defaultIssueFilterState,
   normalizeIssueFilterState,
   type IssueFilterState,
-  type IssueFilterWorkspaceContext,
 } from "./issue-filters";
 import { formatAssigneeUserLabel } from "./assignees";
 
@@ -26,7 +25,7 @@ export const INBOX_NESTING_KEY = "paperclip:inbox:nesting";
 export const INBOX_GROUP_BY_KEY = "paperclip:inbox:group-by";
 export const INBOX_FILTER_PREFERENCES_KEY_PREFIX = "paperclip:inbox:filters";
 export const INBOX_COLLAPSED_GROUPS_KEY_PREFIX = "paperclip:inbox:collapsed-groups";
-export type InboxTab = "mine" | "recent" | "unread" | "blocked" | "all";
+export type InboxTab = "mine" | "recent" | "unread" | "all";
 export type InboxCategoryFilter =
   | "everything"
   | "issues_i_touched"
@@ -40,7 +39,6 @@ export const inboxIssueColumns = [
   "status",
   "id",
   "assignee",
-  "kickedOffBy",
   "project",
   "workspace",
   "parent",
@@ -464,7 +462,6 @@ export function getInboxSearchSupplementIssues({
   currentUserId,
   enableRoutineVisibilityFilter = false,
   liveIssueIds,
-  issueFilterContext = {},
 }: {
   query: string;
   filteredWorkItems: InboxWorkItem[];
@@ -474,7 +471,6 @@ export function getInboxSearchSupplementIssues({
   currentUserId?: string | null;
   enableRoutineVisibilityFilter?: boolean;
   liveIssueIds?: ReadonlySet<string>;
-  issueFilterContext?: IssueFilterWorkspaceContext;
 }): Issue[] {
   const normalizedQuery = query.trim();
   if (!normalizedQuery) return [];
@@ -484,14 +480,7 @@ export function getInboxSearchSupplementIssues({
       .map((item) => item.issue.id),
     ...archivedSearchIssues.map((issue) => issue.id),
   ]);
-  return applyIssueFilters(
-    remoteIssues,
-    issueFilters,
-    currentUserId,
-    enableRoutineVisibilityFilter,
-    liveIssueIds,
-    issueFilterContext,
-  )
+  return applyIssueFilters(remoteIssues, issueFilters, currentUserId, enableRoutineVisibilityFilter, liveIssueIds)
     .filter((issue) => !visibleIssueIds.has(issue.id));
 }
 
@@ -641,13 +630,7 @@ export function resolveInboxNestingEnabled(preferenceEnabled: boolean, isMobile:
 export function loadLastInboxTab(): InboxTab {
   try {
     const raw = localStorage.getItem(INBOX_LAST_TAB_KEY);
-    if (
-      raw === "all"
-      || raw === "unread"
-      || raw === "recent"
-      || raw === "mine"
-      || raw === "blocked"
-    ) return raw;
+    if (raw === "all" || raw === "unread" || raw === "recent" || raw === "mine") return raw;
     if (raw === "new") return "mine";
     return "mine";
   } catch {

@@ -156,8 +156,8 @@ export function ApprovalDetail() {
       ? {
           label:
             (linkedIssues?.length ?? 0) > 1
-              ? "Review linked tasks"
-              : "Review linked task",
+              ? "Review linked issues"
+              : "Review linked issue",
           to: `/issues/${primaryLinkedIssue.identifier ?? primaryLinkedIssue.id}`,
         }
       : linkedAgentId
@@ -183,7 +183,7 @@ export function ApprovalDetail() {
               <div>
                 <p className="text-sm text-green-800 dark:text-green-100 font-medium">Approval confirmed</p>
                 <p className="text-xs text-green-700 dark:text-green-200/90">
-                  Requesting agent was notified to review this approval and linked tasks.
+                  Requesting agent was notified to review this approval and linked issues.
                 </p>
               </div>
             </div>
@@ -255,8 +255,8 @@ export function ApprovalDetail() {
                 </Link>
               ))}
             </div>
-            <p className="text-(length:--text-micro) text-muted-foreground mt-2">
-              Linked tasks remain open until the requesting agent follows up and closes them.
+            <p className="text-[11px] text-muted-foreground mt-2">
+              Linked issues remain open until the requesting agent follows up and closes them.
             </p>
           </div>
         )}

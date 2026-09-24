@@ -23,12 +23,7 @@ const config: StorybookConfig = {
       resolve: {
         alias: {
           "@": path.resolve(storybookConfigDir, "../../src"),
-          lexical: path.resolve(storybookConfigDir, "../../node_modules/lexical/dist/Lexical.mjs"),
-          // Vite's bundled `node:crypto` polyfill omits `createHash`, which
-          // `@paperclipai/shared/external-objects.ts` imports server-side. Use
-          // a no-op browser shim so the import resolves; the canonicalizer
-          // only runs server-side.
-          "node:crypto": path.resolve(storybookConfigDir, "node-crypto-browser-shim.ts"),
+          lexical: path.resolve(storybookConfigDir, "../../node_modules/lexical/Lexical.mjs"),
         },
       },
     }),

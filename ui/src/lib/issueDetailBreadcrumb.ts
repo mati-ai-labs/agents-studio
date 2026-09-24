@@ -11,23 +11,12 @@ export type IssueDetailHeaderSeed = {
   id: string;
   identifier: string | null;
   title: string;
-  status: string;
+  status: Issue["status"];
   blockerAttention?: Issue["blockerAttention"];
-  priority: string;
+  priority: Issue["priority"];
   projectId: string | null;
   projectName: string | null;
-  originKind?: string;
-  originId?: string | null;
-};
-
-type IssueDetailHeaderSeedSource = Pick<Issue, "id" | "title"> & {
-  identifier?: string | null;
-  status: string;
-  blockerAttention?: Issue["blockerAttention"];
-  priority: string;
-  projectId?: string | null;
-  project?: { name?: string | null } | null;
-  originKind?: string;
+  originKind?: Issue["originKind"];
   originId?: string | null;
 };
 
@@ -76,7 +65,7 @@ function isIssueDetailHeaderSeed(value: unknown): value is IssueDetailHeaderSeed
   );
 }
 
-function createIssueDetailHeaderSeed(issue: IssueDetailHeaderSeedSource): IssueDetailHeaderSeed {
+function createIssueDetailHeaderSeed(issue: Issue): IssueDetailHeaderSeed {
   return {
     id: issue.id,
     identifier: issue.identifier ?? null,
@@ -91,7 +80,7 @@ function createIssueDetailHeaderSeed(issue: IssueDetailHeaderSeedSource): IssueD
   };
 }
 
-export function withIssueDetailHeaderSeed(state: unknown, issue: IssueDetailHeaderSeedSource): IssueDetailLocationState {
+export function withIssueDetailHeaderSeed(state: unknown, issue: Issue): IssueDetailLocationState {
   const headerSeed = createIssueDetailHeaderSeed(issue);
   if (typeof state !== "object" || state === null) {
     return { issueDetailHeaderSeed: headerSeed };

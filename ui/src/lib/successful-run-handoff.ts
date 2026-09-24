@@ -34,7 +34,6 @@ export function successfulRunHandoffFromActivity(event: ActivityEvent): Successf
   return {
     state,
     required: state === "required",
-    hasLiveContinuation: false,
     sourceRunId:
       readString(details.sourceRunId)
       ?? readString(details.source_run_id)

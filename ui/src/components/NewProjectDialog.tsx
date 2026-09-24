@@ -33,6 +33,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { PROJECT_COLORS } from "@paperclipai/shared";
 import { cn } from "../lib/utils";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
 import { StatusBadge } from "./StatusBadge";
@@ -164,7 +165,7 @@ export function NewProjectDialog() {
         name: name.trim(),
         description: description.trim() || undefined,
         status,
-        // No color is sent — new projects persist color = null (neutral gray). See PAP-68.
+        color: PROJECT_COLORS[Math.floor(Math.random() * PROJECT_COLORS.length)],
         ...(goalIds.length > 0 ? { goalIds } : {}),
         ...(targetDate ? { targetDate } : {}),
       });
@@ -271,7 +272,7 @@ export function NewProjectDialog() {
             placeholder="Add description..."
             bordered={false}
             mentions={mentionOptions}
-            contentClassName={cn("text-sm text-muted-foreground", expanded ? "min-h-(--sz-220px)" : "min-h-(--sz-120px)")}
+            contentClassName={cn("text-sm text-muted-foreground", expanded ? "min-h-[220px]" : "min-h-[120px]")}
             imageUploadHandler={async (file) => {
               const asset = await uploadDescriptionImage.mutateAsync(file);
               return asset.contentPath;
@@ -288,7 +289,7 @@ export function NewProjectDialog() {
                 <TooltipTrigger asChild>
                   <HelpCircle className="h-3 w-3 text-muted-foreground/50 cursor-help" />
                 </TooltipTrigger>
-                <TooltipContent side="top" className="max-w-(--sz-240px) text-xs">
+                <TooltipContent side="top" className="max-w-[240px] text-xs">
                   Link a GitHub repository so agents can clone, read, and push code for this project.
                 </TooltipContent>
               </Tooltip>
@@ -309,7 +310,7 @@ export function NewProjectDialog() {
                 <TooltipTrigger asChild>
                   <HelpCircle className="h-3 w-3 text-muted-foreground/50 cursor-help" />
                 </TooltipTrigger>
-                <TooltipContent side="top" className="max-w-(--sz-240px) text-xs">
+                <TooltipContent side="top" className="max-w-[240px] text-xs">
                   Set an absolute path on this machine where local agents will read and write files for this project.
                 </TooltipContent>
               </Tooltip>
@@ -361,7 +362,7 @@ export function NewProjectDialog() {
               className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs"
             >
               <Target className="h-3 w-3 text-muted-foreground" />
-              <span className="max-w-(--sz-160px) truncate">{goal.title}</span>
+              <span className="max-w-[160px] truncate">{goal.title}</span>
               <button
                 className="text-muted-foreground hover:text-foreground"
                 onClick={() => setGoalIds((prev) => prev.filter((id) => id !== goal.id))}

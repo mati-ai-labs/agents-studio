@@ -30,14 +30,6 @@ export interface ConnectorListResponse {
   connectors: ConnectorRecord[];
 }
 
-export interface SlackChannel {
-  id: string;
-  name: string;
-  isPrivate: boolean;
-  isMember: boolean;
-  isArchived: boolean;
-}
-
 export interface InitiateOAuthResponse {
   authorizationUrl: string;
   state: string;
@@ -87,12 +79,6 @@ async function disconnect(type: ConnectorType, companyId?: string): Promise<void
   await api.delete(withCompanyId(`/connectors/${type}`, companyId));
 }
 
-/** List channels available from the connected Slack workspace. */
-async function listSlackChannels(companyId?: string): Promise<SlackChannel[]> {
-  const res = await api.get<{ channels: SlackChannel[] }>(withCompanyId("/connectors/slack/channels", companyId));
-  return res.channels;
-}
-
 /** Enable MCP tools for a connector. */
 async function enable(type: ConnectorType, companyId?: string): Promise<ConnectorRecord> {
   const res = await api.post<{ success: boolean; connector: ConnectorRecord }>(
@@ -128,5 +114,4 @@ export const connectorsApi = {
   disconnect,
   enable,
   disable,
-  listSlackChannels,
 };

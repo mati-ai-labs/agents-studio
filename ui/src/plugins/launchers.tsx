@@ -158,32 +158,6 @@ function focusFirstElement(container: HTMLElement | null): void {
   container.focus();
 }
 
-function resolveLauncherNavigationTarget(target: string, hostContext: PluginLauncherContext): string {
-  if (/^https?:\/\//.test(target) || target.startsWith("/") || target.startsWith("#") || target.startsWith(".") || target.startsWith("?")) {
-    return target;
-  }
-  const companyPrefix = hostContext.companyPrefix?.trim();
-  return companyPrefix ? `/${companyPrefix}/${target}` : target;
-}
-
-function launcherRoutePath(launcher: ResolvedPluginLauncher): string | null {
-  if (launcher.action.type !== "navigate" && launcher.action.type !== "deepLink") return null;
-  if (/^https?:\/\//.test(launcher.action.target)) return null;
-  const [pathOnly] = launcher.action.target.split(/[?#]/, 1);
-  const segment = pathOnly?.split("/").filter(Boolean).at(-1);
-  return segment ? segment.toLowerCase() : null;
-}
-
-function launcherDisplayName(launcher: ResolvedPluginLauncher, contribution: PluginUiContribution | undefined): string {
-  if (launcher.placementZone !== "sidebar" || !contribution) return launcher.displayName;
-  const routePath = launcherRoutePath(launcher);
-  if (!routePath) return launcher.displayName;
-  const routeSidebar = contribution.slots.find((slot) =>
-    slot.type === "routeSidebar" && slot.routePath?.toLowerCase() === routePath
-  );
-  return routeSidebar?.displayName ?? launcher.displayName;
-}
-
 function trapFocus(container: HTMLElement, event: KeyboardEvent): void {
   if (event.key !== "Tab") return;
   const focusable = Array.from(
@@ -678,13 +652,13 @@ export function PluginLauncherProvider({ children }: { children: ReactNode }) {
     ) => {
       switch (launcher.action.type) {
         case "navigate":
-          navigate(resolveLauncherNavigationTarget(launcher.action.target, hostContext));
+          navigate(launcher.action.target);
           return;
         case "deepLink":
           if (/^https?:\/\//.test(launcher.action.target)) {
             window.open(launcher.action.target, "_blank", "noopener,noreferrer");
           } else {
-            navigate(resolveLauncherNavigationTarget(launcher.action.target, hostContext));
+            navigate(launcher.action.target);
           }
           return;
         case "performAction":
@@ -751,12 +725,10 @@ export function usePluginLauncherRuntime(): PluginLauncherRuntimeContextValue {
 }
 
 function DefaultLauncherTrigger({
-  displayName,
   launcher,
   placementZone,
   onClick,
 }: {
-  displayName?: string;
   launcher: ResolvedPluginLauncher;
   placementZone: PluginLauncherPlacementZone;
   onClick: (event: ReactMouseEvent<HTMLButtonElement>) => void;
@@ -769,7 +741,7 @@ function DefaultLauncherTrigger({
       className={launcherTriggerClassName(placementZone)}
       onClick={onClick}
     >
-      {displayName ?? launcher.displayName}
+      {launcher.displayName}
     </Button>
   );
 }
@@ -814,7 +786,6 @@ export function PluginLauncherOutlet({
       {launchers.map((launcher) => (
         <div key={`${launcher.pluginKey}:${launcher.id}`} className={itemClassName}>
           <DefaultLauncherTrigger
-            displayName={launcherDisplayName(launcher, contributionsByPluginId.get(launcher.pluginId))}
             launcher={launcher}
             placementZone={launcher.placementZone}
             onClick={(event) => {

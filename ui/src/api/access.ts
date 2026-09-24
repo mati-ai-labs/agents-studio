@@ -384,9 +384,6 @@ export const accessApi = {
   claimBoard: (token: string, code: string) =>
     api.post<{ claimed: true; userId: string }>(`/board-claim/${token}/claim`, { code }),
 
-  claimBootstrapAdmin: () =>
-    api.post<{ claimed: true; userId: string }>("/bootstrap/claim", {}),
-
   getCliAuthChallenge: (id: string, token: string) =>
     api.get<CliAuthChallengeStatus>(`/cli-auth/challenges/${id}?token=${encodeURIComponent(token)}`),
 

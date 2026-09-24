@@ -373,7 +373,7 @@ function hydrateDialogQueries(queryClient: ReturnType<typeof useQueryClient>) {
   queryClient.setQueryData(queryKeys.adapters.all, [
     {
       type: "codex_local",
-      label: "Codex",
+      label: "Codex local",
       source: "builtin",
       modelsCount: 5,
       loaded: true,
@@ -384,12 +384,11 @@ function hydrateDialogQueries(queryClient: ReturnType<typeof useQueryClient>) {
         supportsLocalAgentJwt: true,
         requiresMaterializedRuntimeSkills: false,
         supportsModelProfiles: true,
-        supportsAcp: true,
       },
     },
     {
       type: "claude_local",
-      label: "Claude Code",
+      label: "Claude local",
       source: "builtin",
       modelsCount: 4,
       loaded: true,
@@ -400,7 +399,6 @@ function hydrateDialogQueries(queryClient: ReturnType<typeof useQueryClient>) {
         supportsLocalAgentJwt: true,
         requiresMaterializedRuntimeSkills: false,
         supportsModelProfiles: true,
-        supportsAcp: true,
       },
     },
   ]);
@@ -563,7 +561,7 @@ function IssueDialogOpener({
   return <NewIssueDialog />;
 }
 
-function AgentDialogOpener({ variant = "recommendation" }: { variant?: "recommendation" | "advanced" | "invite" }) {
+function AgentDialogOpener({ advanced }: { advanced?: boolean }) {
   const { openNewAgent } = useDialog();
 
   useOpenWhenCompanyReady(() => {
@@ -571,12 +569,12 @@ function AgentDialogOpener({ variant = "recommendation" }: { variant?: "recommen
   });
 
   useEffect(() => {
-    if (variant === "recommendation") return undefined;
+    if (!advanced) return undefined;
     const timer = window.setTimeout(() => {
-      clickButtonByText(variant === "advanced" ? "Configure a runtime" : "Invite an external agent");
+      clickButtonByText("advanced configuration");
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [variant]);
+  }, [advanced]);
 
   return <NewAgentDialog />;
 }
@@ -688,7 +686,7 @@ function ImageGalleryModalStory() {
       description="The image gallery opens full-screen with attachment metadata, download action, and previous/next navigation."
       badges={["full-screen", "navigation", "visual attachment"]}
     >
-      <ImageGalleryModal items={galleryImages} initialIndex={0} open onOpenChange={() => undefined} />
+      <ImageGalleryModal images={galleryImages} initialIndex={0} open onOpenChange={() => undefined} />
     </DialogStory>
   );
 }
@@ -723,7 +721,7 @@ function useCheapLaneAdapterOverrides(variant: CheapLaneVariant) {
     queryClient.setQueryData(queryKeys.adapters.all, [
       {
         type: "codex_local",
-        label: "Codex",
+        label: "Codex local",
         source: "builtin",
         modelsCount: 5,
         loaded: true,
@@ -734,12 +732,11 @@ function useCheapLaneAdapterOverrides(variant: CheapLaneVariant) {
           supportsLocalAgentJwt: true,
           requiresMaterializedRuntimeSkills: false,
           supportsModelProfiles: true,
-          supportsAcp: true,
         },
       },
       {
         type: "opencode_local",
-        label: "OpenCode",
+        label: "OpenCode local",
         source: "builtin",
         modelsCount: 2,
         loaded: true,
@@ -750,7 +747,6 @@ function useCheapLaneAdapterOverrides(variant: CheapLaneVariant) {
           supportsLocalAgentJwt: true,
           requiresMaterializedRuntimeSkills: true,
           supportsModelProfiles: false,
-          supportsAcp: false,
         },
       },
     ]);
@@ -967,21 +963,7 @@ export const NewAgentAdapterSelection: Story = {
       description="Advanced branch of the agent creation wizard showing registered adapter choices and recommended states."
       badges={["populated", "adapters", "advanced"]}
     >
-      <AgentDialogOpener variant="advanced" />
-    </DialogStory>
-  ),
-};
-
-export const NewAgentExternalInvite: Story = {
-  name: "New Agent - External Invite",
-  render: () => (
-    <DialogStory
-      eyebrow="NewAgentDialog"
-      title="External agent invite"
-      description="Agent onboarding prompt generation inside the add-agent modal."
-      badges={["agent invite", "onboarding", "approval"]}
-    >
-      <AgentDialogOpener variant="invite" />
+      <AgentDialogOpener advanced />
     </DialogStory>
   ),
 };

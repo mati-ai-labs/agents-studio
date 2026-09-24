@@ -26,30 +26,6 @@ function matchesIssueRef(issue: Pick<Issue, "id" | "identifier">, refs: Iterable
   return refSet.has(issue.id) || (!!issue.identifier && refSet.has(issue.identifier));
 }
 
-function isCompleteIssueSnapshot(value: unknown): value is Issue {
-  if (typeof value !== "object" || value === null) return false;
-  const issue = value as Partial<Issue>;
-  return (
-    isNonEmptyString(issue.id)
-    && isNonEmptyString(issue.companyId)
-    && typeof issue.title === "string"
-    && typeof issue.status === "string"
-    && typeof issue.workMode === "string"
-    && typeof issue.priority === "string"
-    && (issue.projectId === null || typeof issue.projectId === "string")
-    && (issue.parentId === null || typeof issue.parentId === "string")
-    && (issue.identifier === null || typeof issue.identifier === "string")
-    && (issue.description === null || typeof issue.description === "string")
-    && (issue.assigneeAgentId === null || typeof issue.assigneeAgentId === "string")
-    && (issue.assigneeUserId === null || typeof issue.assigneeUserId === "string")
-    && (issue.executionRunId === null || typeof issue.executionRunId === "string")
-    && (issue.issueNumber === null || typeof issue.issueNumber === "number")
-    && typeof issue.requestDepth === "number"
-    && issue.createdAt != null
-    && issue.updatedAt != null
-  );
-}
-
 function mergeIssueSnapshots(existing: Issue | undefined, incoming: Issue): Issue {
   if (!existing) return incoming;
   return {
@@ -71,15 +47,13 @@ export function getCachedIssueDetail(
 
   for (const ref of refs) {
     const cached = queryClient.getQueryData<Issue>(queryKeys.issues.detail(ref));
-    if (isCompleteIssueSnapshot(cached)) return cached;
+    if (cached) return cached;
   }
 
   const cachedEntries = queryClient.getQueriesData<Issue>({ queryKey: ISSUE_DETAIL_QUERY_PREFIX });
   return cachedEntries
     .map(([, cachedIssue]) => cachedIssue)
-    .find((cachedIssue): cachedIssue is Issue =>
-      isCompleteIssueSnapshot(cachedIssue) && matchesIssueRef(cachedIssue, refs)
-    );
+    .find((cachedIssue): cachedIssue is Issue => !!cachedIssue && matchesIssueRef(cachedIssue, refs));
 }
 
 export function seedIssueDetailCache(
@@ -89,8 +63,6 @@ export function seedIssueDetailCache(
     issueRef?: string | null;
   },
 ): Issue {
-  if (!isCompleteIssueSnapshot(issue)) return issue;
-
   const refs = collectIssueRefs(options?.issueRef, issue);
   const merged = mergeIssueSnapshots(getCachedIssueDetail(queryClient, options?.issueRef, issue), issue);
 
@@ -107,9 +79,8 @@ export function seedIssueDetailCache(
 export async function fetchIssueDetail(
   queryClient: QueryClient,
   issueRef: string,
-  options?: { signal?: AbortSignal },
 ): Promise<Issue> {
-  const issue = options ? await issuesApi.get(issueRef, options) : await issuesApi.get(issueRef);
+  const issue = await issuesApi.get(issueRef);
   return seedIssueDetailCache(queryClient, issue, { issueRef });
 }
 
@@ -122,7 +93,7 @@ export function getIssueDetailQueryOptions(
 ) {
   return {
     queryKey: queryKeys.issues.detail(issueRef),
-    queryFn: ({ signal }: { signal?: AbortSignal }) => fetchIssueDetail(queryClient, issueRef, { signal }),
+    queryFn: () => fetchIssueDetail(queryClient, issueRef),
     placeholderData: getCachedIssueDetail(queryClient, issueRef, options?.placeholderIssue ?? undefined),
   };
 }
@@ -134,7 +105,7 @@ export function prefetchIssueDetail(
     issue?: Issue | null;
   },
 ) {
-  if (isCompleteIssueSnapshot(options?.issue)) {
+  if (options?.issue) {
     seedIssueDetailCache(queryClient, options.issue, { issueRef });
   }
 

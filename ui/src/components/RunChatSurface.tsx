@@ -48,6 +48,7 @@ export const RunChatSurface = memo(function RunChatSurface({
     () => new Map([[run.id, transcript as readonly TranscriptEntry[]]]),
     [run.id, transcript],
   );
+
   return (
     <IssueChatThread
       comments={EMPTY_COMMENTS}
