@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Navigate, useLocation, useNavigate, useParams } from "@/lib/router";
+import { Link, Navigate, useLocation, useNavigate, useParams } from "@/lib/router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Repeat, Sparkles } from "lucide-react";
 import { ApiError } from "../api/client";
@@ -33,10 +33,6 @@ import { RunButton } from "../components/AgentActionButtons";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { getRecentProjectIds, trackRecentProject } from "../lib/recent-projects";
 import { Badge } from "@/components/ui/badge";
-import {
-  RoutineSubSidebar,
-  RoutineSectionPicker,
-} from "../components/RoutineSubSidebar";
 import { RoutineSaveBar } from "../components/RoutineSaveBar";
 import {
   EDITABLE_SECTIONS,
@@ -869,29 +865,43 @@ export function RoutineDetail() {
           </div>
         </header>
 
-        {/* Mobile section picker */}
-        <RoutineSectionPicker
-          activeSection={section}
-          onNavigate={navigateToSection}
-          isSectionDirty={isSectionDirty}
-          hideTriggers={isWorkflowView}
-        />
+        <nav
+          aria-label="Routine sections"
+          className="flex shrink-0 gap-1 overflow-x-auto border-b border-border bg-background px-4 md:px-6"
+        >
+          {ROUTINE_SECTION_KEYS.filter((target) => !(isWorkflowView && target === "triggers")).map((target) => {
+            const isActive = target === section;
+            const dirty = isSectionDirty(target);
+            const showLiveDot = target === "runs" && hasLiveRun;
+            return (
+              <Link
+                key={target}
+                to={`/${routineRouteBase}/${routineId}/${target}`}
+                replace
+                aria-current={isActive ? "page" : undefined}
+                onClick={() => writeLastSection(routineId!, target)}
+                className={`relative flex h-11 shrink-0 items-center gap-1.5 border-b-2 px-3 text-sm font-medium transition-colors ${
+                  isActive
+                    ? "border-foreground text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {SECTION_TITLES[target]}
+                {showLiveDot ? (
+                  <span className="h-1.5 w-1.5 rounded-full bg-blue-500 motion-safe:animate-pulse" />
+                ) : dirty ? (
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-label="Unsaved changes" />
+                ) : null}
+              </Link>
+            );
+          })}
+        </nav>
 
-        <div className="flex min-h-0 flex-1">
-          <RoutineSubSidebar
-            activeSection={section}
-            hrefFor={(target) => `/${routineRouteBase}/${routineId}/${target}`}
-            isSectionDirty={isSectionDirty}
-            hasLiveRun={hasLiveRun}
-            hideTriggers={isWorkflowView}
-            onNavigate={(target) => writeLastSection(routineId!, target)}
-          />
-
-          <main
-            id="routine-section"
-            role="main"
-            className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 pb-6 pt-10 md:px-8"
-          >
+        <main
+          id="routine-section"
+          role="main"
+          className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 pb-6 pt-10 md:px-8"
+        >
             <section
               aria-labelledby="routine-section-title"
               className={isEditableSection ? "mx-auto w-full max-w-3xl" : "w-full"}
@@ -922,8 +932,7 @@ export function RoutineDetail() {
                 />
               ) : null}
             </section>
-          </main>
-        </div>
+        </main>
       </div>
 
       <RoutineRunVariablesDialog
