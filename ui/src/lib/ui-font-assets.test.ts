@@ -10,7 +10,7 @@ const cssPath = path.join(uiRoot, "src", "index.css");
 const fontFiles = ["InterVariable.woff2", "InterVariable-Italic.woff2"];
 
 describe("bundled UI font assets", () => {
-  it("ships the Inter variable font files used by the CSS", () => {
+  it("keeps the Agent Studio system font stack instead of activating Inter", () => {
     const css = readFileSync(cssPath, "utf8");
 
     for (const fileName of fontFiles) {
@@ -18,10 +18,12 @@ describe("bundled UI font assets", () => {
       expect(existsSync(fontPath), `${fileName} should exist in ui/public/fonts`).toBe(true);
       expect(statSync(fontPath).isFile(), `${fileName} should be a file`).toBe(true);
       expect(readFileSync(fontPath).subarray(0, 4).toString("ascii")).toBe("wOF2");
-      expect(css).toContain(`url("../fonts/${fileName}")`);
+      expect(css).not.toContain(`url("../fonts/${fileName}")`);
     }
 
-    expect(css).toContain('--font-sans: "InterVariable"');
+    expect(css).not.toContain("InterVariable");
+    expect(css).toContain("--radius-lg: 0px");
+    expect(css).toContain("--radius: 0");
   });
 
   it("includes redistribution notice text for the bundled Inter files", () => {
