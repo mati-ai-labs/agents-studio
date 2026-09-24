@@ -6,7 +6,6 @@ import { ApiError } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
-import { Card } from "@/components/ui/card";
 import { useCompany } from "@/context/CompanyContext";
 import { useToast } from "@/context/ToastContext";
 import { queryKeys } from "@/lib/queryKeys";
@@ -22,8 +21,7 @@ export function InstanceAccess() {
 
   useEffect(() => {
     setBreadcrumbs([
-      { label: "Settings", href: "/company/settings" },
-      { label: "Instance settings", href: "/company/settings/instance/general" },
+      { label: "Instance Settings", href: "/instance/settings/general" },
       { label: "Access" },
     ]);
   }, [setBreadcrumbs]);
@@ -111,8 +109,8 @@ export function InstanceAccess() {
         </p>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-(--gtc-34)">
-        <Card className="block space-y-4 p-4">
+      <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
+        <section className="space-y-4 rounded-xl border border-border bg-card p-4">
           <label className="block space-y-2 text-sm">
             <span className="font-medium">Search users</span>
             <input
@@ -149,9 +147,9 @@ export function InstanceAccess() {
               </button>
             ))}
           </div>
-        </Card>
+        </section>
 
-        <Card className="block space-y-4 p-5">
+        <section className="space-y-4 rounded-xl border border-border bg-card p-5">
           {!selectedUserId ? (
             <div className="text-sm text-muted-foreground">Select a user to inspect instance access.</div>
           ) : userAccessQuery.isLoading ? (
@@ -244,7 +242,7 @@ export function InstanceAccess() {
               </div>
             </>
           )}
-        </Card>
+        </section>
       </div>
     </div>
   );

@@ -38,13 +38,7 @@ import {
   KeyRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import {
-  connectorsApi,
-  type ConnectorRecord,
-  type ConnectorType,
-  type SlackChannel,
-} from "@/api/connectors";
-import { useSlackWorkspace } from "@/hooks/useSlackWorkspace";
+import { connectorsApi, type ConnectorRecord, type ConnectorType } from "@/api/connectors";
 
 // ---------------------------------------------------------------------------
 // Connector type definitions
@@ -130,23 +124,10 @@ const CONNECTOR_META: Record<ConnectorType, {
     name: "Slack",
     description: "Connect a Slack workspace so agents can read channels, send messages, and collaborate through Slack.",
     icon: "#",
-    scopes: ["channels:read", "groups:read", "chat:write", "chat:write.public", "team:read"],
+    scopes: ["channels:read", "channels:history", "chat:write", "users:read", "team:read"],
     mode: "oauth",
   },
 };
-
-function readSlackWorkspaceConfig(config: Record<string, unknown> | null | undefined): {
-  teamName: string | null;
-  teamDomain: string | null;
-  botUserId: string | null;
-} {
-  const record = config ?? {};
-  return {
-    teamName: typeof record.teamName === "string" ? record.teamName : null,
-    teamDomain: typeof record.teamDomain === "string" ? record.teamDomain : null,
-    botUserId: typeof record.botUserId === "string" ? record.botUserId : null,
-  };
-}
 
 const STATUS_CONFIG: Record<ConnectorStatus, {
   label: string;
@@ -187,8 +168,6 @@ interface ConnectorCardProps {
   onDisconnect: (type: ConnectorType) => void;
   isConnecting: boolean;
   isDisconnecting: boolean;
-  slackChannels?: SlackChannel[];
-  slackChannelsLoading?: boolean;
 }
 
 function ConnectorCard({
@@ -199,15 +178,12 @@ function ConnectorCard({
   onDisconnect,
   isConnecting,
   isDisconnecting,
-  slackChannels = [],
-  slackChannelsLoading = false,
 }: ConnectorCardProps) {
   const meta = CONNECTOR_META[type];
   const status = connector?.status ?? "disconnected";
   const statusCfg = STATUS_CONFIG[status];
   const displayName = connector?.displayName;
   const lastError = connector?.lastError;
-  const slackWorkspace = type === "slack" ? readSlackWorkspaceConfig(connector?.config) : null;
 
   const canConnect = status === "disconnected" || status === "error";
   const canDisconnect = status === "connected" || status === "connecting" || status === "error";
@@ -265,43 +241,6 @@ function ConnectorCard({
           </p>
         )}
 
-        {type === "slack" && status === "connected" ? (
-          <div className="rounded-md border border-border/70 p-2 text-xs">
-            <div className="font-medium text-foreground">
-              {slackWorkspace?.teamName ?? displayName ?? "Connected workspace"}
-            </div>
-            <div className="mt-1 text-muted-foreground">
-              {slackWorkspace?.teamDomain ? `${slackWorkspace.teamDomain}.slack.com` : "Workspace bot installation ready"}
-            </div>
-            {slackChannelsLoading ? (
-              <div className="mt-2 inline-flex items-center gap-1.5 text-muted-foreground">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Loading channels...
-              </div>
-            ) : slackChannels.length > 0 ? (
-              <div className="mt-2 flex flex-wrap gap-1">
-                {slackChannels.slice(0, 6).map((channel) => (
-                  <span
-                    key={channel.id}
-                    className="inline-flex items-center rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground"
-                  >
-                    #{channel.name}
-                  </span>
-                ))}
-                {slackChannels.length > 6 ? (
-                  <span className="inline-flex items-center rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                    +{slackChannels.length - 6} more
-                  </span>
-                ) : null}
-              </div>
-            ) : (
-              <div className="mt-2 text-muted-foreground">
-                No visible public or private channels were returned.
-              </div>
-            )}
-          </div>
-        ) : null}
-
         {/* Actions */}
         <div className="flex gap-2 mt-auto">
           {canConnect && (
@@ -337,7 +276,7 @@ function ConnectorCard({
 // Main Connectors page
 // ---------------------------------------------------------------------------
 
-export function Connectors({ embedded = false }: { embedded?: boolean } = {}) {
+export function Connectors() {
   const { selectedCompany } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const { pushToast } = useToastActions();
@@ -362,10 +301,6 @@ export function Connectors({ embedded = false }: { embedded?: boolean } = {}) {
   const [configSurgeDomain, setConfigSurgeDomain] = useState("");
   const [isConfiguring, setIsConfiguring] = useState(false);
   const companyId = selectedCompany?.id ?? null;
-  const { channels: slackChannels, channelsLoading: slackChannelsLoading } = useSlackWorkspace({
-    companyId,
-    enabled: Boolean(companyId),
-  });
 
   // Show toast for OAuth callback results
   const connected = searchParams.get("connected");
@@ -401,19 +336,13 @@ export function Connectors({ embedded = false }: { embedded?: boolean } = {}) {
 
   // Fetch connectors on mount
   useEffect(() => {
-    if (embedded) {
-      void fetchConnectors();
-      return;
-    }
-
     setBreadcrumbs([
       { label: selectedCompany?.name ?? "Company", href: "/dashboard" },
       { label: "Settings", href: "/instance/settings/heartbeats" },
       { label: "Connectors" },
     ]);
     void fetchConnectors();
-    return () => setBreadcrumbs([]);
-  }, [embedded, selectedCompany?.name, companyId]);
+  }, [selectedCompany?.name, companyId]);
 
   async function fetchConnectors() {
     if (!companyId) {
@@ -560,29 +489,18 @@ export function Connectors({ embedded = false }: { embedded?: boolean } = {}) {
   }
 
   return (
-    <div className={embedded ? "space-y-4" : "max-w-5xl space-y-6"}>
-      {embedded ? (
-        <div>
-          <h2 className="text-lg font-semibold">Company apps</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Connect the services your agents use. These integrations keep their existing secure credentials and runtime access.
-          </p>
+    <div className="space-y-6 max-w-5xl">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Link2 className="h-6 w-6 text-muted-foreground" />
+          <h1 className="text-xl font-semibold">Connectors</h1>
         </div>
-      ) : (
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Link2 className="h-6 w-6 text-muted-foreground" />
-            <h1 className="text-xl font-semibold">Connectors</h1>
-          </div>
-        </div>
-      )}
+      </div>
 
-      {!embedded ? (
-        <p className="text-sm text-muted-foreground">
-          Connect your external tools to enable agents to read and write data on your behalf.
-          Credentials are encrypted and stored securely.
-        </p>
-      ) : null}
+      <p className="text-sm text-muted-foreground">
+        Connect your external tools to enable agents to read and write data on your behalf.
+        Credentials are encrypted and stored securely.
+      </p>
 
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
@@ -600,8 +518,6 @@ export function Connectors({ embedded = false }: { embedded?: boolean } = {}) {
               onDisconnect={(t) => setDisconnectDialogType(t)}
               isConnecting={connectingType === type}
               isDisconnecting={disconnectingType === type}
-              slackChannels={type === "slack" ? slackChannels : undefined}
-              slackChannelsLoading={type === "slack" ? slackChannelsLoading : false}
             />
           ))}
         </div>

@@ -36,11 +36,6 @@ export interface ActiveRunForIssue {
   lastUsefulActionAt?: string | Date | null;
   nextAction?: string | null;
   outputSilence?: HeartbeatRun["outputSilence"];
-  currentStatusMessage?: string | null;
-  currentStatusUpdatedAt?: string | Date | null;
-  currentToolName?: string | null;
-  lastAssistantSnippet?: string | null;
-  lastEventAt?: string | Date | null;
 }
 
 export interface LiveRunForIssue {
@@ -65,11 +60,6 @@ export interface LiveRunForIssue {
   lastUsefulActionAt?: string | null;
   nextAction?: string | null;
   outputSilence?: HeartbeatRun["outputSilence"];
-  currentStatusMessage?: string | null;
-  currentStatusUpdatedAt?: string | null;
-  currentToolName?: string | null;
-  lastAssistantSnippet?: string | null;
-  lastEventAt?: string | null;
 }
 
 export interface WatchdogDecisionInput {
@@ -80,16 +70,11 @@ export interface WatchdogDecisionInput {
   snoozedUntil?: string | null;
 }
 
-export interface HeartbeatRunListOptions {
-  summary?: boolean;
-}
-
 export const heartbeatsApi = {
-  list: (companyId: string, agentId?: string, limit?: number, options: HeartbeatRunListOptions = {}) => {
+  list: (companyId: string, agentId?: string, limit?: number) => {
     const searchParams = new URLSearchParams();
     if (agentId) searchParams.set("agentId", agentId);
     if (limit) searchParams.set("limit", String(limit));
-    if (options.summary) searchParams.set("summary", "true");
     const qs = searchParams.toString();
     return api.get<HeartbeatRun[]>(`/companies/${companyId}/heartbeat-runs${qs ? `?${qs}` : ""}`);
   },

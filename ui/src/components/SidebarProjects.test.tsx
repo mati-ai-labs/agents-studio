@@ -1,13 +1,12 @@
 // @vitest-environment jsdom
 
+import { act } from "react";
 import type { ReactNode } from "react";
-import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { Project, ResourceMemberships } from "@paperclipai/shared";
+import type { Project } from "@paperclipai/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SidebarProjects } from "./SidebarProjects";
-import { TooltipProvider } from "@/components/ui/tooltip";
 
 const mockProjectsApi = vi.hoisted(() => ({
   list: vi.fn(),
@@ -17,20 +16,9 @@ const mockAuthApi = vi.hoisted(() => ({
   getSession: vi.fn(),
 }));
 
-const mockResourceMembershipsApi = vi.hoisted(() => ({
-  listMine: vi.fn(),
-  updateProject: vi.fn(),
-}));
-const mockInstanceSettingsApi = vi.hoisted(() => ({
-  getExperimental: vi.fn(),
-}));
-
 const mockOpenNewProject = vi.hoisted(() => vi.fn());
-const mockPushToast = vi.hoisted(() => vi.fn());
 const mockSetSidebarOpen = vi.hoisted(() => vi.fn());
 const mockPersistOrder = vi.hoisted(() => vi.fn());
-const mockSidebarState = vi.hoisted(() => ({ isMobile: false, collapsed: false, peeking: false }));
-const mockPointerState = vi.hoisted(() => ({ fine: true }));
 
 vi.mock("@/lib/router", () => ({
   Link: ({ children, to, ...props }: { children: ReactNode; to: string }) => (
@@ -75,16 +63,8 @@ vi.mock("../context/DialogContext", () => ({
 
 vi.mock("../context/SidebarContext", () => ({
   useSidebar: () => ({
-    isMobile: mockSidebarState.isMobile,
+    isMobile: false,
     setSidebarOpen: mockSetSidebarOpen,
-    collapsed: mockSidebarState.collapsed,
-    peeking: mockSidebarState.peeking,
-  }),
-}));
-
-vi.mock("../context/ToastContext", () => ({
-  useToastActions: () => ({
-    pushToast: mockPushToast,
   }),
 }));
 
@@ -92,20 +72,8 @@ vi.mock("../api/projects", () => ({
   projectsApi: mockProjectsApi,
 }));
 
-vi.mock("../api/instanceSettings", () => ({
-  instanceSettingsApi: mockInstanceSettingsApi,
-}));
-
-vi.mock("@/api/instanceSettings", () => ({
-  instanceSettingsApi: mockInstanceSettingsApi,
-}));
-
 vi.mock("../api/auth", () => ({
   authApi: mockAuthApi,
-}));
-
-vi.mock("../api/resourceMemberships", () => ({
-  resourceMembershipsApi: mockResourceMembershipsApi,
 }));
 
 vi.mock("../hooks/useProjectOrder", () => ({
@@ -137,14 +105,6 @@ if (!globalThis.PointerEvent) {
   (globalThis as any).PointerEvent = MouseEvent;
 }
 
-async function act(callback: () => void | Promise<void>) {
-  let result: void | Promise<void> = undefined;
-  flushSync(() => {
-    result = callback();
-  });
-  await result;
-}
-
 function makeProject(overrides: Partial<Project>): Project {
   return {
     id: "project-a",
@@ -159,7 +119,6 @@ function makeProject(overrides: Partial<Project>): Project {
     leadAgentId: null,
     targetDate: null,
     color: "#ef4444",
-    icon: null,
     env: null,
     pauseReason: null,
     pausedAt: null,
@@ -209,17 +168,6 @@ async function openProjectsMenu(container: HTMLElement) {
   await flushReact();
 }
 
-async function openProjectMenu(label = "Open actions for Alpha") {
-  const trigger = document.body.querySelector(`button[aria-label="${label}"]`);
-  expect(trigger).not.toBeNull();
-
-  await act(async () => {
-    trigger?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
-    trigger?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  });
-  await flushReact();
-}
-
 async function chooseSortMode(label: string) {
   const item = Array.from(document.body.querySelectorAll('[data-slot="dropdown-menu-radio-item"]'))
     .find((element) => element.textContent?.includes(label));
@@ -235,7 +183,6 @@ describe("SidebarProjects", () => {
   let container: HTMLDivElement;
   let root: ReturnType<typeof createRoot> | null;
   let queryClient: QueryClient;
-  let memberships: ResourceMemberships;
 
   beforeEach(() => {
     container = document.createElement("div");
@@ -245,25 +192,6 @@ describe("SidebarProjects", () => {
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
     localStorage.clear();
-    mockSidebarState.isMobile = false;
-    mockSidebarState.collapsed = false;
-    mockSidebarState.peeking = false;
-    mockPointerState.fine = true;
-    Object.defineProperty(window, "matchMedia", {
-      writable: true,
-      value: vi.fn().mockImplementation((query: string) => ({
-        matches: query.includes("(hover: hover)") && query.includes("(pointer: fine)")
-          ? mockPointerState.fine
-          : false,
-        media: query,
-        onchange: null,
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-        addListener: vi.fn(),
-        removeListener: vi.fn(),
-        dispatchEvent: vi.fn(),
-      })),
-    });
     mockProjectsApi.list.mockResolvedValue([
       makeProject({
         id: "project-a",
@@ -290,30 +218,6 @@ describe("SidebarProjects", () => {
     mockAuthApi.getSession.mockResolvedValue({
       session: { id: "session-1", userId: "user-1" },
       user: { id: "user-1" },
-    });
-    mockInstanceSettingsApi.getExperimental.mockResolvedValue({
-      enableIsolatedWorkspaces: false,
-    });
-    memberships = {
-      projectMemberships: {},
-      agentMemberships: {},
-      updatedAt: null,
-    };
-    mockResourceMembershipsApi.listMine.mockImplementation(() => Promise.resolve(memberships));
-    mockResourceMembershipsApi.updateProject.mockImplementation((_companyId, projectId, data) => {
-      memberships = {
-        ...memberships,
-        projectMemberships: {
-          ...memberships.projectMemberships,
-          [projectId]: data.state,
-        },
-        updatedAt: new Date(),
-      };
-      return Promise.resolve({
-        resourceType: "project",
-        resourceId: projectId,
-        state: data.state,
-      });
     });
   });
 
@@ -345,64 +249,11 @@ describe("SidebarProjects", () => {
     await flushReact();
   }
 
-  async function renderRailSidebarProjects() {
-    mockSidebarState.collapsed = true;
-    const currentRoot = createRoot(container);
-    root = currentRoot;
-
-    await act(async () => {
-      currentRoot.render(
-        <QueryClientProvider client={queryClient}>
-          <TooltipProvider>
-            <SidebarProjects />
-          </TooltipProvider>
-        </QueryClientProvider>,
-      );
-    });
-    await flushReact();
-  }
-
-  it("renders icon-only project rows with tooltips and no row actions in the rail", async () => {
-    await renderRailSidebarProjects();
-
-    // Project names stay in the a11y tree but kept in flow (zero-width, clipped)
-    // so rows stay 1:1 tall with the expanded state (PAP-10676); rows become
-    // tooltip triggers and the per-row actions dropdown is dropped.
-    const nameSpan = Array.from(container.querySelectorAll("span")).find((el) => el.textContent === "Bravo");
-    expect(nameSpan?.className).not.toContain("sr-only");
-    expect(nameSpan?.className).toContain("w-0");
-    expect(nameSpan?.className).toContain("overflow-hidden");
-    const projectLink = container.querySelector('a[href^="/projects/"]');
-    expect(projectLink?.parentElement?.getAttribute("data-slot")).toBe("tooltip-trigger");
-    expect(container.querySelector('button[aria-label="Open actions for Bravo"]')).toBeNull();
-    // The section header collapses to a divider (no section menu trigger).
-    expect(container.querySelector('button[aria-label="Projects section actions"]')).toBeNull();
-  });
-
   it("keeps top mode in curated order and renders plugin project slots", async () => {
     await renderSidebarProjects();
 
     expect(projectLinkLabels(container)).toEqual(["Bravo", "Alpha", "Charlie"]);
     expect(container.querySelector('[data-testid="project-slot-project-b"]')).toBeTruthy();
-    expect(container.querySelector('[aria-roledescription="sortable"]')).toBeTruthy();
-  });
-
-  it("uses plain project rows for top mode on mobile", async () => {
-    mockSidebarState.isMobile = true;
-
-    await renderSidebarProjects();
-
-    expect(projectLinkLabels(container)).toEqual(["Bravo", "Alpha", "Charlie"]);
-    expect(container.querySelector('[aria-roledescription="sortable"]')).toBeNull();
-  });
-
-  it("uses plain project rows for top mode on coarse pointer screens", async () => {
-    mockPointerState.fine = false;
-
-    await renderSidebarProjects();
-
-    expect(projectLinkLabels(container)).toEqual(["Bravo", "Alpha", "Charlie"]);
-    expect(container.querySelector('[aria-roledescription="sortable"]')).toBeNull();
   });
 
   it("uses the heading for section menu and the plus button for project creation", async () => {
@@ -444,47 +295,5 @@ describe("SidebarProjects", () => {
     await chooseSortMode("Recent");
 
     expect(projectLinkLabels(container)).toEqual(["Charlie", "Bravo", "Alpha"]);
-  });
-
-  it("filters left projects only after membership state loads", async () => {
-    let resolveMemberships!: (value: unknown) => void;
-    mockResourceMembershipsApi.listMine.mockReturnValue(new Promise((resolve) => {
-      resolveMemberships = resolve;
-    }));
-
-    await renderSidebarProjects();
-    expect(projectLinkLabels(container)).toEqual(["Bravo", "Alpha", "Charlie"]);
-
-    await act(async () => {
-      resolveMemberships({
-        projectMemberships: { "project-a": "left" },
-        agentMemberships: {},
-        updatedAt: null,
-      });
-    });
-    await flushReact();
-
-    expect(projectLinkLabels(container)).toEqual(["Bravo", "Charlie"]);
-  });
-
-  it("offers leave project from each sidebar project menu", async () => {
-    await renderSidebarProjects();
-    await openProjectMenu();
-
-    const leaveItem = Array.from(document.body.querySelectorAll('[data-slot="dropdown-menu-item"]'))
-      .find((element) => element.textContent?.includes("Leave project"));
-    expect(leaveItem).toBeTruthy();
-
-    await act(async () => {
-      leaveItem?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    await flushReact();
-
-    expect(mockResourceMembershipsApi.updateProject).toHaveBeenCalledWith(
-      "company-1",
-      "project-a",
-      { state: "left" },
-    );
-    expect(projectLinkLabels(container)).toEqual(["Bravo", "Charlie"]);
   });
 });

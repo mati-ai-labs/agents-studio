@@ -3,7 +3,6 @@ import {
   parseAgentMentionHref,
   parseIssueReferenceHref,
   parseProjectMentionHref,
-  parseRoutineMentionHref,
   parseSkillMentionHref,
   parseUserMentionHref,
 } from "@paperclipai/shared";
@@ -33,10 +32,6 @@ export type ParsedMentionChip =
       kind: "skill";
       skillId: string;
       slug: string | null;
-    }
-  | {
-      kind: "routine";
-      routineId: string;
     };
 
 const iconMaskCache = new Map<string, string>();
@@ -86,14 +81,6 @@ export function parseMentionChipHref(href: string): ParsedMentionChip | null {
       kind: "skill",
       skillId: skill.skillId,
       slug: skill.slug,
-    };
-  }
-
-  const routine = parseRoutineMentionHref(href);
-  if (routine) {
-    return {
-      kind: "routine",
-      routineId: routine.routineId,
     };
   }
 
@@ -148,7 +135,6 @@ export function clearMentionChipDecoration(element: HTMLElement) {
     "paperclip-mention-chip--agent",
     "paperclip-mention-chip--issue",
     "paperclip-mention-chip--project",
-    "paperclip-mention-chip--routine",
     "paperclip-mention-chip--user",
     "paperclip-mention-chip--skill",
     "paperclip-project-mention-chip",

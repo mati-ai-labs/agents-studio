@@ -1,19 +1,11 @@
 // @vitest-environment jsdom
 
+import { act } from "react";
 import type { ComponentProps } from "react";
-import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import type { ExecutionWorkspace, Issue } from "@paperclipai/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IssueWorkspaceCard } from "./IssueWorkspaceCard";
-
-function act(callback: () => void | Promise<void>) {
-  let result: void | Promise<void> | undefined;
-  flushSync(() => {
-    result = callback();
-  });
-  return result;
-}
 
 const useQueryMock = vi.fn();
 
@@ -92,7 +84,6 @@ function createIssue(overrides: Partial<Issue> = {}): Issue {
     priority: "medium",
     assigneeAgentId: "agent-1",
     assigneeUserId: null,
-    responsibleUserId: null,
     createdByAgentId: null,
     createdByUserId: null,
     issueNumber: 81,
@@ -125,26 +116,18 @@ function createIssue(overrides: Partial<Issue> = {}): Issue {
 
 describe("IssueWorkspaceCard", () => {
   let container: HTMLDivElement;
-  let originalResizeObserver: typeof ResizeObserver | undefined;
 
   beforeEach(() => {
-    originalResizeObserver = globalThis.ResizeObserver;
-    globalThis.ResizeObserver = class ResizeObserver {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    };
     container = document.createElement("div");
     document.body.appendChild(container);
     useQueryMock.mockReset();
   });
 
   afterEach(() => {
-    globalThis.ResizeObserver = originalResizeObserver!;
     container.remove();
   });
 
-  it("clears the legacy issue environment override when reusing a workspace", () => {
+  it("locks the environment selector and clears the issue override when reusing a workspace", () => {
     const root = createRoot(container);
     const onUpdate = vi.fn();
     const reusableWorkspace = createExecutionWorkspace();
@@ -189,8 +172,12 @@ describe("IssueWorkspaceCard", () => {
     });
 
     const selects = container.querySelectorAll("select");
-    expect(selects).toHaveLength(1);
-    expect(container.querySelector("button[role='combobox']")?.textContent).toContain("Issue sandbox");
+    expect(selects).toHaveLength(3);
+
+    const environmentSelect = selects[2] as HTMLSelectElement;
+    expect(environmentSelect.disabled).toBe(true);
+    expect(environmentSelect.value).toBe("env-workspace");
+    expect(container.textContent).toContain("Environment selection is locked while reusing an existing workspace.");
 
     const saveButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Save"));
     expect(saveButton).not.toBeUndefined();
@@ -253,8 +240,7 @@ describe("IssueWorkspaceCard", () => {
     });
 
     const selects = container.querySelectorAll("select");
-    expect(selects).toHaveLength(1);
-    expect(container.querySelector("button[role='combobox']")?.textContent).toContain("Issue sandbox");
+    expect(selects).toHaveLength(2);
     expect(container.textContent).not.toContain("Project default environment");
 
     act(() => {

@@ -24,10 +24,8 @@ export function SwipeToArchive({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const startPointRef = useRef<{ x: number; y: number } | null>(null);
   const widthRef = useRef(0);
-  const archiveTimeoutRef = useRef<number | null>(null);
-  const suppressClickTimeoutRef = useRef<number | null>(null);
+  const timeoutRef = useRef<number | null>(null);
   const suppressClickRef = useRef(false);
-  const offsetXRef = useRef(0);
   const [offsetX, setOffsetX] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const [isCollapsing, setIsCollapsing] = useState(false);
@@ -35,77 +33,39 @@ export function SwipeToArchive({
 
   useEffect(() => {
     return () => {
-      if (archiveTimeoutRef.current !== null) window.clearTimeout(archiveTimeoutRef.current);
-      if (suppressClickTimeoutRef.current !== null) window.clearTimeout(suppressClickTimeoutRef.current);
-      archiveTimeoutRef.current = null;
-      suppressClickTimeoutRef.current = null;
-      startPointRef.current = null;
-      suppressClickRef.current = false;
+      if (timeoutRef.current !== null) {
+        window.clearTimeout(timeoutRef.current);
+      }
     };
   }, []);
 
-  const clearArchiveTimeout = () => {
-    if (archiveTimeoutRef.current === null) return;
-    window.clearTimeout(archiveTimeoutRef.current);
-    archiveTimeoutRef.current = null;
-  };
-
-  const clearClickSuppressionTimeout = () => {
-    if (suppressClickTimeoutRef.current === null) return;
-    window.clearTimeout(suppressClickTimeoutRef.current);
-    suppressClickTimeoutRef.current = null;
-  };
-
-  const clearClickSuppression = () => {
-    clearClickSuppressionTimeout();
-    suppressClickRef.current = false;
-  };
-
-  const releaseClickSuppressionSoon = () => {
-    clearClickSuppressionTimeout();
-    suppressClickTimeoutRef.current = window.setTimeout(() => {
-      suppressClickRef.current = false;
-      suppressClickTimeoutRef.current = null;
-    }, 350);
-  };
-
   const reset = () => {
     startPointRef.current = null;
-    offsetXRef.current = 0;
     setIsDragging(false);
-    setIsCollapsing(false);
-    setLockedHeight(null);
     setOffsetX(0);
   };
 
   const commitArchive = () => {
-    clearArchiveTimeout();
     const node = containerRef.current;
     if (!node) {
       onArchive();
       return;
     }
-    startPointRef.current = null;
     setIsDragging(false);
     setLockedHeight(node.offsetHeight);
-    const commitOffset = -Math.max(widthRef.current, node.offsetWidth);
-    offsetXRef.current = commitOffset;
-    setOffsetX(commitOffset);
+    setOffsetX(-Math.max(widthRef.current, node.offsetWidth));
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
         setIsCollapsing(true);
       });
     });
-    archiveTimeoutRef.current = window.setTimeout(() => {
-      archiveTimeoutRef.current = null;
+    timeoutRef.current = window.setTimeout(() => {
       onArchive();
     }, COMMIT_DELAY_MS);
   };
 
   const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
-    if (disabled || isCollapsing || archiveTimeoutRef.current !== null || event.touches.length !== 1) return;
-    clearArchiveTimeout();
-    clearClickSuppression();
+    if (disabled || event.touches.length !== 1) return;
     const touch = event.touches[0];
     const node = containerRef.current;
     widthRef.current = node?.offsetWidth ?? 0;
@@ -136,7 +96,6 @@ export function SwipeToArchive({
     if (deltaX >= 0) {
       event.preventDefault();
       setIsDragging(true);
-      offsetXRef.current = 0;
       setOffsetX(0);
       return;
     }
@@ -144,27 +103,17 @@ export function SwipeToArchive({
     const maxSwipe = widthRef.current > 0 ? widthRef.current * MAX_SWIPE : Number.POSITIVE_INFINITY;
     event.preventDefault();
     setIsDragging(true);
-    const nextOffset = Math.max(deltaX, -maxSwipe);
-    offsetXRef.current = nextOffset;
-    setOffsetX(nextOffset);
+    setOffsetX(Math.max(deltaX, -maxSwipe));
   };
 
   const handleTouchEnd = () => {
-    if (disabled || isCollapsing || archiveTimeoutRef.current !== null) return;
+    if (disabled || isCollapsing) return;
     const shouldCommit =
-      widthRef.current > 0 && Math.abs(offsetXRef.current) >= widthRef.current * COMMIT_THRESHOLD;
+      widthRef.current > 0 && Math.abs(offsetX) >= widthRef.current * COMMIT_THRESHOLD;
     if (shouldCommit) {
-      releaseClickSuppressionSoon();
       commitArchive();
       return;
     }
-    if (isDragging) releaseClickSuppressionSoon();
-    reset();
-  };
-
-  const handleTouchCancel = () => {
-    if (disabled || isCollapsing || archiveTimeoutRef.current !== null) return;
-    clearClickSuppression();
     reset();
   };
 
@@ -182,21 +131,18 @@ export function SwipeToArchive({
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
-      onTouchCancel={handleTouchCancel}
+      onTouchCancel={handleTouchEnd}
       onClickCapture={(event) => {
         if (!suppressClickRef.current) return;
         event.preventDefault();
         event.stopPropagation();
-        clearClickSuppression();
+        suppressClickRef.current = false;
       }}
     >
       <div
         aria-hidden="true"
-        // Visible only while actually swiping: the selected row surface is
-        // translucent (matching the task-list hover), so a resting opacity
-        // floor would tint the whole row green and ghost the label through.
-        className="pointer-events-none absolute inset-0 flex items-center justify-end rounded-lg bg-emerald-600 px-4 text-white"
-        style={{ opacity: archiveReveal }}
+        className="pointer-events-none absolute inset-0 flex items-center justify-end bg-emerald-600 px-4 text-white"
+        style={{ opacity: Math.max(archiveReveal, 0.2) }}
       >
         <span className="inline-flex items-center gap-2 text-sm font-medium">
           <Archive className="h-4 w-4" />
@@ -207,7 +153,7 @@ export function SwipeToArchive({
         data-inbox-row-surface
         className={cn(
           "relative will-change-transform",
-          selected ? "rounded-lg bg-accent/50" : "bg-background",
+          selected ? "bg-zinc-100 dark:bg-zinc-800" : "bg-background",
         )}
         style={{
           transform: `translate3d(${offsetX}px, 0, 0)`,

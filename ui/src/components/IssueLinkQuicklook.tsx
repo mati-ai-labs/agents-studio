@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import * as RouterDom from "react-router-dom";
 import type { Issue } from "@paperclipai/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -14,67 +14,6 @@ import { queryKeys } from "@/lib/queryKeys";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { StatusIcon } from "@/components/StatusIcon";
-
-/* ------------------------------------------------------------------ */
-/*  Single-flight quicklook store                                      */
-/*                                                                     */
-/*  Every issue link renders its own Radix Popover. In a dense list    */
-/*  (e.g. the Conference Room agent feed) independent per-card open     */
-/*  state lets popovers overlap, linger, and stack — two flyouts at    */
-/*  once, sometimes showing the wrong card. This module-level store    */
-/*  enforces exactly one open quicklook across the whole tree: opening  */
-/*  one closes any other.                                               */
-/* ------------------------------------------------------------------ */
-
-let activeQuicklookId: symbol | null = null;
-const quicklookListeners = new Set<() => void>();
-
-function emitQuicklookChange() {
-  for (const listener of quicklookListeners) listener();
-}
-
-function openQuicklookId(id: symbol) {
-  if (activeQuicklookId === id) return;
-  activeQuicklookId = id;
-  emitQuicklookChange();
-}
-
-function closeQuicklookId(id: symbol) {
-  if (activeQuicklookId !== id) return;
-  activeQuicklookId = null;
-  emitQuicklookChange();
-}
-
-function subscribeQuicklook(listener: () => void) {
-  quicklookListeners.add(listener);
-  return () => {
-    quicklookListeners.delete(listener);
-  };
-}
-
-function useIsQuicklookOpen(id: symbol) {
-  return React.useSyncExternalStore(
-    subscribeQuicklook,
-    () => activeQuicklookId === id,
-    () => false,
-  );
-}
-
-/** Hover-intent delay (ms) before a quicklook opens — prevents flicker
- *  as the pointer crosses cards on its way somewhere else. */
-const QUICKLOOK_OPEN_DELAY_MS = 120;
-
-export type IssueQuicklookIssue = Pick<Issue, "id" | "title" | "updatedAt"> & {
-  identifier?: string | null;
-  status: string;
-  priority: string;
-  description?: string | null;
-  blockerAttention?: Issue["blockerAttention"];
-  projectId?: string | null;
-  project?: { name?: string | null } | null;
-  originKind?: string;
-  originId?: string | null;
-};
 
 function summarizeIssueDescription(description: string | null | undefined) {
   if (!description) return null;
@@ -95,7 +34,7 @@ export function IssueQuicklookCard({
   linkState,
   compact = false,
 }: {
-  issue: IssueQuicklookIssue;
+  issue: Issue;
   linkTo: RouterDom.To;
   linkState?: unknown;
   compact?: boolean;
@@ -136,8 +75,6 @@ export const IssueLinkQuicklook = React.forwardRef<
     issuePathId: string;
     disableIssueQuicklook?: boolean;
     issuePrefetch?: Issue | null;
-    issueQuicklookSide?: React.ComponentProps<typeof PopoverContent>["side"];
-    issueQuicklookAlign?: React.ComponentProps<typeof PopoverContent>["align"];
   }
 >(function IssueLinkQuicklookImpl(
   {
@@ -148,58 +85,17 @@ export const IssueLinkQuicklook = React.forwardRef<
     state,
     disableIssueQuicklook = false,
     issuePrefetch = null,
-    issueQuicklookSide = "top",
-    issueQuicklookAlign = "start",
     onClick,
     onClickCapture,
     onMouseEnter,
     onFocus,
-    onBlur,
     onTouchStart,
     ...props
   },
   ref,
 ) {
   const queryClient = useQueryClient();
-  const instanceId = React.useMemo(() => Symbol("issue-quicklook"), []);
-  const open = useIsQuicklookOpen(instanceId);
-  const openTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const cancelScheduledOpen = React.useCallback(() => {
-    if (openTimerRef.current) {
-      clearTimeout(openTimerRef.current);
-      openTimerRef.current = null;
-    }
-  }, []);
-
-  // Open immediately (keyboard focus, or re-entering the open popover).
-  const openNow = React.useCallback(() => {
-    cancelScheduledOpen();
-    openQuicklookId(instanceId);
-  }, [cancelScheduledOpen, instanceId]);
-
-  // Open after the hover-intent delay (pointer entering a card).
-  const scheduleOpen = React.useCallback(() => {
-    cancelScheduledOpen();
-    openTimerRef.current = setTimeout(() => {
-      openTimerRef.current = null;
-      openQuicklookId(instanceId);
-    }, QUICKLOOK_OPEN_DELAY_MS);
-  }, [cancelScheduledOpen, instanceId]);
-
-  const close = React.useCallback(() => {
-    cancelScheduledOpen();
-    closeQuicklookId(instanceId);
-  }, [cancelScheduledOpen, instanceId]);
-
-  // Clear any pending timer and release the active slot on unmount.
-  React.useEffect(() => {
-    return () => {
-      cancelScheduledOpen();
-      closeQuicklookId(instanceId);
-    };
-  }, [cancelScheduledOpen, instanceId]);
-
+  const [open, setOpen] = useState(false);
   const prefetchedState = issuePrefetch ? withIssueDetailHeaderSeed(state, issuePrefetch) : state;
   const { data, isLoading } = useQuery({
     ...getIssueDetailQueryOptions(queryClient, issuePathId, { placeholderIssue: issuePrefetch ?? undefined }),
@@ -223,13 +119,7 @@ export const IssueLinkQuicklook = React.forwardRef<
       }}
       onFocus={(event) => {
         handlePrefetch();
-        openNow();
         onFocus?.(event);
-      }}
-      onBlur={(event) => {
-        // Let clicks inside the portaled quicklook content finish before closing.
-        setTimeout(() => close(), 0);
-        onBlur?.(event);
       }}
       onTouchStart={(event) => {
         handlePrefetch();
@@ -240,7 +130,7 @@ export const IssueLinkQuicklook = React.forwardRef<
         onClickCapture?.(event);
       }}
       onClick={(event) => {
-        close();
+        setOpen(false);
         onClick?.(event);
       }}
       {...props}
@@ -254,23 +144,23 @@ export const IssueLinkQuicklook = React.forwardRef<
   }
 
   return (
-    <Popover open={open} onOpenChange={(next) => (next ? openNow() : close())}>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         asChild
         onMouseEnter={() => {
           handlePrefetch();
-          scheduleOpen();
+          setOpen(true);
         }}
-        onMouseLeave={close}
+        onMouseLeave={() => setOpen(false)}
       >
         {link}
       </PopoverTrigger>
       <PopoverContent
         className="w-72 p-3"
-        side={issueQuicklookSide}
-        align={issueQuicklookAlign}
-        onMouseEnter={openNow}
-        onMouseLeave={close}
+        side="top"
+        align="start"
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
         onOpenAutoFocus={(event) => event.preventDefault()}
       >
         {data ? (
@@ -281,7 +171,7 @@ export const IssueLinkQuicklook = React.forwardRef<
             <div className="h-4 w-full rounded bg-accent/40" />
             <div className="h-4 w-3/4 rounded bg-accent/30" />
             {!isLoading ? (
-              <p className="text-xs text-muted-foreground">Unable to load task preview.</p>
+              <p className="text-xs text-muted-foreground">Unable to load issue preview.</p>
             ) : null}
           </div>
         )}

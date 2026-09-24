@@ -5,7 +5,6 @@ import type {
   AdapterEnvironmentTestResult,
   CompanySecret,
   EnvBinding,
-  EnvSecretRefBinding,
   Environment,
 } from "@paperclipai/shared";
 import { AGENT_DEFAULT_MAX_CONCURRENT_RUNS, supportedEnvironmentDriversForAdapter } from "@paperclipai/shared";
@@ -15,7 +14,10 @@ import { environmentsApi } from "../api/environments";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { secretsApi } from "../api/secrets";
 import { assetsApi } from "../api/assets";
-import { DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX } from "@paperclipai/adapter-codex-local";
+import {
+  DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
+  DEFAULT_CODEX_LOCAL_MODEL,
+} from "@paperclipai/adapter-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
 import { DEFAULT_OPENCODE_LOCAL_MODEL } from "@paperclipai/adapter-opencode-local";
@@ -48,19 +50,14 @@ import { MarkdownEditor } from "./MarkdownEditor";
 import { ChoosePathButton } from "./PathInstructionsModal";
 import { OpenCodeLogoIcon } from "./OpenCodeLogoIcon";
 import { ReportsToPicker } from "./ReportsToPicker";
-import {
-  EnvironmentVariablesEditor,
-  type EnvironmentVariablesEditorHandle,
-} from "./environment-variables-editor";
-import { AgentSecretAccessEditor } from "./AgentSecretAccessEditor";
-import { AGENT_ACCESS_CONFIG_PATH_PREFIX } from "../lib/secret-delivery";
+import { EnvVarEditor } from "./EnvVarEditor";
 import { shouldShowLegacyWorkingDirectoryField } from "../lib/legacy-agent-config";
 import { listAdapterOptions, listVisibleAdapterTypes } from "../adapters/metadata";
 import { getAdapterDisplay, getAdapterLabel } from "../adapters/adapter-display-registry";
 import { useDisabledAdaptersSync } from "../adapters/use-disabled-adapters";
-import { buildAgentUpdatePatch, omitUndefinedEntries, type AgentConfigOverlay } from "../lib/agent-config-patch";
+import { buildAgentUpdatePatch, type AgentConfigOverlay } from "../lib/agent-config-patch";
 import { useAdapterCapabilities } from "../adapters/use-adapter-capabilities";
-import { resolveForcedKubernetesEnvironment } from "../lib/forced-kubernetes-environment";
+import { filterAcpxModelsByAgent } from "../lib/acpx-model-filter";
 
 /* ---- Create mode values ---- */
 
@@ -68,7 +65,6 @@ import { resolveForcedKubernetesEnvironment } from "../lib/forced-kubernetes-env
 // so existing imports from this file keep working.
 export type { CreateConfigValues } from "@paperclipai/adapter-utils";
 import type { CreateConfigValues } from "@paperclipai/adapter-utils";
-import { Badge } from "@/components/ui/badge";
 
 /* ---- Props ---- */
 
@@ -101,7 +97,7 @@ type AgentConfigFormProps = {
   | {
       mode: "edit";
       agent: Agent;
-      onSave: (patch: Record<string, unknown>) => void | Promise<unknown>;
+      onSave: (patch: Record<string, unknown>) => void;
       isSaving?: boolean;
     }
 );
@@ -117,10 +113,6 @@ const emptyOverlay: AgentConfigOverlay = {
 
 /** Stable empty object used as fallback for missing env config to avoid new-object-per-render. */
 const EMPTY_ENV: Record<string, EnvBinding> = {};
-
-export function supportsAdapterModelRefresh(adapterType: string): boolean {
-  return adapterType === "claude_local" || adapterType === "codex_local";
-}
 
 function isOverlayDirty(o: AgentConfigOverlay): boolean {
   return (
@@ -198,6 +190,7 @@ function clampDelayMsFromSeconds(value: number) {
   return clampInteger(value, 0, MAX_TURN_CONTINUATION_MAX_DELAY_SEC) * 1000;
 }
 
+
 /* ---- Form ---- */
 
 export function AgentConfigForm(props: AgentConfigFormProps) {
@@ -213,7 +206,6 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   const hideInstructionsFile = props.hideInstructionsFile ?? false;
   const { selectedCompanyId } = useCompany();
   const queryClient = useQueryClient();
-  const environmentVariablesEditorRef = useRef<EnvironmentVariablesEditorHandle | null>(null);
 
   // Sync disabled adapter types from server so dropdown filters them out
   const disabledTypes = useDisabledAdaptersSync();
@@ -223,16 +215,6 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     queryFn: () => secretsApi.list(selectedCompanyId!),
     enabled: Boolean(selectedCompanyId),
   });
-  // User-secret definitions power the "User secret" env binding source. Requires
-  // secret-admin; non-admins simply get the free-text key fallback in the editor.
-  const { data: userSecretDefinitions = [] } = useQuery({
-    queryKey: selectedCompanyId
-      ? queryKeys.secrets.userDefinitions(selectedCompanyId)
-      : ["user-secret-definitions", "none"],
-    queryFn: () => secretsApi.listUserSecretDefinitions(selectedCompanyId!),
-    enabled: Boolean(selectedCompanyId),
-    retry: false,
-  });
   const { data: experimentalSettings } = useQuery({
     queryKey: queryKeys.instance.experimentalSettings,
     queryFn: () => instanceSettingsApi.getExperimental(),
@@ -240,38 +222,11 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   });
   const environmentsEnabled = experimentalSettings?.enableEnvironments === true;
 
-  // Instance execution policy (general settings). When `executionMode` is
-  // "kubernetes" the instance FORCES all execution onto the managed Kubernetes
-  // sandbox; "any"/absent leaves the full environment/adapter choice intact.
-  // Reuses the same general-settings query the rest of the UI uses.
-  const { data: generalSettings } = useQuery({
-    queryKey: queryKeys.instance.generalSettings,
-    queryFn: () => instanceSettingsApi.getGeneral(),
-    retry: false,
-  });
-  const { data: instanceSettings } = useQuery({
-    queryKey: queryKeys.instance.settings,
-    queryFn: () => instanceSettingsApi.get(),
-    retry: false,
-  });
-
   const { data: environments = [] } = useQuery<Environment[]>({
     queryKey: selectedCompanyId ? queryKeys.environments.list(selectedCompanyId) : ["environments", "none"],
     queryFn: () => environmentsApi.list(selectedCompanyId!),
-    // Load environments when the picker is enabled OR when execution is forced
-    // onto Kubernetes (so we can resolve and default to the managed K8s env even
-    // when the experimental environments picker is otherwise hidden).
-    enabled:
-      Boolean(selectedCompanyId) &&
-      (environmentsEnabled || generalSettings?.executionMode === "kubernetes"),
+    enabled: Boolean(selectedCompanyId) && environmentsEnabled,
   });
-
-  // Setting-driven: resolve whether the instance forces Kubernetes execution and
-  // which loaded environment is the managed Kubernetes sandbox.
-  const { forced: forcedKubernetes, kubernetesEnvironment } = useMemo(
-    () => resolveForcedKubernetesEnvironment(generalSettings?.executionMode, environments),
-    [generalSettings?.executionMode, environments],
-  );
   const createSecret = useMutation({
     mutationFn: (input: { name: string; value: string }) => {
       if (!selectedCompanyId) throw new Error("Select a company to create secrets");
@@ -323,52 +278,14 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     }));
   }
 
-  function flushEnvironmentDraft() {
-    return environmentVariablesEditorRef.current?.flushPendingDraft() ?? null;
-  }
-
-  /**
-   * Replace the agent's API-access grants (top-level `access.<ALIAS>` keys) with
-   * the complete set emitted by the Secret access editor. Added/changed aliases
-   * are marked into the overlay; aliases dropped from the set are marked
-   * `undefined` so `buildAgentUpdatePatch` strips them.
-   */
-  const applyAccessGrants = useCallback((next: Record<string, EnvSecretRefBinding>) => {
-    if (isCreate) return;
-    setOverlay((prev) => {
-      const effective = { ...(props.agent.adapterConfig ?? {}), ...prev.adapterConfig } as Record<string, unknown>;
-      const nextAdapterConfig: Record<string, unknown> = { ...prev.adapterConfig };
-      for (const [alias, binding] of Object.entries(next)) {
-        nextAdapterConfig[`${AGENT_ACCESS_CONFIG_PATH_PREFIX}${alias}`] = binding;
-      }
-      for (const key of Object.keys(effective)) {
-        if (!key.startsWith(AGENT_ACCESS_CONFIG_PATH_PREFIX)) continue;
-        const alias = key.slice(AGENT_ACCESS_CONFIG_PATH_PREFIX.length);
-        if (!(alias in next)) nextAdapterConfig[key] = undefined;
-      }
-      return { ...prev, adapterConfig: nextAdapterConfig };
-    });
-  }, [isCreate, !isCreate ? props.agent : undefined]); // eslint-disable-line react-hooks/exhaustive-deps
-
   /** Build accumulated patch and send to parent */
   const handleCancel = useCallback(() => {
     setOverlay({ ...emptyOverlay });
   }, []);
 
-  const handleSave = useCallback(async () => {
-    if (isCreate) return;
-    const flushedEnv = flushEnvironmentDraft();
-    const nextOverlay = flushedEnv
-      ? {
-          ...overlay,
-          adapterConfig: {
-            ...overlay.adapterConfig,
-            env: flushedEnv,
-          },
-        }
-      : overlay;
-    if (!isOverlayDirty(nextOverlay)) return;
-    await props.onSave(buildAgentUpdatePatch(props.agent, nextOverlay));
+  const handleSave = useCallback(() => {
+    if (isCreate || !isDirty) return;
+    props.onSave(buildAgentUpdatePatch(props.agent, overlay));
   }, [isCreate, isDirty, overlay, props]);
 
   useEffect(() => {
@@ -411,67 +328,22 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   const set = isCreate
     ? (patch: Partial<CreateConfigValues>) => props.onChange(patch)
     : null;
-  const rawCurrentDefaultEnvironmentId = isCreate
+  const currentDefaultEnvironmentId = isCreate
     ? val!.defaultEnvironmentId ?? ""
     : eff("identity", "defaultEnvironmentId", props.agent.defaultEnvironmentId ?? "");
-  const currentDefaultEnvironmentId = useMemo(() => {
-    if (!rawCurrentDefaultEnvironmentId) return "";
-    const selected = environments.find((environment) => environment.id === rawCurrentDefaultEnvironmentId) ?? null;
-    return selected?.driver === "local" ? "" : rawCurrentDefaultEnvironmentId;
-  }, [environments, rawCurrentDefaultEnvironmentId]);
   const currentDefaultEnvironment = useMemo(
     () => environments.find((environment) => environment.id === currentDefaultEnvironmentId) ?? null,
     [currentDefaultEnvironmentId, environments],
   );
-  const instanceDefaultEnvironmentId = useMemo(() => {
-    const environmentId = instanceSettings?.defaultEnvironmentId ?? null;
-    if (!environmentId) return "";
-    const selected = environments.find((environment) => environment.id === environmentId) ?? null;
-    return selected?.driver === "local" ? "" : environmentId;
-  }, [environments, instanceSettings?.defaultEnvironmentId]);
-  const instanceDefaultEnvironment = useMemo(
-    () => environments.find((environment) => environment.id === instanceDefaultEnvironmentId) ?? null,
-    [environments, instanceDefaultEnvironmentId],
-  );
-
-  // When the instance forces Kubernetes execution, new agents must default to the
-  // managed Kubernetes sandbox environment (never the implicit local default).
-  // Only applies in create mode and only once the K8s environment is loaded; if
-  // none is available the UI surfaces a notice instead of silently selecting it.
-  useEffect(() => {
-    if (!isCreate || !set || !forcedKubernetes || !kubernetesEnvironment) return;
-    if (currentDefaultEnvironmentId === kubernetesEnvironment.id) return;
-    set({ defaultEnvironmentId: kubernetesEnvironment.id });
-  }, [isCreate, set, forcedKubernetes, kubernetesEnvironment, currentDefaultEnvironmentId]);
-
   const runnableEnvironments = useMemo(
     () => environments.filter((environment) => {
       if (!supportedEnvironmentDrivers.has(environment.driver)) return false;
-      if (environment.driver === "local") return false;
       if (environment.driver !== "sandbox") return true;
       const provider = typeof environment.config?.provider === "string" ? environment.config.provider : null;
       return provider !== null && provider !== "fake";
     }),
     [environments, supportedEnvironmentDrivers],
   );
-  const environmentOptions = useMemo(() => {
-    if (!currentDefaultEnvironment) return runnableEnvironments;
-    if (runnableEnvironments.some((environment) => environment.id === currentDefaultEnvironment.id)) {
-      return runnableEnvironments;
-    }
-    return [...runnableEnvironments, currentDefaultEnvironment];
-  }, [currentDefaultEnvironment, runnableEnvironments]);
-  // `runnableEnvironments` excludes the always-available Local environment, so a
-  // single entry already means the user has more than one environment configured
-  // (Local + that environment) and the override selector is meaningful.
-  const showEnvironmentOverrideControl = environmentsEnabled && (
-    forcedKubernetes ||
-    currentDefaultEnvironmentId.length > 0 ||
-    runnableEnvironments.length >= 1
-  );
-  const inheritedEnvironmentLabel = instanceDefaultEnvironment
-    ? `${instanceDefaultEnvironment.name} (${instanceDefaultEnvironment.driver})`
-    : "Local";
 
   // Fetch adapter models for the effective adapter type
   const modelQueryKey = selectedCompanyId
@@ -489,8 +361,21 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   });
   const [refreshModelsError, setRefreshModelsError] = useState<string | null>(null);
   const [refreshingModels, setRefreshingModels] = useState(false);
-  const models = fetchedModels ?? externalModels ?? [];
-  const adapterCommandField = "command";
+  const rawModels = fetchedModels ?? externalModels ?? [];
+  const adapterCommandField =
+    adapterType === "hermes_local" ? "hermesCommand" : "command";
+  const acpxAgent =
+    adapterType === "acpx_local"
+      ? isCreate
+        ? String(val!.adapterSchemaValues?.agent ?? "claude")
+        : eff("adapterConfig", "agent", String(config.agent ?? "claude"))
+      : "";
+  const models = useMemo(
+    () => adapterType === "acpx_local"
+      ? filterAcpxModelsByAgent(rawModels, acpxAgent)
+      : rawModels,
+    [adapterType, rawModels, acpxAgent],
+  );
   const {
     data: detectedModelData,
     refetch: refetchDetectedModel,
@@ -557,100 +442,24 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     return typeof value === "string" ? value : "";
   }, [adapterCheapDefault]);
 
-  function buildAdapterConfigForTest(adapterConfigPatch?: Record<string, unknown>): Record<string, unknown> {
+  function buildAdapterConfigForTest(): Record<string, unknown> {
     if (isCreate) {
-      const next = uiAdapter.buildAdapterConfig(val!);
-      if (adapterConfigPatch) {
-        Object.assign(next, adapterConfigPatch);
-      }
-      return omitUndefinedEntries(next);
+      return uiAdapter.buildAdapterConfig(val!);
     }
     const base = config as Record<string, unknown>;
     const next = { ...base, ...overlay.adapterConfig };
-    if (adapterConfigPatch) {
-      Object.assign(next, adapterConfigPatch);
+    if (adapterType === "hermes_local") {
+      const hermesCommand =
+        typeof next.hermesCommand === "string" && next.hermesCommand.length > 0
+          ? next.hermesCommand
+          : typeof next.command === "string" && next.command.length > 0
+            ? next.command
+            : undefined;
+      if (hermesCommand) {
+        next.hermesCommand = hermesCommand;
+      }
     }
-    return omitUndefinedEntries(next);
-  }
-
-  function buildCheapAdapterConfigForTest(adapterConfigPatch?: Record<string, unknown>): Record<string, unknown> {
-    const adapterDefaultConfig = asObject(adapterCheapDefault?.adapterConfig);
-    const createCheapModel = isCreate ? (val!.cheapModel ?? "").trim() : "";
-    const cheapAdapterConfig = isCreate
-      ? {
-          ...adapterDefaultConfig,
-          ...(createCheapModel ? { model: createCheapModel } : {}),
-        }
-      : {
-          ...adapterDefaultConfig,
-          ...cheapProfileFromAgent.adapterConfig,
-          ...asObject(cheapOverlay?.adapterConfig),
-        };
-    return buildAdapterConfigForTest({ ...cheapAdapterConfig, ...adapterConfigPatch });
-  }
-
-  function getCheapModelTestCase(adapterConfigPatch?: Record<string, unknown>): { model: string; adapterConfig: Record<string, unknown> } | null {
-    if (!currentCheapEnabled) return null;
-    const adapterConfig = buildCheapAdapterConfigForTest(adapterConfigPatch);
-    const configModel = typeof adapterConfig.model === "string" ? adapterConfig.model.trim() : "";
-    const model = configModel || currentCheapModel.trim();
-    if (!model) return null;
-    adapterConfig.model = model;
-    return { model, adapterConfig };
-  }
-
-  function prefixEnvironmentTestChecks(
-    result: AdapterEnvironmentTestResult,
-    label: string,
-    model: string | null,
-  ): AdapterEnvironmentTestResult {
-    const modelLabel = model ? ` (${model})` : "";
-    return {
-      ...result,
-      checks: [
-        {
-          code: `${label.toLowerCase().replace(/[^a-z0-9]+/g, "_")}_test_started`,
-          level: "info",
-          message: `${label} test${modelLabel}`,
-        },
-        ...result.checks.map((check) => ({
-          ...check,
-          message: `${label} test${modelLabel}: ${check.message}`,
-        })),
-      ],
-    };
-  }
-
-  async function runEnvironmentTestCase(
-    label: string,
-    model: string | null,
-    adapterConfig: Record<string, unknown>,
-    environmentId: string | null,
-  ): Promise<AdapterEnvironmentTestResult> {
-    const result = await agentsApi.testEnvironment(selectedCompanyId!, adapterType, {
-      adapterConfig,
-      environmentId,
-    });
-    return prefixEnvironmentTestChecks(result, label, model);
-  }
-
-  function mergeEnvironmentTestResults(
-    results: AdapterEnvironmentTestResult[],
-  ): AdapterEnvironmentTestResult {
-    const checks = results.flatMap((result) => result.checks);
-    const status = results.some((result) => result.status === "fail")
-      ? "fail"
-      : results.some((result) => result.status === "warn")
-        ? "warn"
-        : "pass";
-    const testedAt = results[results.length - 1]?.testedAt ?? new Date().toISOString();
-
-    return {
-      adapterType,
-      status,
-      checks,
-      testedAt,
-    };
+    return next;
   }
 
   const testEnvironment = useMutation({
@@ -658,78 +467,17 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
       if (!selectedCompanyId) {
         throw new Error("Select a company to test adapter environment");
       }
-      const flushedEnv = flushEnvironmentDraft();
-      const adapterConfigPatch = flushedEnv ? { env: flushedEnv } : undefined;
-      const primaryModel = currentModelId.trim() || null;
-      const cheapTestCase = getCheapModelTestCase(adapterConfigPatch);
-      const environmentId = currentDefaultEnvironmentId || null;
-      const testResults: Array<{ label: string; model: string | null; result: AdapterEnvironmentTestResult }> = [
-        {
-          label: "Primary model",
-          model: primaryModel,
-          result: await runEnvironmentTestCase(
-            "Primary model",
-            primaryModel,
-            buildAdapterConfigForTest(adapterConfigPatch),
-            environmentId,
-          ),
-        },
-      ];
-
-      if (cheapTestCase) {
-        testResults.push({
-          label: "Cheap model",
-          model: cheapTestCase.model,
-          result: await runEnvironmentTestCase(
-            "Cheap model",
-            cheapTestCase.model,
-            cheapTestCase.adapterConfig,
-            environmentId,
-          ),
-        });
-      }
-
-      return testResults.length > 1
-        ? mergeEnvironmentTestResults(testResults.map(({ result }) => result))
-        : testResults[0]!.result;
+      return agentsApi.testEnvironment(selectedCompanyId, adapterType, {
+        adapterConfig: buildAdapterConfigForTest(),
+        environmentId: currentDefaultEnvironmentId || null,
+      });
     },
   });
-  const [testActionPending, setTestActionPending] = useState(false);
-  const [testActionError, setTestActionError] = useState<string | null>(null);
-  const testActionLabel = "Test";
-  const isSavePending = !isCreate && Boolean(props.isSaving);
-  const testEnvironmentDisabled = testActionPending || isSavePending || !selectedCompanyId;
-  const runEnvironmentTest = useCallback(async () => {
-    if (!selectedCompanyId) {
-      throw new Error("Select a company to test adapter environment");
-    }
-    setTestActionPending(true);
-    setTestActionError(null);
-    testEnvironment.reset();
-    try {
-      return await testEnvironment.mutateAsync();
-    } catch (error) {
-      setTestActionError(error instanceof Error ? error.message : "Environment test failed");
-      throw error;
-    } finally {
-      setTestActionPending(false);
-    }
-  }, [selectedCompanyId, testEnvironment]);
-  // `runEnvironmentTest` (and `testEnvironmentDisabled`) change identity on every
-  // render because `useMutation` returns a fresh result object each time. Hold the
-  // latest behavior in a ref so the trigger handed to the parent stays referentially
-  // stable — otherwise the `onTestActionChange` effect below re-runs every render,
-  // pushing a new function into parent state and causing an infinite update loop.
-  const triggerRef = useRef<() => void>(() => {});
-  useEffect(() => {
-    triggerRef.current = () => {
-      if (testEnvironmentDisabled) return;
-      void runEnvironmentTest().catch(() => undefined);
-    };
-  }, [runEnvironmentTest, testEnvironmentDisabled]);
+  const testEnvironmentDisabled = testEnvironment.isPending || !selectedCompanyId;
   const triggerTestEnvironment = useCallback(() => {
-    triggerRef.current();
-  }, []);
+    if (testEnvironmentDisabled) return;
+    testEnvironment.mutate();
+  }, [testEnvironment.mutate, testEnvironmentDisabled]);
 
   useEffect(() => {
     if (!showAdapterTestEnvironmentButton || !props.onTestActionChange) return;
@@ -743,7 +491,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     if (!showAdapterTestEnvironmentButton || !props.onTestActionStateChange) return;
     props.onTestActionStateChange({
       disabled: testEnvironmentDisabled,
-      pending: testActionPending,
+      pending: testEnvironment.isPending,
     });
     return () => {
       props.onTestActionStateChange?.({ disabled: true, pending: false });
@@ -752,30 +500,28 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     showAdapterTestEnvironmentButton,
     props.onTestActionStateChange,
     testEnvironmentDisabled,
-    testActionPending,
+    testEnvironment.isPending,
   ]);
 
   useEffect(() => {
     if (!props.onTestFeedbackChange) return;
     props.onTestFeedbackChange({
-      errorMessage: testActionError
-        ?? (testEnvironment.error instanceof Error
-          ? testEnvironment.error.message
-          : testEnvironment.error
-            ? "Environment test failed"
-            : null),
+      errorMessage: testEnvironment.error instanceof Error
+        ? testEnvironment.error.message
+        : testEnvironment.error
+          ? "Environment test failed"
+          : null,
       result: testEnvironment.data ?? null,
     });
     return () => {
       props.onTestFeedbackChange?.({ errorMessage: null, result: null });
     };
-  }, [props.onTestFeedbackChange, testActionError, testEnvironment.data, testEnvironment.error]);
+  }, [props.onTestFeedbackChange, testEnvironment.data, testEnvironment.error]);
 
   // Current model for display
-  const currentModelValue = isCreate
-    ? val!.model ?? ""
+  const currentModelId = isCreate
+    ? val!.model
     : eff("adapterConfig", "model", String(config.model ?? ""));
-  const currentModelId = typeof currentModelValue === "string" ? currentModelValue : "";
 
   async function handleRefreshModels() {
     if (!selectedCompanyId) return;
@@ -794,19 +540,23 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   const thinkingEffortKey =
     adapterType === "codex_local"
       ? "modelReasoningEffort"
-      : adapterType === "cursor"
-        ? "mode"
-        : adapterType === "opencode_local"
-          ? "variant"
-          : "effort";
+      : adapterType === "acpx_local" && acpxAgent === "codex"
+        ? "modelReasoningEffort"
+        : adapterType === "cursor"
+          ? "mode"
+          : adapterType === "opencode_local"
+            ? "variant"
+            : "effort";
   const thinkingEffortOptions =
     adapterType === "codex_local"
       ? codexThinkingEffortOptions
-      : adapterType === "cursor"
-        ? cursorModeOptions
-        : adapterType === "opencode_local"
-          ? openCodeThinkingEffortOptions
-          : claudeThinkingEffortOptions;
+      : adapterType === "acpx_local" && acpxAgent === "codex"
+        ? codexThinkingEffortOptions
+        : adapterType === "cursor"
+          ? cursorModeOptions
+          : adapterType === "opencode_local"
+            ? openCodeThinkingEffortOptions
+            : claudeThinkingEffortOptions;
   const currentThinkingEffort = isCreate
     ? val!.thinkingEffort
     : adapterType === "codex_local"
@@ -815,11 +565,17 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
           "modelReasoningEffort",
           String(config.modelReasoningEffort ?? config.reasoningEffort ?? ""),
         )
-      : adapterType === "cursor"
-        ? eff("adapterConfig", "mode", String(config.mode ?? ""))
-        : adapterType === "opencode_local"
-          ? eff("adapterConfig", "variant", String(config.variant ?? ""))
-          : eff("adapterConfig", "effort", String(config.effort ?? ""));
+      : adapterType === "acpx_local" && acpxAgent === "codex"
+        ? eff(
+            "adapterConfig",
+            "modelReasoningEffort",
+            String(config.modelReasoningEffort ?? config.reasoningEffort ?? config.effort ?? ""),
+          )
+        : adapterType === "cursor"
+          ? eff("adapterConfig", "mode", String(config.mode ?? ""))
+          : adapterType === "opencode_local"
+            ? eff("adapterConfig", "variant", String(config.variant ?? ""))
+            : eff("adapterConfig", "effort", String(config.effort ?? ""));
   const showThinkingEffort = adapterType !== "gemini_local" && adapterType !== "cursor_cloud";
   const codexSearchEnabled = adapterType === "codex_local"
     ? (isCreate ? Boolean(val!.search) : eff("adapterConfig", "search", Boolean(config.search)))
@@ -830,10 +586,9 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   const cheapProfileFromAgent = useMemo(() => {
     const profiles = (runtimeConfig.modelProfiles ?? {}) as Record<string, unknown>;
     const cheap = (profiles.cheap ?? {}) as Record<string, unknown>;
-    const cheapAdapterConfig = asObject(cheap.adapterConfig);
+    const cheapAdapterConfig = (cheap.adapterConfig ?? {}) as Record<string, unknown>;
     return {
       enabled: cheap.enabled !== false,
-      adapterConfig: cheapAdapterConfig,
       model: typeof cheapAdapterConfig.model === "string" ? cheapAdapterConfig.model : "",
     };
   }, [runtimeConfig]);
@@ -987,7 +742,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                 value={eff("identity", "capabilities", props.agent.capabilities ?? "") ?? ""}
                 onChange={(v) => mark("identity", "capabilities", v || null)}
                 placeholder="Describe what this agent can do..."
-                contentClassName="min-h-(--sz-44px) text-sm font-mono"
+                contentClassName="min-h-[44px] text-sm font-mono"
                 imageUploadHandler={async (file) => {
                   const asset = await uploadMarkdownImage.mutateAsync({
                     file,
@@ -1008,7 +763,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                     )}
                     onChange={(v) => mark("adapterConfig", "promptTemplate", v ?? "")}
                     placeholder="You are agent {{ agent.name }}. Your role is {{ agent.role }}..."
-                    contentClassName="min-h-(--sz-88px) text-sm font-mono"
+                    contentClassName="min-h-[88px] text-sm font-mono"
                     imageUploadHandler={async (file) => {
                       const namespace = `agents/${props.agent.id}/prompt-template`;
                       const asset = await uploadMarkdownImage.mutateAsync({ file, namespace });
@@ -1016,7 +771,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                     }}
                   />
                 </Field>
-                <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
+                <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
                   Prompt template is replayed on every heartbeat. Keep it compact and dynamic to avoid recurring token cost and cache churn.
                 </div>
               </>
@@ -1026,63 +781,36 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
       )}
 
       {/* ---- Execution ---- */}
-      {forcedKubernetes ? (
-        // Instance execution policy forces the managed Kubernetes sandbox
-        // (executionMode=kubernetes): never offer local / non-Kubernetes targets.
-        // Render the environment read-only instead of the selectable picker.
+      {environmentsEnabled ? (
         <div className={cn(!cards && (isCreate ? "border-t border-border" : "border-b border-border"))}>
           {cards
-            ? <h3 className="text-sm font-medium mb-3">Environment</h3>
-            : <div className="px-4 py-2 text-xs font-medium text-muted-foreground">Environment</div>
+            ? <h3 className="text-sm font-medium mb-3">Execution</h3>
+            : <div className="px-4 py-2 text-xs font-medium text-muted-foreground">Execution</div>
           }
           <div className={cn(cards ? "border border-border rounded-lg p-4 space-y-3" : "px-4 pb-3 space-y-3")}>
             <Field
               label="Default environment"
-              hint="This instance runs all agents in the Kubernetes sandbox. Local execution is disabled."
+              hint="Agent-level default execution target. Project and issue settings can still override this."
             >
-              {kubernetesEnvironment ? (
-                <div className={cn(inputClass, "flex items-center text-muted-foreground")}>
-                  {kubernetesEnvironment.name} · Kubernetes sandbox
-                </div>
-              ) : (
-                <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
-                  This instance requires the Kubernetes sandbox, but no managed Kubernetes
-                  environment is available for this company yet. Configure one before creating
-                  agents; execution will not fall back to local.
-                </div>
-              )}
-            </Field>
-          </div>
-        </div>
-      ) : showEnvironmentOverrideControl ? (
-        <div className={cn(!cards && (isCreate ? "border-t border-border" : "border-b border-border"))}>
-          {cards
-            ? <h3 className="text-sm font-medium mb-3">Environment</h3>
-            : <div className="px-4 py-2 text-xs font-medium text-muted-foreground">Environment</div>
-          }
-          <div className={cn(cards ? "border border-border rounded-lg p-4 space-y-3" : "px-4 pb-3 space-y-3")}>
-            <Field label="Environment override">
-              <div className="space-y-2">
-                <select
-                  className={inputClass}
-                  value={currentDefaultEnvironmentId}
-                  onChange={(event) => {
-                    const nextValue = event.target.value;
-                    if (isCreate) {
-                      set!({ defaultEnvironmentId: nextValue });
-                      return;
-                    }
-                    mark("identity", "defaultEnvironmentId", nextValue || null);
-                  }}
-                >
-                  <option value="">Default: {inheritedEnvironmentLabel}</option>
-                  {environmentOptions.map((environment) => (
-                    <option key={environment.id} value={environment.id}>
-                      {environment.name} · {environment.driver}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <select
+                className={inputClass}
+                value={currentDefaultEnvironmentId}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  if (isCreate) {
+                    set!({ defaultEnvironmentId: nextValue });
+                    return;
+                  }
+                  mark("identity", "defaultEnvironmentId", nextValue || null);
+                }}
+              >
+                <option value="">Company default (Local)</option>
+                {runnableEnvironments.map((environment) => (
+                  <option key={environment.id} value={environment.id}>
+                    {environment.name} · {environment.driver}
+                  </option>
+                ))}
+              </select>
             </Field>
           </div>
         </div>
@@ -1104,7 +832,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
               onClick={triggerTestEnvironment}
               disabled={testEnvironmentDisabled}
             >
-              {testActionPending ? `${testActionLabel}...` : testActionLabel}
+              {testEnvironment.isPending ? "Testing..." : "Test"}
             </Button>
           )}
         </div>
@@ -1120,6 +848,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                     const { adapterType: _at, ...defaults } = defaultCreateValues;
                     const nextValues: CreateConfigValues = { ...defaults, adapterType: t };
                     if (t === "codex_local") {
+                      nextValues.model = DEFAULT_CODEX_LOCAL_MODEL;
                       nextValues.dangerouslyBypassSandbox =
                         DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
                     } else if (t === "gemini_local") {
@@ -1139,8 +868,10 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                       modelProfiles: { cheap: { cleared: true } },
                       adapterConfig: {
                         model:
-                          t === "gemini_local"
-                            ? DEFAULT_GEMINI_LOCAL_MODEL
+                          t === "codex_local"
+                            ? DEFAULT_CODEX_LOCAL_MODEL
+                            : t === "gemini_local"
+                              ? DEFAULT_GEMINI_LOCAL_MODEL
                             : t === "opencode_local"
                               ? DEFAULT_OPENCODE_LOCAL_MODEL
                             : t === "cursor"
@@ -1164,12 +895,11 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
             </Field>
           )}
 
-          {showInlineAdapterTestEnvironmentFeedback && (testActionError || testEnvironment.error) && (
+          {showInlineAdapterTestEnvironmentFeedback && testEnvironment.error && (
             <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-              {testActionError
-                ?? (testEnvironment.error instanceof Error
-                  ? testEnvironment.error.message
-                  : "Environment test failed")}
+              {testEnvironment.error instanceof Error
+                ? testEnvironment.error.message
+                : "Environment test failed"}
             </div>
           )}
 
@@ -1202,9 +932,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
             </Field>
           )}
 
-          {!isLocal && <uiAdapter.ConfigFields {...adapterFieldProps} />}
-
-          {/* Local adapter-specific fields are rendered inside Permissions & Configuration */}
+          {/* Adapter-specific fields are rendered inside Permissions & Configuration */}
         </div>
 
       </div>
@@ -1226,7 +954,9 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                           "adapterConfig",
                           adapterCommandField,
                           String(
-                            config.command ?? "",
+                            (adapterType === "hermes_local"
+                              ? config.hermesCommand ?? config.command
+                              : config.command) ?? "",
                           ),
                         )
                   }
@@ -1251,7 +981,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
               </Field>
 
               {supportsModelProfiles && (
-                <div className="text-(length:--text-micro) uppercase tracking-wide text-muted-foreground">Primary model</div>
+                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Primary model</div>
               )}
               <ModelDropdown
                 models={models}
@@ -1276,7 +1006,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                       return result.data?.model ?? null;
                     }}
                 onRefreshModels={
-                  supportsAdapterModelRefresh(adapterType)
+                  adapterType === "codex_local" || adapterType === "acpx_local"
                     ? handleRefreshModels
                     : undefined
                 }
@@ -1349,7 +1079,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                         mark("adapterConfig", "bootstrapPromptTemplate", v || undefined)
                       }
                       placeholder="Optional initial setup prompt for the first run"
-                      contentClassName="min-h-(--sz-44px) text-sm font-mono"
+                      contentClassName="min-h-[44px] text-sm font-mono"
                       imageUploadHandler={async (file) => {
                         const namespace = `agents/${props.agent.id}/bootstrap-prompt`;
                         const asset = await uploadMarkdownImage.mutateAsync({ file, namespace });
@@ -1357,7 +1087,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                       }}
                     />
                   </Field>
-                  <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+                  <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
                     Bootstrap prompt is legacy and will be removed in a future release. Consider moving this content into the agent&apos;s prompt template or instructions file instead.
                   </div>
                 </>
@@ -1379,14 +1109,14 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                       ? set!({ extraArgs: v })
                       : mark("adapterConfig", "extraArgs", v?.trim() ? parseCommaArgs(v) : null)
                   }
+                  immediate
                   className={inputClass}
                   placeholder="e.g. --verbose, --foo=bar"
                 />
               </Field>
 
               <Field label="Environment variables" hint={help.envVars}>
-                <EnvironmentVariablesEditor
-                  ref={environmentVariablesEditorRef}
+                <EnvVarEditor
                   value={
                     isCreate
                       ? ((val!.envBindings ?? EMPTY_ENV) as Record<string, EnvBinding>)
@@ -1394,7 +1124,6 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                       )
                   }
                   secrets={availableSecrets}
-                  userSecretDefinitions={userSecretDefinitions}
                   onCreateSecret={async (name, value) => {
                     const created = await createSecret.mutateAsync({ name, value });
                     return created;
@@ -1406,16 +1135,6 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                   }
                 />
               </Field>
-
-              {!isCreate && (
-                <Field label="Secret access" hint={help.secretAccess}>
-                  <AgentSecretAccessEditor
-                    config={{ ...config, ...overlay.adapterConfig }}
-                    secrets={availableSecrets}
-                    onChange={applyAccessGrants}
-                  />
-                </Field>
-              )}
 
               {/* Edit-only: timeout + grace period */}
               {!isCreate && (
@@ -1592,13 +1311,13 @@ export function AdapterEnvironmentResult({ result }: { result: AdapterEnvironmen
     <div className={`rounded-md border px-3 py-2 text-xs ${statusClass}`}>
       <div className="flex items-center justify-between gap-2">
         <span className="font-medium">{statusLabel}</span>
-        <span className="text-(length:--text-micro) opacity-80">
+        <span className="text-[11px] opacity-80">
           {new Date(result.testedAt).toLocaleTimeString()}
         </span>
       </div>
       <div className="mt-2 space-y-1.5">
         {result.checks.map((check, idx) => (
-          <div key={`${check.code}-${idx}`} className="text-(length:--text-micro) leading-relaxed break-words">
+          <div key={`${check.code}-${idx}`} className="text-[11px] leading-relaxed break-words">
             <span className="font-medium uppercase tracking-wide opacity-80">
               {check.level}
             </span>
@@ -1615,7 +1334,7 @@ export function AdapterEnvironmentResult({ result }: { result: AdapterEnvironmen
 
 /* ---- Internal sub-components ---- */
 
-export function AdapterTypeDropdown({
+function AdapterTypeDropdown({
   value,
   onChange,
   disabledTypes,
@@ -1646,7 +1365,7 @@ export function AdapterTypeDropdown({
           <ChevronDown className="h-3 w-3 text-muted-foreground" />
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-(--radix-popover-trigger-width) p-1" align="start">
+      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-1" align="start">
         {adapterList.map((item) => (
           <button
             key={item.value}
@@ -1671,7 +1390,7 @@ export function AdapterTypeDropdown({
               {item.experimental && <ExperimentalBadge />}
             </span>
             {item.comingSoon && (
-              <span className="text-(length:--text-nano) text-muted-foreground">Coming soon</span>
+              <span className="text-[10px] text-muted-foreground">Coming soon</span>
             )}
           </button>
         ))}
@@ -1682,13 +1401,13 @@ export function AdapterTypeDropdown({
 
 function ExperimentalBadge() {
   return (
-    <span className="shrink-0 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-(length:--text-nano) font-medium leading-none text-amber-700 dark:text-amber-200">
+    <span className="shrink-0 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium leading-none text-amber-700 dark:text-amber-200">
       Experimental
     </span>
   );
 }
 
-export function ModelDropdown({
+function ModelDropdown({
   models,
   value,
   onChange,
@@ -1816,7 +1535,7 @@ export function ModelDropdown({
             <ChevronDown className="h-3 w-3 text-muted-foreground" />
           </button>
         </PopoverTrigger>
-        <PopoverContent className="w-(--radix-popover-trigger-width) p-1" align="start">
+        <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-1" align="start">
           <div className="relative mb-1">
             <input
               className="w-full px-2 py-1.5 pr-6 text-xs bg-transparent outline-none border-b border-border placeholder:text-muted-foreground/50"
@@ -1885,9 +1604,9 @@ export function ModelDropdown({
               <span className="block w-full text-left truncate font-mono text-xs" title={value}>
                 {models.find((m) => m.id === value)?.label ?? value}
               </span>
-              <Badge variant="outline" className="ml-auto text-(length:--text-nano) px-1.5 bg-green-500/15 text-green-400 border-green-500/20">
+              <span className="shrink-0 ml-auto text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/20">
                 current
-              </Badge>
+              </span>
             </button>
           )}
           {detectedModel && detectedModel !== value && (
@@ -1904,9 +1623,9 @@ export function ModelDropdown({
               <span className="block w-full text-left truncate font-mono text-xs" title={detectedModel}>
                 {models.find((m) => m.id === detectedModel)?.label ?? detectedModel}
               </span>
-              <Badge variant="outline" className="ml-auto text-(length:--text-nano) px-1.5 bg-blue-500/15 text-blue-400 border-blue-500/20">
+              <span className="shrink-0 ml-auto text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/20">
                 detected
-              </Badge>
+              </span>
             </button>
           )}
           {detectedModelCandidates
@@ -1928,13 +1647,13 @@ export function ModelDropdown({
                   <span className="block w-full text-left truncate font-mono text-xs" title={candidate}>
                     {entry?.label ?? candidate}
                   </span>
-                  <Badge variant="outline" className="ml-auto text-(length:--text-nano) px-1.5 bg-sky-500/15 text-sky-400 border-sky-500/20">
+                  <span className="shrink-0 ml-auto text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-sky-500/15 text-sky-400 border border-sky-500/20">
                     config
-                  </Badge>
+                  </span>
                 </button>
               );
             })}
-          <div className="max-h-(--sz-240px) overflow-y-auto">
+          <div className="max-h-[240px] overflow-y-auto">
             {allowDefault && (
               <button
                 type="button"
@@ -1967,7 +1686,7 @@ export function ModelDropdown({
             {groupedModels.map((group) => (
               <div key={group.provider} className="mb-1 last:mb-0">
                 {groupByProvider && (
-                  <div className="px-2 py-1 text-(length:--text-nano) uppercase tracking-wide text-muted-foreground">
+                  <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
                     {group.provider} ({group.entries.length})
                   </div>
                 )}
@@ -2035,7 +1754,7 @@ function CheapModelSection({
     <div className="rounded-md border border-border/70 bg-muted/20 p-3 space-y-3">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-(length:--text-micro) uppercase tracking-wide text-muted-foreground">Cheap model</div>
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Cheap model</div>
           <p className="text-xs text-muted-foreground">
             Used when a run requests the cheap profile (e.g. routine summaries). The primary model stays unchanged.
           </p>
@@ -2060,12 +1779,12 @@ function CheapModelSection({
         />
       ) : null}
       {enabled && !model && adapterDefaultModel ? (
-        <p className="text-(length:--text-micro) text-muted-foreground">
+        <p className="text-[11px] text-muted-foreground">
           No explicit cheap model selected — runtime falls back to <code>{adapterDefaultModel}</code>.
         </p>
       ) : null}
       {enabled && !model && !adapterDefaultModel ? (
-        <p className="text-(length:--text-micro) text-amber-500">
+        <p className="text-[11px] text-amber-500">
           No cheap model selected and the adapter has no default. Cheap-lane runs will continue on the primary model with a fallback note.
         </p>
       ) : null}
@@ -2097,7 +1816,7 @@ function ThinkingEffortDropdown({
             <ChevronDown className="h-3 w-3 text-muted-foreground" />
           </button>
         </PopoverTrigger>
-        <PopoverContent className="w-(--radix-popover-trigger-width) p-1" align="start">
+        <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-1" align="start">
           {options.map((option) => (
             <button
               key={option.id || "auto"}

@@ -10,16 +10,6 @@ export interface AdapterCapabilities {
   supportsLocalAgentJwt: boolean;
   requiresMaterializedRuntimeSkills: boolean;
   supportsModelProfiles: boolean;
-  supportsAcp: boolean;
-}
-
-export interface AcpTargetDescriptor {
-  agentId: string;
-  skillsMode: "ephemeral" | "unsupported";
-  prerequisites: {
-    nodeRange?: string;
-    packages?: string[];
-  };
 }
 
 export interface AdapterInfo {
@@ -30,7 +20,6 @@ export interface AdapterInfo {
   loaded: boolean;
   disabled: boolean;
   capabilities: AdapterCapabilities;
-  acp?: AcpTargetDescriptor;
   /** Installed version (for external npm adapters) */
   version?: string;
   /** Package name (for external adapters) */

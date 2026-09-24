@@ -8,7 +8,7 @@ import { useCompany } from "@/context/CompanyContext";
 import { Link, useNavigate, useParams } from "@/lib/router";
 import { accessApi } from "../api/access";
 import { authApi } from "../api/auth";
-import { companiesListQueryOptions } from "../api/companies-query";
+import { companiesApi } from "../api/companies";
 import { healthApi } from "../api/health";
 import { getAdapterLabel } from "../adapters/adapter-display-registry";
 import { clearPendingInviteToken, rememberPendingInviteToken } from "../lib/invite-memory";
@@ -160,6 +160,7 @@ function AwaitingJoinApprovalPanel({
   claimApiKeyPath = null,
   onboardingTextUrl = null,
 }: AwaitingJoinApprovalPanelProps) {
+  const approvalUrl = `${window.location.origin}/company/settings/access`;
   const approverLabel = invitedByUserName ?? "A company admin";
 
   return (
@@ -180,10 +181,15 @@ function AwaitingJoinApprovalPanel({
           </p>
           <div className="border border-zinc-800 p-3">
             <p className="text-xs text-zinc-500 mb-1">Approval page</p>
-            <p className="text-sm text-zinc-200">Company Settings → Members</p>
+            <a
+              href={approvalUrl}
+              className="text-sm text-zinc-200 underline underline-offset-2 hover:text-zinc-100"
+            >
+              Company Settings → Access
+            </a>
           </div>
           <p className="text-sm text-zinc-400">
-            Ask them to visit <span className="text-zinc-200">Company Settings → Members</span> to approve your request.
+            Ask them to visit <a href={approvalUrl} className="text-zinc-200 underline underline-offset-2 hover:text-zinc-100">Company Settings → Access</a> to approve your request.
           </p>
           <p className="text-xs text-zinc-500">
             Refresh this page after you've been approved — you'll be redirected automatically.
@@ -223,7 +229,6 @@ export function InviteLandingPage() {
   const [error, setError] = useState<string | null>(null);
   const [authFeedback, setAuthFeedback] = useState<AuthFeedback | null>(null);
   const [autoAcceptStarted, setAutoAcceptStarted] = useState(false);
-  const authErrorId = "invite-auth-error";
 
   const healthQuery = useQuery({
     queryKey: queryKeys.health,
@@ -243,10 +248,11 @@ export function InviteLandingPage() {
   });
 
   const companiesQuery = useQuery({
-    ...companiesListQueryOptions,
+    queryKey: queryKeys.companies.all,
+    queryFn: () => companiesApi.list(),
     enabled: !!sessionQuery.data && !!inviteQuery.data?.companyId,
+    retry: false,
   });
-  const companyList = companiesQuery.data?.companies ?? [];
 
   useEffect(() => {
     if (token) rememberPendingInviteToken(token);
@@ -257,12 +263,15 @@ export function InviteLandingPage() {
   }, [token]);
 
   useEffect(() => {
-    const list = companiesQuery.data?.companies;
-    if (!list || !inviteQuery.data?.companyId) return;
-    if (list.some((c) => c.id === inviteQuery.data!.companyId)) {
+    if (!companiesQuery.data || !inviteQuery.data?.companyId) return;
+    const isMember = companiesQuery.data.some(
+      (c) => c.id === inviteQuery.data!.companyId
+    );
+    if (isMember) {
       clearPendingInviteToken(token);
+      navigate("/", { replace: true });
     }
-  }, [companiesQuery.data, inviteQuery.data, token]);
+  }, [companiesQuery.data, inviteQuery.data, token, navigate]);
 
   const invite = inviteQuery.data;
   const isCheckingExistingMembership =
@@ -271,7 +280,9 @@ export function InviteLandingPage() {
     companiesQuery.isLoading;
   const isCurrentMember =
     Boolean(invite?.companyId) &&
-    companyList.some((company) => company.id === invite?.companyId);
+    Boolean(
+      companiesQuery.data?.some((company) => company.id === invite?.companyId),
+    );
   const companyName = invite?.companyName?.trim() || null;
   const companyDisplayName = companyName || "this Agent Studio company";
   const companyLogoUrl = invite?.companyLogoUrl?.trim() || null;
@@ -281,9 +292,6 @@ export function InviteLandingPage() {
   const requestedHumanRole = formatHumanRole(invite?.humanRole);
   const inviteJoinRequestStatus = invite?.joinRequestStatus ?? null;
   const inviteJoinRequestType = invite?.joinRequestType ?? null;
-  const canCompleteAcceptedHumanInvite =
-    inviteJoinRequestType === "human" &&
-    (inviteJoinRequestStatus === "pending_approval" || inviteJoinRequestStatus === "approved");
   const requiresHumanAccount =
     healthQuery.data?.deploymentMode === "authenticated" &&
     !sessionQuery.data &&
@@ -293,7 +301,7 @@ export function InviteLandingPage() {
     Boolean(sessionQuery.data) &&
     !showsAgentForm &&
     invite?.inviteType !== "bootstrap_ceo" &&
-    (!inviteJoinRequestStatus || canCompleteAcceptedHumanInvite) &&
+    !inviteJoinRequestStatus &&
     !isCheckingExistingMembership &&
     !isCurrentMember &&
     !result &&
@@ -333,7 +341,6 @@ export function InviteLandingPage() {
       const asBootstrap = isBootstrapAcceptancePayload(payload);
       setResult({ kind: asBootstrap ? "bootstrap" : "join", payload });
       await queryClient.invalidateQueries({ queryKey: queryKeys.auth.session });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.access.currentBoardAccess });
       await queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
       if (invite?.companyId && isApprovedHumanJoinPayload(payload, showsAgentForm)) {
         setSelectedCompanyId(invite.companyId, { source: "manual" });
@@ -368,11 +375,13 @@ export function InviteLandingPage() {
       setAuthFeedback(null);
       rememberPendingInviteToken(token);
       await queryClient.invalidateQueries({ queryKey: queryKeys.auth.session });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.health });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.access.currentBoardAccess });
-      const { companies: freshCompanies } = await queryClient.fetchQuery(companiesListQueryOptions);
+      const companies = await queryClient.fetchQuery({
+        queryKey: queryKeys.companies.all,
+        queryFn: () => companiesApi.list(),
+        retry: false,
+      });
 
-      if (invite?.companyId && freshCompanies.some((company) => company.id === invite.companyId)) {
+      if (invite?.companyId && companies.some((company) => company.id === invite.companyId)) {
         clearPendingInviteToken(token);
         setSelectedCompanyId(invite.companyId, { source: "manual" });
         navigate("/", { replace: true });
@@ -404,11 +413,10 @@ export function InviteLandingPage() {
 
   const joinButtonLabel = useMemo(() => {
     if (!invite) return "Continue";
-    if (isCurrentMember) return "Open company";
     if (invite.inviteType === "bootstrap_ceo") return "Accept invite";
     if (showsAgentForm) return "Submit request";
     return sessionQuery.data ? "Accept invite" : "Continue";
-  }, [invite, isCurrentMember, sessionQuery.data, showsAgentForm]);
+  }, [invite, sessionQuery.data, showsAgentForm]);
 
   if (!token) {
     return <div className="mx-auto max-w-xl py-10 text-sm text-destructive">Invalid invite token.</div>;
@@ -443,7 +451,7 @@ export function InviteLandingPage() {
     return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Opening company...</div>;
   }
 
-  if (inviteJoinRequestStatus === "pending_approval" && !canCompleteAcceptedHumanInvite) {
+  if (inviteJoinRequestStatus === "pending_approval") {
     return (
       <AwaitingJoinApprovalPanel
         companyDisplayName={companyDisplayName}
@@ -454,7 +462,7 @@ export function InviteLandingPage() {
     );
   }
 
-  if (inviteJoinRequestStatus && !canCompleteAcceptedHumanInvite) {
+  if (inviteJoinRequestStatus) {
     return (
       <div className="mx-auto max-w-xl py-10">
         <div className="border border-border bg-card p-6" data-testid="invite-error">
@@ -532,7 +540,7 @@ export function InviteLandingPage() {
   return (
     <div className="min-h-screen bg-zinc-950 px-6 py-12 text-zinc-100">
       <div className="mx-auto max-w-5xl">
-        <div className="grid gap-6 lg:grid-cols-(--gtc-36)">
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
           <section className={`${panelClassName} space-y-6`}>
             <div className="flex items-start gap-4">
               <InviteCompanyLogo
@@ -542,7 +550,7 @@ export function InviteLandingPage() {
                 className="h-16 w-16 rounded-none border border-zinc-800"
               />
               <div className="min-w-0">
-                <p className="text-xs uppercase tracking-(--tracking-caps) text-zinc-500">
+                <p className="text-xs uppercase tracking-[0.24em] text-zinc-500">
                   You&apos;ve been invited to join Agent Studio
                 </p>
                 <h1 className="mt-2 text-2xl font-semibold">
@@ -560,28 +568,28 @@ export function InviteLandingPage() {
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="border border-zinc-800 p-3">
-                <div className="text-xs uppercase tracking-(--tracking-caps) text-zinc-500">Company</div>
+                <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">Company</div>
                 <div className="mt-1 text-sm text-zinc-100">{companyDisplayName}</div>
               </div>
               <div className="border border-zinc-800 p-3">
-                <div className="text-xs uppercase tracking-(--tracking-caps) text-zinc-500">Invited by</div>
+                <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">Invited by</div>
                 <div className="mt-1 text-sm text-zinc-100">{invitedByUserName ?? "Agent Studio board"}</div>
               </div>
               <div className="border border-zinc-800 p-3">
-                <div className="text-xs uppercase tracking-(--tracking-caps) text-zinc-500">Requested access</div>
+                <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">Requested access</div>
                 <div className="mt-1 text-sm text-zinc-100">
                   {showsAgentForm ? "Agent join request" : requestedHumanRole ?? "Company access"}
                 </div>
               </div>
               <div className="border border-zinc-800 p-3">
-                <div className="text-xs uppercase tracking-(--tracking-caps) text-zinc-500">Invite expires</div>
+                <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">Invite expires</div>
                 <div className="mt-1 text-sm text-zinc-100">{formatDate(invite.expiresAt)}</div>
               </div>
             </div>
 
             {inviteMessage ? (
               <div className="border border-amber-500/40 bg-amber-500/10 p-4">
-                <div className="text-xs uppercase tracking-(--tracking-caps) text-amber-200/80">Message from inviter</div>
+                <div className="text-xs uppercase tracking-[0.2em] text-amber-200/80">Message from inviter</div>
                 <p className="mt-2 text-sm leading-6 text-amber-50">{inviteMessage}</p>
               </div>
             ) : null}
@@ -702,10 +710,9 @@ export function InviteLandingPage() {
                   data-testid="invite-inline-auth"
                 >
                   {authMode === "sign_up" ? (
-                    <label className="block text-sm" htmlFor="invite-name">
+                    <label className="block text-sm">
                       <span className="mb-1 block text-zinc-400">Name</span>
                       <input
-                        id="invite-name"
                         name="name"
                         className={fieldClassName}
                         value={name}
@@ -714,18 +721,13 @@ export function InviteLandingPage() {
                           setAuthFeedback(null);
                         }}
                         autoComplete="name"
-                        required
-                        aria-required="true"
-                        aria-invalid={authFeedback?.tone === "error" ? true : undefined}
-                        aria-describedby={authFeedback ? authErrorId : undefined}
                         autoFocus
                       />
                     </label>
                   ) : null}
-                  <label className="block text-sm" htmlFor="invite-email">
+                  <label className="block text-sm">
                     <span className="mb-1 block text-zinc-400">Email</span>
                     <input
-                      id="invite-email"
                       name="email"
                       type="email"
                       className={fieldClassName}
@@ -734,18 +736,13 @@ export function InviteLandingPage() {
                         setEmail(event.target.value);
                         setAuthFeedback(null);
                       }}
-                      autoComplete="username"
-                      required
-                      aria-required="true"
-                      aria-invalid={authFeedback?.tone === "error" ? true : undefined}
-                      aria-describedby={authFeedback ? authErrorId : undefined}
+                      autoComplete="email"
                       autoFocus={authMode === "sign_in"}
                     />
                   </label>
-                  <label className="block text-sm" htmlFor="invite-password">
+                  <label className="block text-sm">
                     <span className="mb-1 block text-zinc-400">Password</span>
                     <input
-                      id="invite-password"
                       name="password"
                       type="password"
                       className={fieldClassName}
@@ -755,16 +752,10 @@ export function InviteLandingPage() {
                         setAuthFeedback(null);
                       }}
                       autoComplete={authMode === "sign_in" ? "current-password" : "new-password"}
-                      required
-                      aria-required="true"
-                      aria-invalid={authFeedback?.tone === "error" ? true : undefined}
-                      aria-describedby={authFeedback ? authErrorId : undefined}
                     />
                   </label>
                   {authFeedback ? (
                     <p
-                      id={authErrorId}
-                      role="alert"
                       className={`text-xs ${
                         authFeedback.tone === "info" ? "text-amber-300" : "text-red-400"
                       }`}
@@ -796,21 +787,19 @@ export function InviteLandingPage() {
               <div className="space-y-4">
                 <div>
                   <h2 className="text-lg font-semibold">
-                    {isCurrentMember
-                      ? "Already in this company"
-                      : shouldAutoAcceptHumanInvite
-                      ? "Completing company access"
+                    {shouldAutoAcceptHumanInvite
+                      ? "Submitting join request"
                       : invite.inviteType === "bootstrap_ceo"
                         ? "Accept bootstrap invite"
                         : "Accept company invite"}
                   </h2>
                   <p className="mt-1 text-sm text-zinc-400">
                     {shouldAutoAcceptHumanInvite
-                      ? `Granting your access to ${companyDisplayName}.`
+                      ? `Submitting your join request for ${companyDisplayName}.`
                       : isCurrentMember
                       ? `This account already belongs to ${companyDisplayName}.`
                       : `This will ${
-                          invite.inviteType === "bootstrap_ceo" ? "finish setting up Agent Studio" : `grant or complete your access to ${companyDisplayName}`
+                          invite.inviteType === "bootstrap_ceo" ? "finish setting up Agent Studio" : `submit or complete your join request for ${companyDisplayName}`
                         }.`}
                   </p>
                 </div>
@@ -822,16 +811,8 @@ export function InviteLandingPage() {
                 ) : (
                   <Button
                     className="w-full rounded-none"
-                    disabled={acceptMutation.isPending}
-                    onClick={() => {
-                      if (isCurrentMember && invite.companyId) {
-                        clearPendingInviteToken(token);
-                        setSelectedCompanyId(invite.companyId, { source: "manual" });
-                        navigate("/", { replace: true });
-                        return;
-                      }
-                      acceptMutation.mutate();
-                    }}
+                    disabled={acceptMutation.isPending || isCurrentMember}
+                    onClick={() => acceptMutation.mutate()}
                   >
                     {acceptMutation.isPending ? "Working..." : joinButtonLabel}
                   </Button>

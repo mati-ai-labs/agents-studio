@@ -132,15 +132,13 @@ export interface PluginDashboardData {
   checkedAt: string;
 }
 
-export interface AvailableBundledPlugin {
+export interface AvailablePluginExample {
   packageName: string;
   pluginKey: string;
   displayName: string;
   description: string;
   localPath: string;
-  tag: "example" | "first-party";
-  experimental: boolean;
-  hasBuiltEntrypoints: boolean;
+  tag: "example";
 }
 
 export interface PluginLocalFolderProblem {
@@ -217,10 +215,10 @@ export const pluginsApi = {
     api.get<PluginRecord[]>(`/plugins${status ? `?status=${status}` : ""}`),
 
   /**
-   * List bundled plugin packages available from the current repo checkout.
+   * List bundled example plugins available from the current repo checkout.
    */
-  listBundled: () =>
-    api.get<AvailableBundledPlugin[]>("/plugins/examples"),
+  listExamples: () =>
+    api.get<AvailablePluginExample[]>("/plugins/examples"),
 
   /**
    * Fetch a single plugin record by its UUID or plugin key.
@@ -358,8 +356,8 @@ export const pluginsApi = {
    *
    * @param pluginId - UUID of the plugin.
    */
-  getConfig: (pluginId: string, companyId: string) =>
-    api.get<PluginConfig | null>(`/plugins/${pluginId}/config?companyId=${encodeURIComponent(companyId)}`),
+  getConfig: (pluginId: string) =>
+    api.get<PluginConfig | null>(`/plugins/${pluginId}/config`),
 
   /**
    * Save (create or update) the configuration for a plugin.
@@ -370,8 +368,8 @@ export const pluginsApi = {
    * @param pluginId - UUID of the plugin.
    * @param configJson - Configuration values matching the plugin's `instanceConfigSchema`.
    */
-  saveConfig: (pluginId: string, companyId: string, configJson: Record<string, unknown>) =>
-    api.post<PluginConfig>(`/plugins/${pluginId}/config`, { companyId, configJson }),
+  saveConfig: (pluginId: string, configJson: Record<string, unknown>) =>
+    api.post<PluginConfig>(`/plugins/${pluginId}/config`, { configJson }),
 
   /**
    * Call the plugin's `validateConfig` RPC method to test the configuration
@@ -385,8 +383,8 @@ export const pluginsApi = {
    * @param pluginId - UUID of the plugin.
    * @param configJson - Configuration values to validate.
    */
-  testConfig: (pluginId: string, companyId: string, configJson: Record<string, unknown>) =>
-    api.post<{ valid: boolean; message?: string }>(`/plugins/${pluginId}/config/test`, { companyId, configJson }),
+  testConfig: (pluginId: string, configJson: Record<string, unknown>) =>
+    api.post<{ valid: boolean; message?: string }>(`/plugins/${pluginId}/config/test`, { configJson }),
 
   /**
    * List manifest-declared and stored company-scoped local folders for a plugin.

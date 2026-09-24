@@ -18,7 +18,6 @@ function makeIssue(id: string, parentId: string | null = null): Issue {
     priority: "medium",
     assigneeAgentId: null,
     assigneeUserId: null,
-    responsibleUserId: null,
     createdByAgentId: null,
     createdByUserId: null,
     issueNumber: 1,

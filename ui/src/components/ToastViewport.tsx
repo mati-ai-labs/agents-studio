@@ -40,7 +40,7 @@ function AnimatedToast({
   return (
     <li
       className={cn(
-        "pointer-events-auto rounded-sm border shadow-lg backdrop-blur-xl transition-(--tp-transform-opacity) duration-200 ease-out",
+        "pointer-events-auto rounded-sm border shadow-lg backdrop-blur-xl transition-[transform,opacity] duration-200 ease-out",
         visible
           ? "translate-y-0 opacity-100"
           : "translate-y-3 opacity-0",
@@ -60,27 +60,26 @@ function AnimatedToast({
               {toast.body}
             </p>
           )}
-          {toast.action &&
-            (toast.action.onClick ? (
-              <button
-                type="button"
-                onClick={() => {
-                  toast.action?.onClick?.();
-                  onDismiss(toast.id);
-                }}
-                className="mt-2 inline-flex text-xs font-medium underline underline-offset-4 hover:opacity-90"
-              >
-                {toast.action.label}
-              </button>
-            ) : toast.action.href ? (
-              <Link
-                to={toast.action.href}
-                onClick={() => onDismiss(toast.id)}
-                className="mt-2 inline-flex text-xs font-medium underline underline-offset-4 hover:opacity-90"
-              >
-                {toast.action.label}
-              </Link>
-            ) : null)}
+          {toast.action?.onClick ? (
+            <button
+              type="button"
+              onClick={() => {
+                toast.action?.onClick?.();
+                onDismiss(toast.id);
+              }}
+              className="mt-2 inline-flex text-xs font-medium underline underline-offset-4 hover:opacity-90"
+            >
+              {toast.action.label}
+            </button>
+          ) : toast.action?.href ? (
+            <Link
+              to={toast.action.href}
+              onClick={() => onDismiss(toast.id)}
+              className="mt-2 inline-flex text-xs font-medium underline underline-offset-4 hover:opacity-90"
+            >
+              {toast.action.label}
+            </Link>
+          ) : null}
         </div>
         <button
           type="button"
@@ -111,7 +110,7 @@ export function ToastViewport() {
         aria-live="polite"
         aria-atomic="false"
         className={cn(
-          "pointer-events-none fixed z-(--z-120) w-full max-w-sm px-1",
+          "pointer-events-none fixed z-[120] w-full max-w-sm px-1",
           placement === "top" ? "top-3 right-3" : "bottom-3 left-3",
         )}
       >

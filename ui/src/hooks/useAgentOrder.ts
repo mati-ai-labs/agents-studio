@@ -6,7 +6,6 @@ import {
   readAgentOrder,
   sortAgentsByStoredOrder,
   writeAgentOrder,
-  type AgentSidebarOrderOptions,
 } from "../lib/agent-order";
 
 type UseAgentOrderParams = {
@@ -28,15 +27,11 @@ function areEqual(a: string[], b: string[]) {
   return true;
 }
 
-function buildOrderIds(agents: Agent[], orderedIds: string[], options: AgentSidebarOrderOptions) {
-  return sortAgentsByStoredOrder(agents, orderedIds, options).map((agent) => agent.id);
+function buildOrderIds(agents: Agent[], orderedIds: string[]) {
+  return sortAgentsByStoredOrder(agents, orderedIds).map((agent) => agent.id);
 }
 
 export function useAgentOrder({ agents, companyId, userId }: UseAgentOrderParams) {
-  const sortOptions = useMemo<AgentSidebarOrderOptions>(
-    () => ({ leadershipFirst: true }),
-    [],
-  );
   const storageKey = useMemo(() => {
     if (!companyId) return null;
     return getAgentOrderStorageKey(companyId, userId);
@@ -44,21 +39,21 @@ export function useAgentOrder({ agents, companyId, userId }: UseAgentOrderParams
 
   const [orderedIds, setOrderedIds] = useState<string[]>(() => {
     if (!storageKey) return agents.map((agent) => agent.id);
-    return buildOrderIds(agents, readAgentOrder(storageKey), sortOptions);
+    return buildOrderIds(agents, readAgentOrder(storageKey));
   });
 
   useEffect(() => {
     const nextIds = storageKey
-      ? buildOrderIds(agents, readAgentOrder(storageKey), sortOptions)
+      ? buildOrderIds(agents, readAgentOrder(storageKey))
       : agents.map((agent) => agent.id);
     setOrderedIds((current) => (areEqual(current, nextIds) ? current : nextIds));
-  }, [agents, storageKey, sortOptions]);
+  }, [agents, storageKey]);
 
   useEffect(() => {
     if (!storageKey) return;
 
     const syncFromIds = (ids: string[]) => {
-      const nextIds = buildOrderIds(agents, ids, sortOptions);
+      const nextIds = buildOrderIds(agents, ids);
       setOrderedIds((current) => (areEqual(current, nextIds) ? current : nextIds));
     };
 
@@ -78,18 +73,18 @@ export function useAgentOrder({ agents, companyId, userId }: UseAgentOrderParams
       window.removeEventListener("storage", onStorage);
       window.removeEventListener(AGENT_ORDER_UPDATED_EVENT, onCustomEvent);
     };
-  }, [agents, storageKey, sortOptions]);
+  }, [agents, storageKey]);
 
   const orderedAgents = useMemo(
-    () => sortAgentsByStoredOrder(agents, orderedIds, sortOptions),
-    [agents, orderedIds, sortOptions],
+    () => sortAgentsByStoredOrder(agents, orderedIds),
+    [agents, orderedIds],
   );
 
   const persistOrder = useCallback(
     (ids: string[]) => {
       const idSet = new Set(agents.map((agent) => agent.id));
       const filtered = ids.filter((id) => idSet.has(id));
-      for (const agent of sortAgentsByStoredOrder(agents, [], sortOptions)) {
+      for (const agent of sortAgentsByStoredOrder(agents, [])) {
         if (!filtered.includes(agent.id)) filtered.push(agent.id);
       }
 
@@ -98,7 +93,7 @@ export function useAgentOrder({ agents, companyId, userId }: UseAgentOrderParams
         writeAgentOrder(storageKey, filtered);
       }
     },
-    [agents, storageKey, sortOptions],
+    [agents, storageKey],
   );
 
   return {

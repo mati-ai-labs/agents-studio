@@ -1,53 +1,35 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { ChevronLeft, ChevronRight, Download, X } from "lucide-react";
-import { attachmentDownloadPath, attachmentFilename } from "@/lib/issue-attachments";
-import { isVideoLikeOutput } from "@/lib/issue-output";
-
-export interface GalleryMediaItem {
-  id: string;
-  contentPath: string;
-  openPath?: string;
-  downloadPath?: string;
-  contentType: string;
-  originalFilename: string | null;
-}
+import type { IssueAttachment } from "@paperclipai/shared";
 
 interface ImageGalleryModalProps {
-  items: GalleryMediaItem[];
+  images: IssueAttachment[];
   initialIndex: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
 export function ImageGalleryModal({
-  items,
+  images,
   initialIndex,
   open,
   onOpenChange,
 }: ImageGalleryModalProps) {
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
-  const mediaRef = useRef<HTMLImageElement | HTMLVideoElement | null>(null);
-  const setMediaRef = useCallback((node: HTMLImageElement | HTMLVideoElement | null) => {
-    mediaRef.current = node;
-  }, []);
+  const imageRef = useRef<HTMLImageElement>(null);
 
   useEffect(() => {
     if (open) setCurrentIndex(initialIndex);
   }, [open, initialIndex]);
 
   const goNext = useCallback(() => {
-    setCurrentIndex((i) => (i + 1) % items.length);
-  }, [items.length]);
+    setCurrentIndex((i) => (i + 1) % images.length);
+  }, [images.length]);
 
   const goPrev = useCallback(() => {
-    setCurrentIndex((i) => (i - 1 + items.length) % items.length);
-  }, [items.length]);
-
-  useEffect(() => {
-    if (currentIndex < items.length) return;
-    setCurrentIndex(0);
-  }, [currentIndex, items.length]);
+    setCurrentIndex((i) => (i - 1 + images.length) % images.length);
+  }, [images.length]);
 
   useEffect(() => {
     if (!open) return;
@@ -67,7 +49,7 @@ export function ImageGalleryModal({
       if (
         target.closest("button") ||
         target.closest("a") ||
-        target === mediaRef.current
+        target === imageRef.current
       )
         return;
       onOpenChange(false);
@@ -75,12 +57,10 @@ export function ImageGalleryModal({
     [onOpenChange],
   );
 
-  if (items.length === 0) return null;
+  if (images.length === 0) return null;
 
-  const current = items[currentIndex];
+  const current = images[currentIndex];
   if (!current) return null;
-  const filename = attachmentFilename(current);
-  const isVideo = isVideoLikeOutput(current.contentType, current.originalFilename);
 
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
@@ -93,19 +73,18 @@ export function ImageGalleryModal({
         >
           {/* Top bar */}
           <div className="flex items-center justify-between px-5 py-3 text-white/80 text-sm shrink-0">
-            <span className="truncate max-w-(--pct-50) font-medium" title={filename}>
-              {filename}
+            <span className="truncate max-w-[50%] font-medium" title={current.originalFilename ?? undefined}>
+              {current.originalFilename ?? "Image"}
             </span>
             <div className="flex items-center gap-4">
               <span className="text-white/40 tabular-nums text-xs">
-                {currentIndex + 1} / {items.length}
+                {currentIndex + 1} / {images.length}
               </span>
               <a
-                href={attachmentDownloadPath(current)}
-                download={filename}
+                href={current.contentPath}
+                download={current.originalFilename ?? "image"}
                 className="text-white/50 hover:text-white transition-colors"
                 title="Download"
-                aria-label={`Download ${filename}`}
                 onClick={(e) => e.stopPropagation()}
               >
                 <Download className="h-4.5 w-4.5" />
@@ -125,7 +104,7 @@ export function ImageGalleryModal({
           <div className="flex-1 flex items-center min-h-0">
             {/* Left nav zone */}
             <div className="w-16 md:w-24 shrink-0 flex items-center justify-center h-full">
-              {items.length > 1 && (
+              {images.length > 1 && (
                 <button
                   type="button"
                   onClick={goPrev}
@@ -137,30 +116,20 @@ export function ImageGalleryModal({
               )}
             </div>
 
-            {/* Media */}
+            {/* Image */}
             <div className="flex-1 flex items-center justify-center min-w-0 min-h-0 h-full px-2">
-              {isVideo ? (
-                <video
-                  ref={setMediaRef}
-                  src={current.contentPath}
-                  className="max-w-full max-h-full rounded-lg"
-                  controls
-                  playsInline
-                />
-              ) : (
-                <img
-                  ref={setMediaRef}
-                  src={current.contentPath}
-                  alt={filename}
-                  className="max-w-full max-h-full object-contain select-none rounded-lg"
-                  draggable={false}
-                />
-              )}
+              <img
+                ref={imageRef}
+                src={current.contentPath}
+                alt={current.originalFilename ?? "attachment"}
+                className="max-w-full max-h-full object-contain select-none rounded-lg"
+                draggable={false}
+              />
             </div>
 
             {/* Right nav zone */}
             <div className="w-16 md:w-24 shrink-0 flex items-center justify-center h-full">
-              {items.length > 1 && (
+              {images.length > 1 && (
                 <button
                   type="button"
                   onClick={goNext}

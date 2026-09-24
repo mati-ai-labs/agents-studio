@@ -125,7 +125,6 @@ function makeCompanyPatternDataUrl(seed: string, brandColor?: string | null, log
   const diagonalPhase = rand() * Math.PI * 2;
   const antiDiagonalPhase = rand() * Math.PI * 2;
 
-  // token-extraction: allowlisted — canvas 2D fillStyle computed at runtime from numeric channel props; not a static literal.
   ctx.fillStyle = `rgb(${offR} ${offG} ${offB})`;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -209,7 +208,7 @@ export function CompanyPatternIcon({
         <div className="absolute inset-0 bg-muted" />
       )}
       {!logo && (
-        <span className="relative z-10 drop-shadow-(--drop-shadow-extract-1)">
+        <span className="relative z-10 drop-shadow-[0_1px_2px_rgba(0,0,0,0.65)]">
           {initial}
         </span>
       )}

@@ -47,7 +47,6 @@ import {
 } from "../components/FileTree";
 import { readZipArchive } from "../lib/zip";
 import { getPortableFileDataUrl, getPortableFileText, isPortableImageFile } from "../lib/portable-files";
-import { Badge } from "@/components/ui/badge";
 
 // ── Import-specific helpers ───────────────────────────────────────────
 
@@ -116,7 +115,7 @@ const ACTION_COLORS: Record<string, string> = {
 function FrontmatterCard({ data }: { data: FrontmatterData }) {
   return (
     <div className="rounded-md border border-border bg-accent/20 px-4 py-3 mb-4">
-      <dl className="grid grid-cols-(--gtc-5) gap-x-4 gap-y-1.5 text-sm">
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
         {Object.entries(data).map(([key, value]) => (
           <div key={key} className="contents">
             <dt className="text-muted-foreground whitespace-nowrap py-0.5">
@@ -151,12 +150,12 @@ function renderImportFileExtra(node: FileTreeNode, checked: boolean, renameMap: 
   // Show rename indicator only on directories (folders), not individual files
   const renamedTo = node.kind === "dir" ? renameMap.get(node.path) : undefined;
   const actionBadge = node.action ? (
-    <Badge variant="outline" className={cn(
-      "text-(length:--text-nano) uppercase tracking-wide",
+    <span className={cn(
+      "shrink-0 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide",
       ACTION_COLORS[node.action] ?? ACTION_COLORS.skip,
     )}>
       {checked ? node.action : "skip"}
-    </Badge>
+    </span>
   ) : null;
 
   if (!actionBadge && !renamedTo) return null;
@@ -164,7 +163,7 @@ function renderImportFileExtra(node: FileTreeNode, checked: boolean, renameMap: 
   return (
     <span className="inline-flex items-center gap-1.5 shrink-0">
       {renamedTo && checked && (
-        <span className="text-(length:--text-nano) text-cyan-500 font-mono truncate max-w-(--sz-7rem)" title={renamedTo}>
+        <span className="text-[10px] text-cyan-500 font-mono truncate max-w-[7rem]" title={renamedTo}>
           &rarr; {renamedTo}
         </span>
       )}
@@ -229,16 +228,16 @@ function ImportPreviewPane({
             )}
           </div>
           {action && (
-            <Badge variant="outline" className={cn(
-              "uppercase tracking-wide",
+            <span className={cn(
+              "shrink-0 rounded-full border px-2 py-0.5 text-xs uppercase tracking-wide",
               actionColor,
             )}>
               {action}
-            </Badge>
+            </span>
           )}
         </div>
       </div>
-      <div className="min-h-(--sz-560px) px-5 py-5">
+      <div className="min-h-[560px] px-5 py-5">
         {parsed ? (
           <>
             <FrontmatterCard data={parsed.data} />
@@ -247,8 +246,8 @@ function ImportPreviewPane({
         ) : isMarkdown ? (
           <MarkdownBody resolveImageSrc={resolveImageSrc} softBreaks={false} linkIssueReferences={false}>{textContent ?? ""}</MarkdownBody>
         ) : imageSrc ? (
-          <div className="flex min-h-(--sz-520px) items-center justify-center rounded-lg border border-border bg-accent/10 p-6">
-            <img src={imageSrc} alt={selectedFile} className="max-h-(--sz-480px) max-w-full object-contain" />
+          <div className="flex min-h-[520px] items-center justify-center rounded-lg border border-border bg-accent/10 p-6">
+            <img src={imageSrc} alt={selectedFile} className="max-h-[480px] max-w-full object-contain" />
           </div>
         ) : textContent !== null ? (
           <pre className="overflow-x-auto whitespace-pre-wrap break-words border-0 bg-transparent p-0 font-mono text-sm text-foreground">
@@ -446,8 +445,8 @@ function ConflictResolutionList({
                   {isSkipped ? "skipped" : "skip"}
                 </button>
 
-                <Badge variant="outline" className={cn(
-                  "text-(length:--text-nano) uppercase tracking-wide",
+                <span className={cn(
+                  "shrink-0 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide",
                   isSkipped
                     ? "text-muted-foreground border-border"
                     : isConfirmed
@@ -455,7 +454,7 @@ function ConflictResolutionList({
                       : "text-amber-500 border-amber-500/30",
                 )}>
                   {item.kind}
-                </Badge>
+                </span>
 
                 <span className={cn(
                   "shrink-0 font-mono text-xs",
@@ -564,12 +563,12 @@ function AdapterPickerList({
             return (
               <div key={agent.slug}>
                 <div className="flex items-center gap-3 px-4 py-2.5 text-sm">
-                  <Badge variant="outline" className={cn(
-                    "text-(length:--text-nano) uppercase tracking-wide",
+                  <span className={cn(
+                    "shrink-0 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide",
                     "text-blue-500 border-blue-500/30",
                   )}>
                     agent
-                  </Badge>
+                  </span>
                   <span className="shrink-0 font-mono text-xs text-muted-foreground">
                     {agent.name}
                   </span>
@@ -1228,7 +1227,7 @@ export function CompanyImport() {
           </select>
         </Field>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-2">
           <Button
             size="sm"
             variant="outline"
@@ -1288,7 +1287,7 @@ export function CompanyImport() {
           />
 
           {/* Import button — below renames */}
-          <div className="mx-5 mt-3 flex flex-wrap justify-end gap-2">
+          <div className="mx-5 mt-3 flex justify-end">
             <Button
               size="sm"
               onClick={() => importMutation.mutate()}
@@ -1320,8 +1319,8 @@ export function CompanyImport() {
           )}
 
           {/* Two-column layout */}
-          <div className="grid gap-4 xl:h-(--sz-calc-31) xl:grid-cols-(--gtc-25) xl:gap-0">
-            <aside className="flex max-h-(--sz-24rem) flex-col overflow-hidden border-b border-border xl:max-h-none xl:border-b-0 xl:border-r">
+          <div className="grid h-[calc(100vh-16rem)] gap-0 xl:grid-cols-[19rem_minmax(0,1fr)]">
+            <aside className="flex flex-col border-r border-border overflow-hidden">
               <div className="border-b border-border px-4 py-3 shrink-0">
                 <h2 className="text-base font-semibold">Package files</h2>
               </div>
@@ -1340,7 +1339,7 @@ export function CompanyImport() {
                 />
               </div>
             </aside>
-            <div className="min-w-0 overflow-y-auto xl:pl-6">
+            <div className="min-w-0 overflow-y-auto pl-6">
               <ImportPreviewPane
                 selectedFile={selectedFile}
                 content={previewContent}
