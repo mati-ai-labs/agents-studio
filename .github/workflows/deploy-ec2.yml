@@ -13,12 +13,73 @@ permissions:
   contents: read
 
 jobs:
-  deploy:
-    name: Build and deploy on EC2
+  build:
+    name: Build deployment artifact
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
+      - name: Checkout deployment revision
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all workspaces
+        run: pnpm build
+
+      - name: Package build outputs
+        run: |
+          mapfile -d '' build_dirs < <(
+            find . \
+              -type d \
+              -name dist \
+              -not -path './node_modules/*' \
+              -not -path '*/node_modules/*' \
+              -print0
+          )
+
+          if (( ${#build_dirs[@]} == 0 )); then
+            echo "No build output directories were produced." >&2
+            exit 1
+          fi
+
+          tar -czf agents-studio-build.tgz "${build_dirs[@]}"
+          sha256sum agents-studio-build.tgz > agents-studio-build.tgz.sha256
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: agents-studio-${{ github.sha }}
+          path: |
+            agents-studio-build.tgz
+            agents-studio-build.tgz.sha256
+          retention-days: 1
+          if-no-files-found: error
+
+  deploy:
+    name: Deploy verified artifact to EC2
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: agents-studio-${{ github.sha }}
+
       - name: Configure SSH
         env:
           SSH_PRIVATE_KEY: ${{ secrets.AGENTS_STUDIO_EC2_SSH_KEY }}
@@ -30,7 +91,19 @@ jobs:
           printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
-      - name: Deploy pushed revision
+      - name: Upload verified build artifact
+        env:
+          DEPLOY_SHA: ${{ github.sha }}
+        run: |
+          scp \
+            -i ~/.ssh/agents-studio.pem \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            agents-studio-build.tgz \
+            agents-studio-build.tgz.sha256 \
+            ubuntu@ec2-3-110-115-154.ap-south-1.compute.amazonaws.com:/tmp/
+
+      - name: Activate pushed revision
         env:
           DEPLOY_SHA: ${{ github.sha }}
         run: |
@@ -44,6 +117,9 @@ jobs:
 
           repo=/home/ubuntu/agents-studio
           export PATH=/home/ubuntu/.nvm/versions/node/v24.16.0/bin:$PATH
+
+          cd /tmp
+          sha256sum --check agents-studio-build.tgz.sha256
 
           cd "$repo"
 
@@ -67,7 +143,8 @@ jobs:
           git switch --force-create deployment origin/deployment
 
           corepack pnpm install --frozen-lockfile
-          corepack pnpm build
+          tar -xzf /tmp/agents-studio-build.tgz -C "$repo"
+          rm -f /tmp/agents-studio-build.tgz /tmp/agents-studio-build.tgz.sha256
 
           npx --yes pm2 reload ecosystem.config.cjs --update-env
 
