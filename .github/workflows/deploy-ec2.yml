@@ -148,18 +148,20 @@ jobs:
 
           npx --yes pm2 reload ecosystem.config.cjs --update-env
 
-          for attempt in $(seq 1 30); do
+          for attempt in $(seq 1 150); do
             if curl --fail --silent --show-error http://127.0.0.1:3100/api/health >/dev/null \
               && curl --fail --silent --show-error http://127.0.0.1:3101/orchestrator/health >/dev/null; then
               echo "Agents Studio deployed successfully at $DEPLOY_SHA."
               exit 0
             fi
 
-            echo "Waiting for services to become healthy ($attempt/30)..."
+            echo "Waiting for services to become healthy ($attempt/150)..."
             sleep 2
           done
 
           echo "Deployment completed, but one or more health checks failed." >&2
           npx --yes pm2 status >&2
+          npx --yes pm2 logs paperclip --lines 100 --nostream >&2
+          npx --yes pm2 logs orchestrator --lines 100 --nostream >&2
           exit 1
           DEPLOY_SCRIPT
