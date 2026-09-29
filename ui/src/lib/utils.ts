@@ -22,7 +22,9 @@ export function asFiniteNumber(value: unknown, fallback: number) {
 }
 
 export function formatCents(cents: number): string {
-  return `$${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  // Sub-cent amounts (cheap model runs) would otherwise render as $0.00.
+  const subCent = cents !== 0 && Math.abs(cents) < 1;
+  return `$${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: subCent ? 4 : 2 })}`;
 }
 
 export function formatNumber(n: number): string {

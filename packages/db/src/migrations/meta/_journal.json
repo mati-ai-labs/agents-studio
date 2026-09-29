@@ -1324,6 +1324,13 @@
       "when": 1786120683158,
       "tag": "0191_company_connectors",
       "breakpoints": true
+    },
+    {
+      "idx": 192,
+      "version": "7",
+      "when": 1786120684158,
+      "tag": "0192_fractional_cost_cents",
+      "breakpoints": true
     }
   ]
 }
