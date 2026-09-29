@@ -18,6 +18,7 @@ import {
   ToggleField,
   HintIcon,
 } from "../components/agent-config-primitives";
+import { useRestrictedOperator } from "@/hooks/useRestrictedOperator";
 
 type AgentSnippetInput = {
   onboardingTextUrl: string;
@@ -29,6 +30,7 @@ const BYTES_PER_MIB = 1024 * 1024;
 const DEFAULT_COMPANY_ATTACHMENT_MAX_MIB = DEFAULT_COMPANY_ATTACHMENT_MAX_BYTES / BYTES_PER_MIB;
 const MAX_COMPANY_ATTACHMENT_MAX_MIB = MAX_COMPANY_ATTACHMENT_MAX_BYTES / BYTES_PER_MIB;
 export function CompanySettings() {
+  const isRestricted = useRestrictedOperator();
   const {
     companies,
     selectedCompany,
@@ -416,126 +418,131 @@ export function CompanySettings() {
         </div>
       )}
 
-      {/* Hiring */}
-      <div className="space-y-4" data-testid="company-settings-team-section">
-        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-          Hiring
+      {/* Hiring, agent invites, and company packages are hidden from restricted operators. */}
+      {isRestricted ? null : (
+        <>
+        {/* Hiring */}
+        <div className="space-y-4" data-testid="company-settings-team-section">
+          <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+            Hiring
+          </div>
+          <div className="rounded-md border border-border px-4 py-3">
+            <ToggleField
+              label="Require board approval for new hires"
+              hint="New agent hires stay pending until approved by board."
+              checked={!!selectedCompany.requireBoardApprovalForNewAgents}
+              onChange={(v) => settingsMutation.mutate(v)}
+              toggleTestId="company-settings-team-approval-toggle"
+            />
+          </div>
         </div>
-        <div className="rounded-md border border-border px-4 py-3">
-          <ToggleField
-            label="Require board approval for new hires"
-            hint="New agent hires stay pending until approved by board."
-            checked={!!selectedCompany.requireBoardApprovalForNewAgents}
-            onChange={(v) => settingsMutation.mutate(v)}
-            toggleTestId="company-settings-team-approval-toggle"
-          />
-        </div>
-      </div>
 
-      {/* Invites */}
-      <div className="space-y-4" data-testid="company-settings-invites-section">
-        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-          Invites
-        </div>
-        <div className="space-y-3 rounded-md border border-border px-4 py-4">
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-muted-foreground">
-              Generate an OpenClaw agent invite snippet.
-            </span>
-            <HintIcon text="Creates a short-lived OpenClaw agent invite and renders a copy-ready prompt." />
+        {/* Invites */}
+        <div className="space-y-4" data-testid="company-settings-invites-section">
+          <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+            Invites
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              data-testid="company-settings-invites-generate-button"
-              size="sm"
-              onClick={() => inviteMutation.mutate()}
-              disabled={inviteMutation.isPending}
-            >
-              {inviteMutation.isPending
-                ? "Generating..."
-                : "Generate OpenClaw Invite Prompt"}
-            </Button>
-          </div>
-          {inviteError && (
-            <p className="text-sm text-destructive">{inviteError}</p>
-          )}
-          {inviteSnippet && (
-            <div
-              className="rounded-md border border-border bg-muted/30 p-2"
-              data-testid="company-settings-invites-snippet"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-xs text-muted-foreground">
-                  OpenClaw Invite Prompt
-                </div>
-                {snippetCopied && (
-                  <span
-                    key={snippetCopyDelightId}
-                    className="flex items-center gap-1 text-xs text-green-600 animate-pulse"
-                  >
-                    <Check className="h-3 w-3" />
-                    Copied
-                  </span>
-                )}
-              </div>
-              <div className="mt-1 space-y-1.5">
-                <textarea
-                  data-testid="company-settings-invites-snippet-textarea"
-                  className="h-[28rem] w-full rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs outline-none"
-                  value={inviteSnippet}
-                  readOnly
-                />
-                <div className="flex justify-end">
-                  <Button
-                    data-testid="company-settings-invites-copy-button"
-                    size="sm"
-                    variant="ghost"
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(inviteSnippet);
-                        setSnippetCopied(true);
-                        setSnippetCopyDelightId((prev) => prev + 1);
-                        setTimeout(() => setSnippetCopied(false), 2000);
-                      } catch {
-                        /* clipboard may not be available */
-                      }
-                    }}
-                  >
-                    {snippetCopied ? "Copied snippet" : "Copy snippet"}
-                  </Button>
-                </div>
-              </div>
+          <div className="space-y-3 rounded-md border border-border px-4 py-4">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-muted-foreground">
+                Generate an OpenClaw agent invite snippet.
+              </span>
+              <HintIcon text="Creates a short-lived OpenClaw agent invite and renders a copy-ready prompt." />
             </div>
-          )}
-        </div>
-      </div>
-
-      {/* Import / Export */}
-      <div className="space-y-4">
-        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-          Company Packages
-        </div>
-        <div className="rounded-md border border-border px-4 py-4">
-          <p className="text-sm text-muted-foreground">
-            Import and export have moved to dedicated pages accessible from the{" "}
-            <a href="/org" className="underline hover:text-foreground">Org Chart</a> header.
-          </p>
-          <div className="mt-3 flex items-center gap-2">
-            <Button size="sm" variant="outline" asChild>
-              <a href="/company/export">
-                <Download className="mr-1.5 h-3.5 w-3.5" />
-                Export
-              </a>
-            </Button>
-            <Button size="sm" variant="outline" asChild>
-              <a href="/company/import">
-                <Upload className="mr-1.5 h-3.5 w-3.5" />
-                Import
-              </a>
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                data-testid="company-settings-invites-generate-button"
+                size="sm"
+                onClick={() => inviteMutation.mutate()}
+                disabled={inviteMutation.isPending}
+              >
+                {inviteMutation.isPending
+                  ? "Generating..."
+                  : "Generate OpenClaw Invite Prompt"}
+              </Button>
+            </div>
+            {inviteError && (
+              <p className="text-sm text-destructive">{inviteError}</p>
+            )}
+            {inviteSnippet && (
+              <div
+                className="rounded-md border border-border bg-muted/30 p-2"
+                data-testid="company-settings-invites-snippet"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs text-muted-foreground">
+                    OpenClaw Invite Prompt
+                  </div>
+                  {snippetCopied && (
+                    <span
+                      key={snippetCopyDelightId}
+                      className="flex items-center gap-1 text-xs text-green-600 animate-pulse"
+                    >
+                      <Check className="h-3 w-3" />
+                      Copied
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 space-y-1.5">
+                  <textarea
+                    data-testid="company-settings-invites-snippet-textarea"
+                    className="h-[28rem] w-full rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs outline-none"
+                    value={inviteSnippet}
+                    readOnly
+                  />
+                  <div className="flex justify-end">
+                    <Button
+                      data-testid="company-settings-invites-copy-button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(inviteSnippet);
+                          setSnippetCopied(true);
+                          setSnippetCopyDelightId((prev) => prev + 1);
+                          setTimeout(() => setSnippetCopied(false), 2000);
+                        } catch {
+                          /* clipboard may not be available */
+                        }
+                      }}
+                    >
+                      {snippetCopied ? "Copied snippet" : "Copy snippet"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
-      </div>
+
+        {/* Import / Export */}
+        <div className="space-y-4">
+          <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+            Company Packages
+          </div>
+          <div className="rounded-md border border-border px-4 py-4">
+            <p className="text-sm text-muted-foreground">
+              Import and export have moved to dedicated pages accessible from the{" "}
+              <a href="/org" className="underline hover:text-foreground">Org Chart</a> header.
+            </p>
+            <div className="mt-3 flex items-center gap-2">
+              <Button size="sm" variant="outline" asChild>
+                <a href="/company/export">
+                  <Download className="mr-1.5 h-3.5 w-3.5" />
+                  Export
+                </a>
+              </Button>
+              <Button size="sm" variant="outline" asChild>
+                <a href="/company/import">
+                  <Upload className="mr-1.5 h-3.5 w-3.5" />
+                  Import
+                </a>
+              </Button>
+            </div>
+          </div>
+        </div>
+        </>
+      )}
 
       {/* Danger Zone */}
       <div className="space-y-4">

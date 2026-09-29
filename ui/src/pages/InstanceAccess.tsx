@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Shield, ShieldCheck } from "lucide-react";
+import { Lock, Shield, ShieldCheck } from "lucide-react";
 import { accessApi } from "@/api/access";
 import { ApiError } from "@/api/client";
 import { Button } from "@/components/ui/button";
@@ -41,6 +41,8 @@ export function InstanceAccess() {
     queryFn: () => accessApi.getUserCompanyAccess(selectedUserId!),
     enabled: !!selectedUserId,
   });
+  const isSelectedRestricted =
+    userAccessQuery.data?.user?.isRestricted ?? selectedUser?.isRestricted ?? false;
 
   useEffect(() => {
     if (!selectedUserId && usersQuery.data?.[0]) {
@@ -80,6 +82,27 @@ export function InstanceAccess() {
         await queryClient.invalidateQueries({ queryKey: queryKeys.access.userCompanyAccess(selectedUserId) });
       }
       pushToast({ title: "Instance role updated", tone: "success" });
+    },
+  });
+
+  const setRestrictedMutation = useMutation({
+    mutationFn: async (restricted: boolean) => {
+      if (!selectedUserId) throw new Error("No user selected");
+      return accessApi.setUserRestricted(selectedUserId, restricted);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.access.adminUsers(search) });
+      if (selectedUserId) {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.access.userCompanyAccess(selectedUserId) });
+      }
+      pushToast({ title: "Restriction updated", tone: "success" });
+    },
+    onError: (error) => {
+      pushToast({
+        title: "Failed to update restriction",
+        body: error instanceof Error ? error.message : undefined,
+        tone: "error",
+      });
     },
   });
 
@@ -137,7 +160,9 @@ export function InstanceAccess() {
                     <div className="truncate font-medium">{user.name || user.email || user.id}</div>
                     <div className="truncate text-sm text-muted-foreground">{user.email || user.id}</div>
                   </div>
-                  {user.isInstanceAdmin ? (
+                  {user.isRestricted ? (
+                    <Lock className="h-4 w-4 text-amber-600" aria-label="Restricted" />
+                  ) : user.isInstanceAdmin ? (
                     <ShieldCheck className="h-4 w-4 text-emerald-600" />
                   ) : null}
                 </div>
@@ -169,14 +194,30 @@ export function InstanceAccess() {
                     {selectedUser?.email || selectedUserId}
                   </div>
                 </div>
-                <Button
-                  variant={selectedUser?.isInstanceAdmin ? "outline" : "default"}
-                  onClick={() => setAdminMutation.mutate(!(selectedUser?.isInstanceAdmin ?? false))}
-                  disabled={setAdminMutation.isPending}
-                >
-                  {selectedUser?.isInstanceAdmin ? "Remove instance admin" : "Promote to instance admin"}
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant={isSelectedRestricted ? "default" : "outline"}
+                    onClick={() => setRestrictedMutation.mutate(!isSelectedRestricted)}
+                    disabled={setRestrictedMutation.isPending}
+                  >
+                    {isSelectedRestricted ? "Remove restriction" : "Restrict user"}
+                  </Button>
+                  <Button
+                    variant={selectedUser?.isInstanceAdmin ? "outline" : "default"}
+                    onClick={() => setAdminMutation.mutate(!(selectedUser?.isInstanceAdmin ?? false))}
+                    disabled={setAdminMutation.isPending || isSelectedRestricted}
+                  >
+                    {selectedUser?.isInstanceAdmin ? "Remove instance admin" : "Promote to instance admin"}
+                  </Button>
+                </div>
               </div>
+
+              {isSelectedRestricted ? (
+                <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-sm">
+                  Restricted: this user can only open the companies selected below, cannot create or
+                  import companies, and cannot see agent prompts, instructions, or skills.
+                </div>
+              ) : null}
 
               <div className="space-y-3">
                 <div>

@@ -26,6 +26,7 @@ import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useCompany } from "@/context/CompanyContext";
 import { useToast } from "@/context/ToastContext";
 import { queryKeys } from "@/lib/queryKeys";
+import { useRestrictedOperator } from "@/hooks/useRestrictedOperator";
 
 const permissionLabels: Record<PermissionKey, string> = {
   "agents:create": "Create agents",
@@ -36,6 +37,18 @@ const permissionLabels: Record<PermissionKey, string> = {
   "tasks:manage_active_checkouts": "Manage active task checkouts",
   "joins:approve": "Approve join requests",
   "environments:manage": "Manage environments",
+  "agents:configure": "Configure agents",
+  "agents:suggest-changes": "Suggest agent changes",
+  "skills:create": "Create skills",
+  "skills:suggest-changes": "Suggest skill changes",
+  "tools:admin": "Administer tools",
+  "tools:manage_connections": "Manage tool connections",
+  "tools:manage_profiles": "Manage tool profiles",
+  "tools:view_audit": "View tool audit log",
+  "tools:use": "Use tools",
+  "tools:manage_runtime": "Manage tool runtime",
+  "inbox:manage": "Manage inbox",
+  "pipelines:write": "Edit pipelines",
 };
 
 function formatGrantSummary(member: CompanyMember) {
@@ -48,6 +61,7 @@ const implicitRoleGrantMap: Record<NonNullable<CompanyMember["membershipRole"]>,
   admin: ["agents:create", "users:invite", "tasks:assign", "joins:approve"],
   operator: ["tasks:assign"],
   viewer: [],
+  restricted_operator: ["tasks:assign", "agents:create", "users:invite", "users:manage_permissions", "joins:approve"],
 };
 
 const reassignmentIssueStatuses = "backlog,todo,in_progress,in_review,blocked,failed,timed_out";
@@ -58,6 +72,7 @@ function getImplicitGrantKeys(role: CompanyMember["membershipRole"]) {
 }
 
 export function CompanyAccess() {
+  const isRestricted = useRestrictedOperator();
   const { selectedCompany, selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const { pushToast } = useToast();
@@ -373,26 +388,31 @@ export function CompanyAccess() {
                     </Badge>
                   </div>
                   <div className="min-w-0 text-sm text-muted-foreground">{formatGrantSummary(member)}</div>
-                  <div className="space-y-1 text-right">
-                    <div className="flex justify-end gap-2">
-                      <Button size="sm" variant="outline" onClick={() => setEditingMemberId(member.id)}>
-                        Edit
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => setRemovingMemberId(member.id)}
-                        disabled={!canArchive}
-                        title={removalReason ?? undefined}
-                      >
-                        <Trash2 className="mr-1 h-3.5 w-3.5" />
-                        Remove
-                      </Button>
+                  {/* Restricted operators get a view-only access list. */}
+                  {isRestricted ? (
+                    <div />
+                  ) : (
+                    <div className="space-y-1 text-right">
+                      <div className="flex justify-end gap-2">
+                        <Button size="sm" variant="outline" onClick={() => setEditingMemberId(member.id)}>
+                          Edit
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setRemovingMemberId(member.id)}
+                          disabled={!canArchive}
+                          title={removalReason ?? undefined}
+                        >
+                          <Trash2 className="mr-1 h-3.5 w-3.5" />
+                          Remove
+                        </Button>
+                      </div>
+                      {removalReason ? (
+                        <div className="text-xs text-muted-foreground">{removalReason}</div>
+                      ) : null}
                     </div>
-                    {removalReason ? (
-                      <div className="text-xs text-muted-foreground">{removalReason}</div>
-                    ) : null}
-                  </div>
+                  )}
                 </div>
               );
             })

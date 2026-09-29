@@ -8,6 +8,7 @@ import type { DeploymentMode } from "@paperclipai/shared";
 import type { BetterAuthSessionResult } from "../auth/better-auth.js";
 import { logger } from "./logger.js";
 import { boardAuthService } from "../services/board-auth.js";
+import { isRestrictedOperatorAccess } from "../services/restricted-operator.js";
 import { ensureHumanRoleDefaultGrants } from "../services/principal-access-compatibility.js";
 
 function hashToken(token: string) {
@@ -55,12 +56,11 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
     if (!session?.user?.id) return false;
 
     const userId = session.user.id;
-    const [roleRow, memberships] = await Promise.all([
+    const [roleRows, memberships] = await Promise.all([
       db
-        .select({ id: instanceUserRoles.id })
+        .select({ role: instanceUserRoles.role })
         .from(instanceUserRoles)
-        .where(and(eq(instanceUserRoles.userId, userId), eq(instanceUserRoles.role, "instance_admin")))
-        .then((rows) => rows[0] ?? null),
+        .where(eq(instanceUserRoles.userId, userId)),
       db
         .select({
           companyId: companyMemberships.companyId,
@@ -76,6 +76,8 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
           ),
         ),
     ]);
+    const roles = new Set(roleRows.map((row) => row.role));
+    const isRestricted = isRestrictedOperatorAccess(roles, memberships);
     req.actor = {
       type: "board",
       userId,
@@ -83,7 +85,8 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
       userEmail: session.user.email ?? null,
       companyIds: memberships.map((row) => row.companyId),
       memberships,
-      isInstanceAdmin: Boolean(roleRow),
+      isInstanceAdmin: roles.has("instance_admin") && !isRestricted,
+      isRestricted,
       runId: runIdHeader ?? undefined,
       source: "session",
     };
@@ -135,6 +138,7 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
           companyIds: access.companyIds,
           memberships: access.memberships,
           isInstanceAdmin: access.isInstanceAdmin,
+          isRestricted: access.isRestricted,
           keyId: boardKey.id,
           runId: runIdHeader || undefined,
           source: "board_key",

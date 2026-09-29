@@ -44,6 +44,7 @@ import {
   archiveCompanyMemberSchema,
   updateMemberPermissionsSchema,
   updateUserCompanyAccessSchema,
+  updateUserRestrictedOperatorSchema,
   PERMISSION_KEYS,
   isUuidLike,
 } from "@paperclipai/shared";
@@ -1239,6 +1240,7 @@ type CompanyMemberRecord = Awaited<ReturnType<typeof loadCompanyMemberRecords>>[
 
 const humanRoleRank: Record<HumanCompanyMembershipRole, number> = {
   viewer: 1,
+  restricted_operator: 1.5,
   operator: 2,
   admin: 3,
   owner: 4,
@@ -1531,7 +1533,7 @@ async function loadUserCompanyAccessResponse(
   access: ReturnType<typeof accessService>,
   userId: string,
 ) {
-  const [memberships, user, isInstanceAdmin] = await Promise.all([
+  const [memberships, user, isInstanceAdmin, isRestricted] = await Promise.all([
     access.listUserCompanyAccess(userId),
     db
       .select({
@@ -1544,6 +1546,7 @@ async function loadUserCompanyAccessResponse(
       .where(eq(authUsers.id, userId))
       .then((rows) => rows[0] ?? null),
     access.isInstanceAdmin(userId),
+    access.isRestrictedOperator(userId),
   ]);
   const companyIds = [...new Set(memberships.map((membership) => membership.companyId))];
   const companyRows = companyIds.length
@@ -1563,6 +1566,7 @@ async function loadUserCompanyAccessResponse(
       ? {
           ...toUserProfile(user),
           isInstanceAdmin,
+          isRestricted,
         }
       : null,
     companyAccess: memberships.map((membership) => {
@@ -2037,7 +2041,7 @@ function extractInviteMessage(
 function mergeInviteDefaults(
   defaultsPayload: Record<string, unknown> | null | undefined,
   agentMessage: string | null,
-  humanRole: "owner" | "admin" | "operator" | "viewer" | null = null,
+  humanRole: HumanCompanyMembershipRole | null = null,
 ): Record<string, unknown> | null {
   const merged =
     defaultsPayload && typeof defaultsPayload === "object"
@@ -2076,6 +2080,16 @@ function inviteState(invite: typeof invites.$inferSelect) {
   if (invite.acceptedAt) return "accepted" as const;
   if (inviteExpired(invite)) return "expired" as const;
   return "active" as const;
+}
+
+/**
+ * Legacy marker from before `restricted_operator` was a company role: invites
+ * flagged this way also restrict the invitee at the instance level.
+ */
+function isRestrictedOperatorInvite(invite: typeof invites.$inferSelect) {
+  const defaults = invite.defaultsPayload as Record<string, unknown> | null | undefined;
+  const human = defaults && isPlainObject(defaults.human) ? (defaults.human as Record<string, unknown>) : null;
+  return human?.restrictedOperator === true;
 }
 
 function extractInviteHumanRole(invite: typeof invites.$inferSelect) {
@@ -2849,6 +2863,7 @@ export function accessRoutes(
       user: accessSnapshot.user,
       userId: req.actor.userId,
       isInstanceAdmin: accessSnapshot.isInstanceAdmin,
+      isRestricted: accessSnapshot.isRestricted,
       companyIds: accessSnapshot.companyIds,
       memberships: accessSnapshot.memberships,
       source: req.actor.source ?? "none",
@@ -3028,7 +3043,7 @@ export function accessRoutes(
     req: Request;
     companyId: string;
     allowedJoinTypes: "human" | "agent" | "both";
-    humanRole?: "owner" | "admin" | "operator" | "viewer" | null;
+    humanRole?: HumanCompanyMembershipRole | null;
     defaultsPayload?: Record<string, unknown> | null;
     agentMessage?: string | null;
   }) {
@@ -3116,6 +3131,13 @@ export function accessRoutes(
       grants,
       input.invite.invitedByUserId ?? null,
     );
+    if (isRestrictedOperatorInvite(input.invite)) {
+      await access.setRestrictedOperator(input.joinRequest.requestingUserId, true);
+      await access.ensureRestrictedOperatorGrants(
+        input.joinRequest.requestingUserId,
+        input.invite.invitedByUserId ?? null,
+      );
+    }
 
     if (input.joinRequest.status === "approved") {
       return input.joinRequest;
@@ -3288,14 +3310,26 @@ export function accessRoutes(
     async (req, res) => {
       const companyId = req.params.companyId as string;
       await assertCompanyPermission(req, companyId, "users:invite");
+      // Restricted operators cannot customize invites: human-only invites that
+      // always grant the Restricted Operator role.
+      const inviteInput = req.actor.isRestricted
+        ? {
+            allowedJoinTypes: "human" as const,
+            humanRole: "restricted_operator" as const,
+            defaultsPayload: null,
+            agentMessage: null,
+          }
+        : {
+            allowedJoinTypes: req.body.allowedJoinTypes,
+            humanRole: req.body.humanRole ?? null,
+            defaultsPayload: req.body.defaultsPayload ?? null,
+            agentMessage: req.body.agentMessage ?? null,
+          };
       const { token, created, normalizedAgentMessage } =
         await createCompanyInviteForCompany({
           req,
           companyId,
-          allowedJoinTypes: req.body.allowedJoinTypes,
-          humanRole: req.body.humanRole ?? null,
-          defaultsPayload: req.body.defaultsPayload ?? null,
-          agentMessage: req.body.agentMessage ?? null
+          ...inviteInput,
         });
 
       await logActivity(db, {
@@ -4207,6 +4241,10 @@ export function accessRoutes(
           grants,
           req.actor.userId ?? null
         );
+        if (isRestrictedOperatorInvite(invite)) {
+          await access.setRestrictedOperator(existing.requestingUserId, true);
+          await access.ensureRestrictedOperatorGrants(existing.requestingUserId, req.actor.userId ?? null);
+        }
       } else {
         const existingAgents = await agents.list(companyId);
         const managerId = resolveJoinRequestAgentManagerId(existingAgents);
@@ -4815,11 +4853,19 @@ export function accessRoutes(
         ),
       ).then((values) => values.filter((value): value is string => Boolean(value))),
     );
+    const restrictedIds = new Set(
+      await Promise.all(
+        userIds.map(async (userId) =>
+          (await access.isRestrictedOperator(userId)) ? userId : null,
+        ),
+      ).then((values) => values.filter((value): value is string => Boolean(value))),
+    );
 
     res.json(
       filteredUsers.slice(0, 50).map((user) => ({
         ...toUserProfile(user),
         isInstanceAdmin: adminIds.has(user.id),
+        isRestricted: restrictedIds.has(user.id),
         activeCompanyMembershipCount:
           membershipCountByUserId.get(user.id) ?? 0,
       })),
@@ -4834,6 +4880,24 @@ export function accessRoutes(
       const removed = await access.demoteInstanceAdmin(userId);
       if (!removed) throw notFound("Instance admin role not found");
       res.json(removed);
+    }
+  );
+
+  router.put(
+    "/admin/users/:userId/restricted-operator",
+    validate(updateUserRestrictedOperatorSchema),
+    async (req, res) => {
+      await assertInstanceAdmin(req);
+      const userId = req.params.userId as string;
+      if (req.body.restricted && userId === req.actor.userId) {
+        throw badRequest("You cannot restrict your own account");
+      }
+      await access.setRestrictedOperator(userId, req.body.restricted);
+      await access.syncRestrictedOperatorMemberships(userId, req.body.restricted);
+      if (req.body.restricted) {
+        await access.ensureRestrictedOperatorGrants(userId, req.actor.userId ?? null);
+      }
+      res.json(await loadUserCompanyAccessResponse(db, access, userId));
     }
   );
 
@@ -4854,6 +4918,11 @@ export function accessRoutes(
         req.body.companyIds ?? [],
         { actorUserId: req.actor.userId ?? null },
       );
+      if (await access.isRestrictedOperator(userId)) {
+        // Newly granted companies also get the Restricted Operator role.
+        await access.syncRestrictedOperatorMemberships(userId, true);
+        await access.ensureRestrictedOperatorGrants(userId, req.actor.userId ?? null);
+      }
       res.json(await loadUserCompanyAccessResponse(db, access, userId));
     }
   );

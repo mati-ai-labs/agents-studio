@@ -28,6 +28,7 @@ import { useDisabledAdaptersSync } from "../adapters/use-disabled-adapters";
 import { isValidAdapterType } from "../adapters/metadata";
 import { ReportsToPicker } from "../components/ReportsToPicker";
 import { buildNewAgentHirePayload } from "../lib/new-agent-hire-payload";
+import { useRestrictedOperator } from "@/hooks/useRestrictedOperator";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
@@ -87,10 +88,11 @@ export function NewAgent() {
     enabled: !!selectedCompanyId,
   });
 
+  const isRestricted = useRestrictedOperator();
   const { data: companySkills } = useQuery({
     queryKey: queryKeys.companySkills.list(selectedCompanyId ?? ""),
     queryFn: () => companySkillsApi.list(selectedCompanyId!),
-    enabled: Boolean(selectedCompanyId),
+    enabled: Boolean(selectedCompanyId) && !isRestricted,
   });
 
   const isFirstAgent = !agents || agents.length === 0;
@@ -266,6 +268,7 @@ export function NewAgent() {
           onTestFeedbackChange={handleTestAgentFeedbackChange}
         />
 
+        {!isRestricted && (
         <div className="border-t border-border px-4 py-4">
           <div className="space-y-3">
             <div>
@@ -303,6 +306,7 @@ export function NewAgent() {
             )}
           </div>
         </div>
+        )}
 
         {/* Footer */}
         <div className="border-t border-border px-4 py-3">

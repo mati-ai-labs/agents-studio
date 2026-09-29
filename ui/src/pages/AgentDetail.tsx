@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useParams, useNavigate, Link, Navigate, useBeforeUnload } from "@/lib/router";
+import { useRestrictedOperator } from "@/hooks/useRestrictedOperator";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   agentsApi,
@@ -640,7 +641,13 @@ export function AgentDetail() {
   const navigate = useNavigate();
   const [actionError, setActionError] = useState<string | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
-  const activeView = urlRunId ? "runs" as AgentDetailView : parseAgentDetailView(urlTab ?? null);
+  const isRestricted = useRestrictedOperator();
+  const requestedView = urlRunId ? "runs" as AgentDetailView : parseAgentDetailView(urlTab ?? null);
+  // Restricted operators cannot see prompts/instructions, skills, or configuration.
+  const activeView: AgentDetailView =
+    isRestricted && (requestedView === "instructions" || requestedView === "skills" || requestedView === "configuration")
+      ? "dashboard"
+      : requestedView;
   const needsDashboardData = activeView === "dashboard";
   const needsRunData = activeView === "runs" || Boolean(urlRunId);
   const shouldLoadHeartbeats = needsDashboardData || needsRunData;
@@ -1020,9 +1027,13 @@ export function AgentDetail() {
           <PageTabBar
             items={[
               { value: "dashboard", label: "Dashboard" },
-              { value: "instructions", label: "Instructions" },
-              { value: "skills", label: "Skills" },
-              { value: "configuration", label: "Configuration" },
+              ...(isRestricted
+                ? []
+                : [
+                    { value: "instructions", label: "Instructions" },
+                    { value: "skills", label: "Skills" },
+                    { value: "configuration", label: "Configuration" },
+                  ]),
               { value: "runs", label: "Runs" },
               { value: "budget", label: "Budget" },
             ]}
@@ -3026,6 +3037,7 @@ function RunsTab({
 /* ---- Run Detail (expanded) ---- */
 
 function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }: { run: HeartbeatRun; agentRouteId: string; adapterType: string; adapterConfig: Record<string, unknown> }) {
+  const isRestricted = useRestrictedOperator();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { data: hydratedRun } = useQuery({
@@ -3458,24 +3470,29 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
         </div>
       )}
 
-      {/* stderr excerpt for failed runs */}
-      {run.stderrExcerpt && (
-        <div className="space-y-1">
-          <span className="text-xs font-medium text-red-600 dark:text-red-400">stderr</span>
-          <pre className="bg-neutral-100 dark:bg-neutral-950 rounded-md p-3 text-xs font-mono text-red-700 dark:text-red-300 overflow-x-auto whitespace-pre-wrap">{run.stderrExcerpt}</pre>
-        </div>
-      )}
+      {/* Restricted operators only get the run summary above, never output or logs. */}
+      {isRestricted ? null : (
+        <>
+          {/* stderr excerpt for failed runs */}
+          {run.stderrExcerpt && (
+            <div className="space-y-1">
+              <span className="text-xs font-medium text-red-600 dark:text-red-400">stderr</span>
+              <pre className="bg-neutral-100 dark:bg-neutral-950 rounded-md p-3 text-xs font-mono text-red-700 dark:text-red-300 overflow-x-auto whitespace-pre-wrap">{run.stderrExcerpt}</pre>
+            </div>
+          )}
 
-      {/* stdout excerpt when no log is available */}
-      {run.stdoutExcerpt && !run.logRef && (
-        <div className="space-y-1">
-          <span className="text-xs font-medium text-muted-foreground">stdout</span>
-          <pre className="bg-neutral-100 dark:bg-neutral-950 rounded-md p-3 text-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap">{run.stdoutExcerpt}</pre>
-        </div>
-      )}
+          {/* stdout excerpt when no log is available */}
+          {run.stdoutExcerpt && !run.logRef && (
+            <div className="space-y-1">
+              <span className="text-xs font-medium text-muted-foreground">stdout</span>
+              <pre className="bg-neutral-100 dark:bg-neutral-950 rounded-md p-3 text-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap">{run.stdoutExcerpt}</pre>
+            </div>
+          )}
 
-      {/* Log viewer */}
-      <LogViewer run={run} adapterType={adapterType} />
+          {/* Log viewer */}
+          <LogViewer run={run} adapterType={adapterType} />
+        </>
+      )}
       <ScrollToBottom />
     </div>
   );

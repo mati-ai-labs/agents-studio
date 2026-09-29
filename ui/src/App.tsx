@@ -35,6 +35,7 @@ import { CompanySkills } from "./pages/CompanySkills";
 import { Secrets } from "./pages/Secrets";
 import { CompanyExport } from "./pages/CompanyExport";
 import { CompanyImport } from "./pages/CompanyImport";
+import { RestrictedOperatorGate } from "./components/RestrictedOperatorGate";
 import { DesignGuide } from "./pages/DesignGuide";
 import { InstanceGeneralSettings } from "./pages/InstanceGeneralSettings";
 import { InstanceAccess } from "./pages/InstanceAccess";
@@ -70,16 +71,16 @@ function boardRoutes() {
       <Route path="onboarding" element={<OnboardingRoutePage />} />
       <Route path="companies" element={<Companies />} />
       <Route path="company/settings" element={<CompanySettings />} />
-      <Route path="company/settings/environments" element={<CompanyEnvironments />} />
+      <Route path="company/settings/environments" element={<RestrictedOperatorGate><CompanyEnvironments /></RestrictedOperatorGate>} />
       <Route path="company/settings/access" element={<CompanyAccess />} />
       <Route path="company/settings/invites" element={<CompanyInvites />} />
-      <Route path="company/export/*" element={<CompanyExport />} />
-      <Route path="company/import" element={<CompanyImport />} />
-      <Route path="company/settings/secrets" element={<Secrets />} />
-      <Route path="company/settings/connectors" element={<Connectors />} />
+      <Route path="company/export/*" element={<RestrictedOperatorGate><CompanyExport /></RestrictedOperatorGate>} />
+      <Route path="company/import" element={<RestrictedOperatorGate><CompanyImport /></RestrictedOperatorGate>} />
+      <Route path="company/settings/secrets" element={<RestrictedOperatorGate><Secrets /></RestrictedOperatorGate>} />
+      <Route path="company/settings/connectors" element={<RestrictedOperatorGate><Connectors /></RestrictedOperatorGate>} />
       <Route path="chat" element={<CeoChat />} />
-      <Route path="skills/*" element={<CompanySkills />} />
-      <Route path="connectors" element={<Connectors />} />
+      <Route path="skills/*" element={<RestrictedOperatorGate><CompanySkills /></RestrictedOperatorGate>} />
+      <Route path="connectors" element={<RestrictedOperatorGate><Connectors /></RestrictedOperatorGate>} />
       <Route path="settings" element={<LegacySettingsRedirect />} />
       <Route path="settings/*" element={<LegacySettingsRedirect />} />
       <Route path="plugins/:pluginId" element={<PluginPage />} />
@@ -140,7 +141,7 @@ function boardRoutes() {
       <Route path="inbox/new" element={<Navigate to="/inbox/mine" replace />} />
       <Route path="u/:userSlug" element={<UserProfile />} />
       <Route path="design-guide" element={<DesignGuide />} />
-      <Route path="instance/settings/adapters" element={<AdapterManager />} />
+      <Route path="instance/settings/adapters" element={<RestrictedOperatorGate><AdapterManager /></RestrictedOperatorGate>} />
       <Route path=":pluginRoutePath/*" element={<PluginPage />} />
       <Route path="*" element={<NotFoundPage scope="board" />} />
     </>
@@ -286,12 +287,12 @@ export function App() {
             <Route index element={<Navigate to="general" replace />} />
             <Route path="profile" element={<ProfileSettings />} />
             <Route path="general" element={<InstanceGeneralSettings />} />
-            <Route path="access" element={<InstanceAccess />} />
-            <Route path="heartbeats" element={<InstanceSettings />} />
-            <Route path="experimental" element={<InstanceExperimentalSettings />} />
-            <Route path="plugins" element={<PluginManager />} />
-            <Route path="plugins/:pluginId" element={<PluginSettings />} />
-            <Route path="adapters" element={<AdapterManager />} />
+            <Route path="access" element={<RestrictedOperatorGate><InstanceAccess /></RestrictedOperatorGate>} />
+            <Route path="heartbeats" element={<RestrictedOperatorGate><InstanceSettings /></RestrictedOperatorGate>} />
+            <Route path="experimental" element={<RestrictedOperatorGate><InstanceExperimentalSettings /></RestrictedOperatorGate>} />
+            <Route path="plugins" element={<RestrictedOperatorGate><PluginManager /></RestrictedOperatorGate>} />
+            <Route path="plugins/:pluginId" element={<RestrictedOperatorGate><PluginSettings /></RestrictedOperatorGate>} />
+            <Route path="adapters" element={<RestrictedOperatorGate><AdapterManager /></RestrictedOperatorGate>} />
           </Route>
           <Route path="chat" element={<UnprefixedBoardRedirect />} />
           <Route path="companies" element={<UnprefixedBoardRedirect />} />
