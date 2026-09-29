@@ -31,6 +31,12 @@ describe("parseCodexJsonl", () => {
         cachedInputTokens: 2,
         outputTokens: 4,
       },
+      rawUsage: {
+        inputTokens: 10,
+        cachedInputTokens: 2,
+        cacheWriteInputTokens: 0,
+        outputTokens: 4,
+      },
       usageBasis: "per_run",
       errorMessage: "resume failed",
     });
@@ -63,6 +69,12 @@ describe("parseCodexJsonl", () => {
       usage: {
         inputTokens: 8,
         cachedInputTokens: 2,
+        outputTokens: 4,
+      },
+      rawUsage: {
+        inputTokens: 10,
+        cachedInputTokens: 2,
+        cacheWriteInputTokens: 0,
         outputTokens: 4,
       },
       usageBasis: "per_run",

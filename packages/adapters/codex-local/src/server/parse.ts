@@ -36,6 +36,12 @@ export function parseCodexJsonl(stdout: string) {
     cachedInputTokens: 0,
     outputTokens: 0,
   };
+  const rawUsage = {
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    cacheWriteInputTokens: 0,
+    outputTokens: 0,
+  };
 
   for (const rawLine of stdout.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -73,6 +79,10 @@ export function parseCodexJsonl(stdout: string) {
       usage.cachedInputTokens = asNumber(usageObj.cached_input_tokens, usage.cachedInputTokens);
       usage.inputTokens = Math.max(0, rawInput - usage.cachedInputTokens);
       usage.outputTokens = asNumber(usageObj.output_tokens, usage.outputTokens);
+      rawUsage.inputTokens = rawInput;
+      rawUsage.cachedInputTokens = usage.cachedInputTokens;
+      rawUsage.cacheWriteInputTokens = asNumber(usageObj.cache_write_input_tokens, rawUsage.cacheWriteInputTokens);
+      rawUsage.outputTokens = usage.outputTokens;
       continue;
     }
 
@@ -87,6 +97,7 @@ export function parseCodexJsonl(stdout: string) {
     sessionId,
     summary: finalMessage?.trim() ?? "",
     usage,
+    rawUsage,
     usageBasis: "per_run" as const,
     errorMessage,
   };
