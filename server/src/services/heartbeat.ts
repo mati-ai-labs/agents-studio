@@ -2683,7 +2683,8 @@ function resolveLedgerBiller(result: AdapterExecutionResult): string {
 function normalizeBilledCostCents(costUsd: number | null | undefined, billingType: BillingType): number {
   if (billingType === "subscription_included") return 0;
   if (typeof costUsd !== "number" || !Number.isFinite(costUsd)) return 0;
-  return Math.max(0, Math.round(costUsd * 100));
+  // Keep fractional cents (to 1e-6 cent) so sub-cent runs are not rounded to zero.
+  return Math.max(0, Math.round(costUsd * 100 * 1_000_000) / 1_000_000);
 }
 
 export function resolveLedgerCostStatus(input: {
@@ -10538,7 +10539,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
 
     if (checkCostCap && policy.maxDailyCostCents !== null) {
       const [row] = await client
-        .select({ total: sql<number>`coalesce(sum(${costEvents.costCents})::bigint, 0)` })
+        .select({ total: sql<number>`coalesce(sum(${costEvents.costCents}), 0)::double precision` })
         .from(costEvents)
         .where(
           and(
