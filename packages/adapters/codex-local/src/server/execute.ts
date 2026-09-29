@@ -52,6 +52,7 @@ import {
   resolveManagedCodexHomeDir,
   resolveSharedCodexHomeDir,
 } from "./codex-home.js";
+import { computeCodexCostUsd } from "./pricing.js";
 import { resolveCodexDesiredSkillNames } from "./skills.js";
 import { buildCodexExecArgs, buildCodexMcpOverrides } from "./codex-args.js";
 import { SANDBOX_INSTALL_COMMAND } from "../index.js";
@@ -899,7 +900,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       biller: resolveCodexBiller(effectiveEnv, billingType),
       model: ledgerModel,
       billingType,
-      costUsd: null,
+      costUsd: billingType === "api" ? computeCodexCostUsd(ledgerModel, attempt.parsed.rawUsage, effectiveEnv) : null,
       resultJson: {
         stdout: attempt.proc.stdout,
         stderr: attempt.proc.stderr,
