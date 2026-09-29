@@ -27,7 +27,7 @@ describe("parseCodexJsonl", () => {
       sessionId: "thread_123",
       summary: "Recovered response",
       usage: {
-        inputTokens: 10,
+        inputTokens: 8,
         cachedInputTokens: 2,
         outputTokens: 4,
       },
@@ -61,7 +61,7 @@ describe("parseCodexJsonl", () => {
       sessionId: "thread_123",
       summary: "Fixed the issue and verified the targeted tests pass.",
       usage: {
-        inputTokens: 10,
+        inputTokens: 8,
         cachedInputTokens: 2,
         outputTokens: 4,
       },

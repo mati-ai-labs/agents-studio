@@ -14,6 +14,7 @@ import {
   parseLocalProcessNetworkScope,
 } from "@paperclipai/adapter-utils/local-process-sandbox";
 import { inferOpenAiCompatibleBiller } from "@paperclipai/adapter-utils";
+import { codexHomeUsesApiKeyAuth, resolveSharedCodexHomeDir } from "./codex-home.js";
 import {
   ensureAdapterExecutionTargetCommandResolvable,
   readAdapterExecutionTarget,
@@ -187,7 +188,9 @@ export function resolveCodexAcpBillingIdentity(
       Object.entries(envConfig).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
     ),
   };
-  const apiKey = typeof mergedEnv.OPENAI_API_KEY === "string" && mergedEnv.OPENAI_API_KEY.trim().length > 0;
+  const apiKey =
+    (typeof mergedEnv.OPENAI_API_KEY === "string" && mergedEnv.OPENAI_API_KEY.trim().length > 0) ||
+    (considerHostEnv && codexHomeUsesApiKeyAuth(resolveSharedCodexHomeDir(mergedEnv)));
   const billingType: AdapterBillingType = apiKey ? "api" : "subscription";
   const openAiCompatibleBiller = inferOpenAiCompatibleBiller(mergedEnv, "openai");
   const biller =

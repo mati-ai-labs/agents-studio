@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CODEX_SYNC_ALLOWLIST,
   codexHomeHasUsableAuth,
+  codexHomeUsesApiKeyAuth,
+  readCodexHomeDefaultModel,
   ensureSymlink,
   evaluateCodexCredentialReadiness,
   mergeManagedCodexMcpGateways,
@@ -1126,5 +1128,29 @@ describe("stageCodexHomeForSync", () => {
       if (staged) await fs.rm(staged, { recursive: true, force: true });
       await fs.rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("codexHomeUsesApiKeyAuth", () => {
+  it("detects API-key logins and ignores ChatGPT sessions or missing auth", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "codex-auth-mode-"));
+    expect(codexHomeUsesApiKeyAuth(home)).toBe(false);
+    await fs.writeFile(path.join(home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { refresh_token: "r" } }));
+    expect(codexHomeUsesApiKeyAuth(home)).toBe(false);
+    await fs.writeFile(path.join(home, "auth.json"), JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: "sk-test" }));
+    expect(codexHomeUsesApiKeyAuth(home)).toBe(true);
+    await fs.rm(home, { recursive: true, force: true });
+  });
+});
+
+describe("readCodexHomeDefaultModel", () => {
+  it("reads the top-level model and ignores models inside tables", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "codex-default-model-"));
+    expect(readCodexHomeDefaultModel(home)).toBeNull();
+    await fs.writeFile(path.join(home, "config.toml"), '[profiles.fast]\nmodel = "gpt-mini"\n');
+    expect(readCodexHomeDefaultModel(home)).toBeNull();
+    await fs.writeFile(path.join(home, "config.toml"), 'model = "gpt-5.6-luna"\n\n[profiles.fast]\nmodel = "gpt-mini"\n');
+    expect(readCodexHomeDefaultModel(home)).toBe("gpt-5.6-luna");
+    await fs.rm(home, { recursive: true, force: true });
   });
 });

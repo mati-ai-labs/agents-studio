@@ -558,11 +558,24 @@ describe("resolveCodexAcpBillingIdentity", () => {
   it("falls back to chatgpt subscription without an API key", () => {
     delete process.env.OPENAI_API_KEY;
     delete process.env.OPENROUTER_API_KEY;
-    expect(resolveCodexAcpBillingIdentity({ config: {} })).toEqual({
+    expect(resolveCodexAcpBillingIdentity({ config: { env: { CODEX_HOME: "/nonexistent/codex-home" } } })).toEqual({
       provider: "openai",
       biller: "chatgpt",
       billingType: "subscription",
     });
+  });
+
+  it("classifies an API-key codex login in auth.json as api billing", async () => {
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "codex-acp-billing-"));
+    await fs.writeFile(path.join(home, "auth.json"), JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: "sk-test" }));
+    expect(resolveCodexAcpBillingIdentity({ config: { env: { CODEX_HOME: home } } })).toEqual({
+      provider: "openai",
+      biller: "openai",
+      billingType: "api",
+    });
+    await fs.rm(home, { recursive: true, force: true });
   });
 
   it("bills OpenRouter-backed runs to openrouter", () => {

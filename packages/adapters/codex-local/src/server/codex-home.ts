@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -137,6 +138,37 @@ export function isManagedCodexHomePath(
   const companyRoot = path.resolve(instanceRoot, "companies", companyId);
   const resolved = path.resolve(homePath);
   return resolved === companyRoot || resolved.startsWith(companyRoot + path.sep);
+}
+
+/**
+ * True when `$CODEX_HOME/auth.json` holds an API-key login (`codex login
+ * --with-api-key`) rather than a ChatGPT session. Follows the auth symlink.
+ */
+export function codexHomeUsesApiKeyAuth(home: string): boolean {
+  try {
+    const parsed = JSON.parse(readFileSync(path.join(home, "auth.json"), "utf8")) as Record<string, unknown>;
+    if (parsed.auth_mode === "apikey") return true;
+    return typeof parsed.OPENAI_API_KEY === "string" && parsed.OPENAI_API_KEY.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Top-level `model = "..."` from `$CODEX_HOME/config.toml`, the model Codex uses when none is passed. */
+export function readCodexHomeDefaultModel(home: string): string | null {
+  let raw: string;
+  try {
+    raw = readFileSync(path.join(home, "config.toml"), "utf8");
+  } catch {
+    return null;
+  }
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("[")) break;
+    const match = /^model\s*=\s*["']([^"']+)["']/.exec(trimmed);
+    if (match) return match[1]!.trim() || null;
+  }
+  return null;
 }
 
 /**
