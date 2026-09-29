@@ -761,7 +761,10 @@ export function accessService(db: Db) {
       return;
     }
 
-    await ensureMembership(companyId, principalType, principalId, "member", "active");
+    // Granting a permission must not change an existing member's company role
+    // (e.g. demote restricted_operator/owner to "member"); new principals join as "member".
+    const membership = await getMembership(companyId, principalType, principalId);
+    await ensureMembership(companyId, principalType, principalId, membership?.membershipRole ?? "member", "active");
 
     const existing = await db
       .select()
