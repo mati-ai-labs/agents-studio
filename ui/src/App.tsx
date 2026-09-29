@@ -286,7 +286,7 @@ export function App() {
           <Route path="instance/settings" element={<Layout />}>
             <Route index element={<Navigate to="general" replace />} />
             <Route path="profile" element={<ProfileSettings />} />
-            <Route path="general" element={<InstanceGeneralSettings />} />
+            <Route path="general" element={<RestrictedOperatorGate><InstanceGeneralSettings /></RestrictedOperatorGate>} />
             <Route path="access" element={<RestrictedOperatorGate><InstanceAccess /></RestrictedOperatorGate>} />
             <Route path="heartbeats" element={<RestrictedOperatorGate><InstanceSettings /></RestrictedOperatorGate>} />
             <Route path="experimental" element={<RestrictedOperatorGate><InstanceExperimentalSettings /></RestrictedOperatorGate>} />

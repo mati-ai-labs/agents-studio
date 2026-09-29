@@ -19,6 +19,7 @@ import { useTheme } from "../context/ThemeContext";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "../lib/utils";
+import { useRestrictedOperator } from "@/hooks/useRestrictedOperator";
 
 const PROFILE_SETTINGS_PATH = "/instance/settings/profile";
 const DOCS_URL = "https://docs.paperclip.ing/";
@@ -112,6 +113,7 @@ export function SidebarAccountMenu({
   const queryClient = useQueryClient();
   const { isMobile, setSidebarOpen } = useSidebar();
   const { theme, toggleTheme } = useTheme();
+  const isRestricted = useRestrictedOperator();
   const open = controlledOpen ?? internalOpen;
   const setOpen = onOpenChange ?? setInternalOpen;
   const { data: session } = useQuery({
@@ -200,21 +202,25 @@ export function SidebarAccountMenu({
                 href={PROFILE_SETTINGS_PATH}
                 onClick={closeNavigationChrome}
               />
-              <MenuAction
-                label="Instance settings"
-                description="Jump back to the last settings page you opened."
-                icon={Settings}
-                href={instanceSettingsTarget}
-                onClick={closeNavigationChrome}
-              />
-              <MenuAction
-                label="Documentation"
-                description="Open Agent Studio docs in a new tab."
-                icon={BookOpen}
-                href={DOCS_URL}
-                external
-                onClick={() => setOpen(false)}
-              />
+              {isRestricted ? null : (
+                <>
+                  <MenuAction
+                    label="Instance settings"
+                    description="Jump back to the last settings page you opened."
+                    icon={Settings}
+                    href={instanceSettingsTarget}
+                    onClick={closeNavigationChrome}
+                  />
+                  <MenuAction
+                    label="Documentation"
+                    description="Open Agent Studio docs in a new tab."
+                    icon={BookOpen}
+                    href={DOCS_URL}
+                    external
+                    onClick={() => setOpen(false)}
+                  />
+                </>
+              )}
               <MenuAction
                 label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
                 description="Toggle the app appearance."
