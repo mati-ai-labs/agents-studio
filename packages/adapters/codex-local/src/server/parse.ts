@@ -67,8 +67,11 @@ export function parseCodexJsonl(stdout: string) {
 
     if (type === "turn.completed") {
       const usageObj = parseObject(event.usage);
-      usage.inputTokens = asNumber(usageObj.input_tokens, usage.inputTokens);
+      // Codex's input_tokens includes cache reads; the ledger (like claude_local)
+      // records inputTokens as non-cached input and cache reads separately.
+      const rawInput = asNumber(usageObj.input_tokens, usage.inputTokens + usage.cachedInputTokens);
       usage.cachedInputTokens = asNumber(usageObj.cached_input_tokens, usage.cachedInputTokens);
+      usage.inputTokens = Math.max(0, rawInput - usage.cachedInputTokens);
       usage.outputTokens = asNumber(usageObj.output_tokens, usage.outputTokens);
       continue;
     }

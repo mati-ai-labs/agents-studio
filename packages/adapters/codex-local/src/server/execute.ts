@@ -44,7 +44,14 @@ import {
   isCodexTransientUpstreamError,
   isCodexUnknownSessionError,
 } from "./parse.js";
-import { pathExists, prepareManagedCodexHome, resolveManagedCodexHomeDir, resolveSharedCodexHomeDir } from "./codex-home.js";
+import {
+  codexHomeUsesApiKeyAuth,
+  pathExists,
+  prepareManagedCodexHome,
+  readCodexHomeDefaultModel,
+  resolveManagedCodexHomeDir,
+  resolveSharedCodexHomeDir,
+} from "./codex-home.js";
 import { resolveCodexDesiredSkillNames } from "./skills.js";
 import { buildCodexExecArgs, buildCodexMcpOverrides } from "./codex-args.js";
 import { SANDBOX_INSTALL_COMMAND } from "../index.js";
@@ -82,9 +89,10 @@ function hasNonEmptyEnvValue(env: Record<string, string>, key: string): boolean 
   return typeof raw === "string" && raw.trim().length > 0;
 }
 
-function resolveCodexBillingType(env: Record<string, string>): "api" | "subscription" {
-  // Codex uses API-key auth when OPENAI_API_KEY is present; otherwise rely on local login/session auth.
-  return hasNonEmptyEnvValue(env, "OPENAI_API_KEY") ? "api" : "subscription";
+function resolveCodexBillingType(env: Record<string, string>, codexHome: string): "api" | "subscription" {
+  // API-key auth comes from OPENAI_API_KEY or an API-key login in $CODEX_HOME/auth.json;
+  // anything else is a ChatGPT subscription session.
+  return hasNonEmptyEnvValue(env, "OPENAI_API_KEY") || codexHomeUsesApiKeyAuth(codexHome) ? "api" : "subscription";
 }
 
 function resolveCodexBiller(env: Record<string, string>, billingType: "api" | "subscription"): string {
@@ -578,7 +586,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   );
-  const billingType = resolveCodexBillingType(effectiveEnv);
+  const billingType = resolveCodexBillingType(effectiveEnv, effectiveCodexHome);
+  // Without an explicit model Codex runs its config.toml default; report that to the ledger.
+  const ledgerModel = model || readCodexHomeDefaultModel(effectiveCodexHome) || "";
   const runtimeEnv = Object.fromEntries(
     Object.entries(ensurePathInEnv(effectiveEnv)).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
@@ -887,7 +897,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       sessionDisplayId: resolvedSessionId,
       provider: "openai",
       biller: resolveCodexBiller(effectiveEnv, billingType),
-      model,
+      model: ledgerModel,
       billingType,
       costUsd: null,
       resultJson: {
