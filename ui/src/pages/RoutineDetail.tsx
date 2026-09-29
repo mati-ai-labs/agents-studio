@@ -65,6 +65,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import type { RoutineDetail as RoutineDetailType, RoutineTrigger, RoutineVariable } from "@paperclipai/shared";
+import { useRestrictedOperator } from "@/hooks/useRestrictedOperator";
 
 const concurrencyPolicies = ["coalesce_if_active", "always_enqueue", "skip_if_active"];
 const catchUpPolicies = ["skip_missed", "enqueue_missed_with_cap"];
@@ -108,9 +109,13 @@ function isRoutineTab(value: string | null): value is RoutineTab {
   return value !== null && routineTabs.includes(value as RoutineTab);
 }
 
-function getRoutineTabFromSearch(search: string, options?: { hideTriggers?: boolean }): RoutineTab {
+function getRoutineTabFromSearch(
+  search: string,
+  options?: { hideTriggers?: boolean; hideHistory?: boolean },
+): RoutineTab {
   const tab = new URLSearchParams(search).get("tab");
   if (options?.hideTriggers && tab === "triggers") return "runs";
+  if (options?.hideHistory && tab === "history") return "runs";
   if (isRoutineTab(tab)) {
     if (options?.hideTriggers && tab === "triggers") return "runs";
     return tab;
@@ -346,6 +351,7 @@ function TriggerEditor({
 }
 
 export function RoutineDetail() {
+  const isRestricted = useRestrictedOperator();
   const { routineId } = useParams<{ routineId: string }>();
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
@@ -388,9 +394,12 @@ export function RoutineDetail() {
     catchUpPolicy: "skip_missed",
     variables: [],
   });
+  // Restricted operators see neither triggers nor revision history.
+  const hideTriggers = isWorkflowView || isRestricted;
+  const hideHistory = isRestricted;
   const activeTab = useMemo(
-    () => getRoutineTabFromSearch(location.search, { hideTriggers: isWorkflowView }),
-    [isWorkflowView, location.search],
+    () => getRoutineTabFromSearch(location.search, { hideTriggers, hideHistory }),
+    [hideTriggers, hideHistory, location.search],
   );
 
   const { data: routine, isLoading, error } = useQuery({
@@ -520,9 +529,10 @@ export function RoutineDetail() {
 
   const setActiveTab = (value: string) => {
     if (!routineId || !isRoutineTab(value)) return;
-    if (isWorkflowView && value === "triggers") return;
+    if (hideTriggers && value === "triggers") return;
+    if (hideHistory && value === "history") return;
     const params = new URLSearchParams(location.search);
-    const defaultTab: RoutineTab = isWorkflowView ? "runs" : "triggers";
+    const defaultTab: RoutineTab = hideTriggers ? "runs" : "triggers";
     if (value === defaultTab) {
       params.delete("tab");
     } else {
@@ -1076,22 +1086,26 @@ export function RoutineDetail() {
         </div>
       </div>
 
-      {/* Instructions */}
-      <MarkdownEditor
-        ref={descriptionEditorRef}
-        value={editDraft.description}
-        onChange={(description) => setEditDraft((current) => ({ ...current, description }))}
-        placeholder="Add instructions..."
-        bordered={false}
-        contentClassName="min-h-[120px] text-[15px] leading-7"
-        mentions={mentionOptions}
-        onSubmit={() => {
-          if (!saveRoutine.isPending && editDraft.title.trim()) {
-            saveRoutine.mutate();
-          }
-        }}
-      />
-      <RoutineVariablesHint />
+      {/* Instructions (routine prompt) are hidden from restricted operators. */}
+      {isRestricted ? null : (
+        <>
+          <MarkdownEditor
+            ref={descriptionEditorRef}
+            value={editDraft.description}
+            onChange={(description) => setEditDraft((current) => ({ ...current, description }))}
+            placeholder="Add instructions..."
+            bordered={false}
+            contentClassName="min-h-[120px] text-[15px] leading-7"
+            mentions={mentionOptions}
+            onSubmit={() => {
+              if (!saveRoutine.isPending && editDraft.title.trim()) {
+                saveRoutine.mutate();
+              }
+            }}
+          />
+          <RoutineVariablesHint />
+        </>
+      )}
       <RoutineVariablesEditor
         title={editDraft.title}
         description={editDraft.description}
@@ -1166,7 +1180,7 @@ export function RoutineDetail() {
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-3">
         <TabsList variant="line" className="w-full justify-start gap-1">
-          {!isWorkflowView ? (
+          {!hideTriggers ? (
             <TabsTrigger value="triggers" className="gap-1.5">
               <Clock3 className="h-3.5 w-3.5" />
               Triggers
@@ -1177,17 +1191,19 @@ export function RoutineDetail() {
             Runs
             {hasLiveRun && <span className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />}
           </TabsTrigger>
-<TabsTrigger value="activity" className="gap-1.5">
+          <TabsTrigger value="activity" className="gap-1.5">
             <ActivityIcon className="h-3.5 w-3.5" />
             Activity
           </TabsTrigger>
-          <TabsTrigger value="history" className="gap-1.5">
-            <HistoryIcon className="h-3.5 w-3.5" />
-            History
-          </TabsTrigger>
+          {!hideHistory ? (
+            <TabsTrigger value="history" className="gap-1.5">
+              <HistoryIcon className="h-3.5 w-3.5" />
+              History
+            </TabsTrigger>
+          ) : null}
         </TabsList>
 
-        {!isWorkflowView ? (
+        {!hideTriggers ? (
           <TabsContent value="triggers" className="space-y-4">
             {/* Add trigger form */}
             <div className="rounded-lg border border-border p-4 space-y-3">
@@ -1200,7 +1216,7 @@ export function RoutineDetail() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {triggerKinds.map((kind) => (
+                      {triggerKinds.filter((kind) => !isRestricted || kind !== "webhook").map((kind) => (
                         <SelectItem key={kind} value={kind}>
                           {kind}
                         </SelectItem>
@@ -1329,62 +1345,64 @@ export function RoutineDetail() {
           )}
         </TabsContent>
 
-        <TabsContent value="history">
-          <RoutineHistoryTab
-            routine={routine}
-            isEditDirty={isEditDirty}
-            dirtyFields={dirtyFields}
-            onDiscardEdits={() => {
-              if (routineDefaults) setEditDraft(routineDefaults);
-            }}
-            onSaveEdits={() => {
-              if (!saveRoutine.isPending && editDraft.title.trim()) {
-                saveRoutine.mutate();
-              }
-            }}
-            agents={agentById}
-            projects={projectById}
-            onRestoreSecretMaterials={(response: RestoreRoutineRevisionResponse) => {
-              if (response.secretMaterials.length > 0) {
-                setSecretMessage({
-                  title: response.secretMaterials.length === 1
-                    ? "Webhook trigger restored"
-                    : `${response.secretMaterials.length} webhook triggers restored`,
-                  entries: response.secretMaterials.map((recreated) => ({
-                    webhookUrl: recreated.webhookUrl,
-                    webhookSecret: recreated.webhookSecret,
-                  })),
+        {!hideHistory ? (
+          <TabsContent value="history">
+            <RoutineHistoryTab
+              routine={routine}
+              isEditDirty={isEditDirty}
+              dirtyFields={dirtyFields}
+              onDiscardEdits={() => {
+                if (routineDefaults) setEditDraft(routineDefaults);
+              }}
+              onSaveEdits={() => {
+                if (!saveRoutine.isPending && editDraft.title.trim()) {
+                  saveRoutine.mutate();
+                }
+              }}
+              agents={agentById}
+              projects={projectById}
+              onRestoreSecretMaterials={(response: RestoreRoutineRevisionResponse) => {
+                if (response.secretMaterials.length > 0) {
+                  setSecretMessage({
+                    title: response.secretMaterials.length === 1
+                      ? "Webhook trigger restored"
+                      : `${response.secretMaterials.length} webhook triggers restored`,
+                    entries: response.secretMaterials.map((recreated) => ({
+                      webhookUrl: recreated.webhookUrl,
+                      webhookSecret: recreated.webhookSecret,
+                    })),
+                  });
+                }
+              }}
+              onRestored={(response: RestoreRoutineRevisionResponse) => {
+                setSaveConflict(false);
+                queryClient.setQueryData<RoutineDetailType | undefined>(
+                  queryKeys.routines.detail(routineId!),
+                  (prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          ...response.routine,
+                          latestRevisionId: response.revision.id,
+                          latestRevisionNumber: response.revision.revisionNumber,
+                        }
+                      : prev,
+                );
+                setEditDraft({
+                  title: response.routine.title,
+                  description: response.routine.description ?? "",
+                  projectId: response.routine.projectId ?? "",
+                  assigneeAgentId: response.routine.assigneeAgentId ?? "",
+                  priority: response.routine.priority,
+                  concurrencyPolicy: response.routine.concurrencyPolicy,
+                  catchUpPolicy: response.routine.catchUpPolicy,
+                  variables: response.routine.variables,
                 });
-              }
-            }}
-            onRestored={(response: RestoreRoutineRevisionResponse) => {
-              setSaveConflict(false);
-              queryClient.setQueryData<RoutineDetailType | undefined>(
-                queryKeys.routines.detail(routineId!),
-                (prev) =>
-                  prev
-                    ? {
-                        ...prev,
-                        ...response.routine,
-                        latestRevisionId: response.revision.id,
-                        latestRevisionNumber: response.revision.revisionNumber,
-                      }
-                    : prev,
-              );
-              setEditDraft({
-                title: response.routine.title,
-                description: response.routine.description ?? "",
-                projectId: response.routine.projectId ?? "",
-                assigneeAgentId: response.routine.assigneeAgentId ?? "",
-                priority: response.routine.priority,
-                concurrencyPolicy: response.routine.concurrencyPolicy,
-                catchUpPolicy: response.routine.catchUpPolicy,
-                variables: response.routine.variables,
-              });
-              hydratedRoutineIdRef.current = response.routine.id;
-            }}
-          />
-        </TabsContent>
+                hydratedRoutineIdRef.current = response.routine.id;
+              }}
+            />
+          </TabsContent>
+        ) : null}
       </Tabs>
 
       <RoutineRunVariablesDialog

@@ -157,6 +157,7 @@ function touchCenter(a: React.Touch, b: React.Touch, container: HTMLDivElement):
 // ── Status dot colors (raw hex for SVG) ─────────────────────────────────
 
 import { getAdapterLabel } from "../adapters/adapter-display-registry";
+import { useRestrictedOperator } from "@/hooks/useRestrictedOperator";
 
 const statusDotColor: Record<string, string> = {
   running: "#22d3ee",
@@ -172,6 +173,7 @@ const defaultDotColor = "#a3a3a3";
 
 export function OrgChart() {
   const { selectedCompanyId } = useCompany();
+  const isRestricted = useRestrictedOperator();
   const { setBreadcrumbs } = useBreadcrumbs();
   const navigate = useNavigate();
 
@@ -443,18 +445,22 @@ export function OrgChart() {
   return (
     <div className="flex h-[calc(100dvh-9rem)] min-h-[420px] flex-col md:h-full md:min-h-0">
       <div className="mb-2 flex shrink-0 flex-wrap items-center justify-start gap-2">
-        <Link to="/company/import">
-          <Button variant="outline" size="sm">
-            <Upload className="mr-1.5 h-3.5 w-3.5" />
-            Import company
-          </Button>
-        </Link>
-        <Link to="/company/export">
-          <Button variant="outline" size="sm">
-            <Download className="mr-1.5 h-3.5 w-3.5" />
-            Export company
-          </Button>
-        </Link>
+        {isRestricted ? null : (
+          <>
+            <Link to="/company/import">
+              <Button variant="outline" size="sm">
+                <Upload className="mr-1.5 h-3.5 w-3.5" />
+                Import company
+              </Button>
+            </Link>
+            <Link to="/company/export">
+              <Button variant="outline" size="sm">
+                <Download className="mr-1.5 h-3.5 w-3.5" />
+                Export company
+              </Button>
+            </Link>
+          </>
+        )}
       </div>
       <div
         ref={containerRef}

@@ -6,11 +6,12 @@ import {
   issues,
   principalPermissionGrants,
 } from "@paperclipai/db";
-import type { PermissionKey, PrincipalType } from "@paperclipai/shared";
+import { RESTRICTED_OPERATOR_ROLE, type PermissionKey, type PrincipalType } from "@paperclipai/shared";
 import { conflict } from "../errors.js";
 import { assertAssignableAgent } from "./agent-assignability.js";
 import { authorizationService, type AuthorizationActor, type AuthorizationResource } from "./authorization.js";
 import { ensureHumanRoleDefaultGrants } from "./principal-access-compatibility.js";
+import { isRestrictedOperatorAccess } from "./restricted-operator.js";
 
 type MembershipRow = typeof companyMemberships.$inferSelect;
 type GrantInput = {
@@ -25,17 +26,103 @@ type MemberArchiveInput = {
   } | null;
 };
 
+const RESTRICTED_OPERATOR_COMPANY_GRANTS: PermissionKey[] = [
+  "tasks:assign",
+  "agents:create",
+  "users:invite",
+  "users:manage_permissions",
+  "joins:approve",
+];
+
 export function accessService(db: Db) {
   const authorization = authorizationService(db);
 
-  async function isInstanceAdmin(userId: string | null | undefined): Promise<boolean> {
-    if (!userId) return false;
-    const row = await db
-      .select({ id: instanceUserRoles.id })
+  async function getInstanceRoles(userId: string | null | undefined): Promise<Set<string>> {
+    if (!userId) return new Set();
+    const rows = await db
+      .select({ role: instanceUserRoles.role })
       .from(instanceUserRoles)
-      .where(and(eq(instanceUserRoles.userId, userId), eq(instanceUserRoles.role, "instance_admin")))
-      .then((rows) => rows[0] ?? null);
-    return Boolean(row);
+      .where(eq(instanceUserRoles.userId, userId));
+    return new Set(rows.map((row) => row.role));
+  }
+
+  async function isRestrictedOperator(userId: string | null | undefined): Promise<boolean> {
+    if (!userId) return false;
+    const [roles, memberships] = await Promise.all([
+      getInstanceRoles(userId),
+      db
+        .select({ membershipRole: companyMemberships.membershipRole, status: companyMemberships.status })
+        .from(companyMemberships)
+        .where(and(eq(companyMemberships.principalType, "user"), eq(companyMemberships.principalId, userId))),
+    ]);
+    return isRestrictedOperatorAccess(roles, memberships);
+  }
+
+  /** Effective instance admin: the restricted operator role overrides admin. */
+  async function isInstanceAdmin(userId: string | null | undefined): Promise<boolean> {
+    const roles = await getInstanceRoles(userId);
+    if (!roles.has("instance_admin")) return false;
+    return !(await isRestrictedOperator(userId));
+  }
+
+  /**
+   * Restricted operators still run day-to-day work in their granted companies:
+   * running agents, assigning tasks, and managing access and invites there.
+   * Additive: existing grants are never removed.
+   */
+  async function ensureRestrictedOperatorGrants(userId: string, grantedByUserId: string | null) {
+    const memberships = await listUserCompanyAccess(userId);
+    for (const membership of memberships) {
+      if (membership.status !== "active") continue;
+      for (const permissionKey of RESTRICTED_OPERATOR_COMPANY_GRANTS) {
+        await setPrincipalPermission(membership.companyId, "user", userId, permissionKey, true, grantedByUserId);
+      }
+    }
+  }
+
+  /**
+   * Keeps company roles in step with the instance-level restriction: restricting
+   * moves every active membership to `restricted_operator`; lifting it moves
+   * those memberships back to `operator`.
+   */
+  async function syncRestrictedOperatorMemberships(userId: string, restricted: boolean) {
+    const now = new Date();
+    if (restricted) {
+      await db
+        .update(companyMemberships)
+        .set({ membershipRole: "restricted_operator", updatedAt: now })
+        .where(
+          and(
+            eq(companyMemberships.principalType, "user"),
+            eq(companyMemberships.principalId, userId),
+            eq(companyMemberships.status, "active"),
+          ),
+        );
+      return;
+    }
+    await db
+      .update(companyMemberships)
+      .set({ membershipRole: "operator", updatedAt: now })
+      .where(
+        and(
+          eq(companyMemberships.principalType, "user"),
+          eq(companyMemberships.principalId, userId),
+          eq(companyMemberships.membershipRole, "restricted_operator"),
+        ),
+      );
+  }
+
+  async function setRestrictedOperator(userId: string, restricted: boolean) {
+    if (!restricted) {
+      await db
+        .delete(instanceUserRoles)
+        .where(and(eq(instanceUserRoles.userId, userId), eq(instanceUserRoles.role, RESTRICTED_OPERATOR_ROLE)));
+      return;
+    }
+    await db
+      .insert(instanceUserRoles)
+      .values({ userId, role: RESTRICTED_OPERATOR_ROLE })
+      .onConflictDoNothing();
   }
 
   async function getMembership(
@@ -781,6 +868,10 @@ export function accessService(db: Db) {
 
   return {
     isInstanceAdmin,
+    isRestrictedOperator,
+    setRestrictedOperator,
+    ensureRestrictedOperatorGrants,
+    syncRestrictedOperatorMemberships,
     decide,
     canUser,
     hasPermission,

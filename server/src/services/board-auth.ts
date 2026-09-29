@@ -9,6 +9,7 @@ import {
   companyMemberships,
   instanceUserRoles,
 } from "@paperclipai/db";
+import { isRestrictedOperatorAccess } from "./restricted-operator.js";
 import { conflict, forbidden, notFound } from "../errors.js";
 
 export const BOARD_API_KEY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -51,7 +52,7 @@ function challengeStatusForRow(row: typeof cliAuthChallenges.$inferSelect): CliA
 
 export function boardAuthService(db: Db) {
   async function resolveBoardAccess(userId: string) {
-    const [user, memberships, adminRole] = await Promise.all([
+    const [user, memberships, roleRows] = await Promise.all([
       db
         .select({
           id: authUsers.id,
@@ -77,17 +78,19 @@ export function boardAuthService(db: Db) {
         )
         .then((rows) => rows),
       db
-        .select({ id: instanceUserRoles.id })
+        .select({ role: instanceUserRoles.role })
         .from(instanceUserRoles)
-        .where(and(eq(instanceUserRoles.userId, userId), eq(instanceUserRoles.role, "instance_admin")))
-        .then((rows) => rows[0] ?? null),
+        .where(eq(instanceUserRoles.userId, userId)),
     ]);
 
+    const roles = new Set(roleRows.map((row) => row.role));
+    const isRestricted = isRestrictedOperatorAccess(roles, memberships);
     return {
       user,
       companyIds: memberships.map((row) => row.companyId),
       memberships,
-      isInstanceAdmin: Boolean(adminRole),
+      isInstanceAdmin: roles.has("instance_admin") && !isRestricted,
+      isRestricted,
     };
   }
 

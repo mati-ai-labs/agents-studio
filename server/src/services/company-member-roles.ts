@@ -6,6 +6,7 @@ const HUMAN_COMPANY_MEMBERSHIP_ROLES: HumanCompanyMembershipRole[] = [
   "admin",
   "operator",
   "viewer",
+  "restricted_operator",
 ];
 
 export function normalizeHumanRole(
@@ -50,6 +51,16 @@ export function grantsForHumanRole(
       return [{ permissionKey: "tasks:assign", scope: null }];
     case "viewer":
       return [];
+    case "restricted_operator":
+      // Day-to-day work plus view-only access/invites; everything else is
+      // hidden by the restricted-operator guard.
+      return [
+        { permissionKey: "tasks:assign", scope: null },
+        { permissionKey: "agents:create", scope: null },
+        { permissionKey: "users:invite", scope: null },
+        { permissionKey: "users:manage_permissions", scope: null },
+        { permissionKey: "joins:approve", scope: null },
+      ];
   }
 }
 

@@ -889,6 +889,7 @@ export const HUMAN_COMPANY_MEMBERSHIP_ROLES = [
   "admin",
   "operator",
   "viewer",
+  "restricted_operator",
 ] as const;
 export type HumanCompanyMembershipRole = (typeof HUMAN_COMPANY_MEMBERSHIP_ROLES)[number];
 
@@ -897,10 +898,18 @@ export const HUMAN_COMPANY_MEMBERSHIP_ROLE_LABELS: Record<HumanCompanyMembership
   admin: "Admin",
   operator: "Operator",
   viewer: "Viewer",
+  restricted_operator: "Restricted Operator",
 };
 
-export const INSTANCE_USER_ROLES = ["instance_admin"] as const;
+export const INSTANCE_USER_ROLES = ["instance_admin", "restricted_operator"] as const;
 export type InstanceUserRole = (typeof INSTANCE_USER_ROLES)[number];
+
+/**
+ * Instance role that confines a user to the companies granted via their
+ * memberships, blocks company creation/import/export, and hides agent
+ * prompts/instructions and skills. Takes precedence over `instance_admin`.
+ */
+export const RESTRICTED_OPERATOR_ROLE = "restricted_operator" satisfies InstanceUserRole;
 
 export const INVITE_TYPES = ["company_join", "bootstrap_ceo"] as const;
 export type InviteType = (typeof INVITE_TYPES)[number];

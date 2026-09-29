@@ -151,6 +151,12 @@ export const updateUserCompanyAccessSchema = z.object({
 
 export type UpdateUserCompanyAccess = z.infer<typeof updateUserCompanyAccessSchema>;
 
+export const updateUserRestrictedOperatorSchema = z.object({
+  restricted: z.boolean(),
+});
+
+export type UpdateUserRestrictedOperator = z.infer<typeof updateUserRestrictedOperatorSchema>;
+
 export const searchAdminUsersQuerySchema = z.object({
   query: z.string().trim().max(120).optional().default(""),
 });

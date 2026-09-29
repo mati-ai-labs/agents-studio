@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "@/lib/router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "./App";
+import { ApiError } from "./api/client";
 import { CompanyProvider, useCompany } from "./context/CompanyContext";
 import { LiveUpdatesProvider } from "./context/LiveUpdatesProvider";
 import { BreadcrumbProvider } from "./context/BreadcrumbContext";
@@ -37,11 +38,17 @@ if ("serviceWorker" in navigator) {
   });
 }
 
+const NON_RETRYABLE_STATUSES = new Set([401, 403, 404]);
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 30_000,
       refetchOnWindowFocus: true,
+      // Auth and not-found errors will not change on retry; fail fast instead of
+      // spinning through the default three backoff retries.
+      retry: (failureCount, error) =>
+        !(error instanceof ApiError && NON_RETRYABLE_STATUSES.has(error.status)) && failureCount < 3,
     },
   },
 });

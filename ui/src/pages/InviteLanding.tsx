@@ -247,12 +247,15 @@ export function InviteLandingPage() {
     retry: false,
   });
 
+  // Shares its cache entry with CompanyContext, so it must store the same
+  // { companies, unauthorized } shape rather than a bare array.
   const companiesQuery = useQuery({
     queryKey: queryKeys.companies.all,
-    queryFn: () => companiesApi.list(),
+    queryFn: async () => ({ companies: await companiesApi.list(), unauthorized: false }),
     enabled: !!sessionQuery.data && !!inviteQuery.data?.companyId,
     retry: false,
   });
+  const memberCompanies = companiesQuery.data?.companies;
 
   useEffect(() => {
     if (token) rememberPendingInviteToken(token);
@@ -263,15 +266,15 @@ export function InviteLandingPage() {
   }, [token]);
 
   useEffect(() => {
-    if (!companiesQuery.data || !inviteQuery.data?.companyId) return;
-    const isMember = companiesQuery.data.some(
+    if (!memberCompanies || !inviteQuery.data?.companyId) return;
+    const isMember = memberCompanies.some(
       (c) => c.id === inviteQuery.data!.companyId
     );
     if (isMember) {
       clearPendingInviteToken(token);
       navigate("/", { replace: true });
     }
-  }, [companiesQuery.data, inviteQuery.data, token, navigate]);
+  }, [memberCompanies, inviteQuery.data, token, navigate]);
 
   const invite = inviteQuery.data;
   const isCheckingExistingMembership =
@@ -281,7 +284,7 @@ export function InviteLandingPage() {
   const isCurrentMember =
     Boolean(invite?.companyId) &&
     Boolean(
-      companiesQuery.data?.some((company) => company.id === invite?.companyId),
+      memberCompanies?.some((company) => company.id === invite?.companyId),
     );
   const companyName = invite?.companyName?.trim() || null;
   const companyDisplayName = companyName || "this Agent Studio company";
@@ -375,9 +378,9 @@ export function InviteLandingPage() {
       setAuthFeedback(null);
       rememberPendingInviteToken(token);
       await queryClient.invalidateQueries({ queryKey: queryKeys.auth.session });
-      const companies = await queryClient.fetchQuery({
+      const { companies } = await queryClient.fetchQuery({
         queryKey: queryKeys.companies.all,
-        queryFn: () => companiesApi.list(),
+        queryFn: async () => ({ companies: await companiesApi.list(), unauthorized: false }),
         retry: false,
       });
 

@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useSearchParams } from "@/lib/router";
+import { Navigate, useNavigate, useSearchParams } from "@/lib/router";
 import { authApi } from "../api/auth";
 import { queryKeys } from "../lib/queryKeys";
 import { getRememberedInvitePath } from "../lib/invite-memory";
@@ -31,11 +31,6 @@ export function LoginPage() {
     retry: false,
   });
 
-  if (session) {
-    navigate(nextPath, { replace: true });
-    return null;
-  }
-
   const mutation = useMutation({
     mutationFn: async () => {
       if (mode === "signin") {
@@ -52,12 +47,16 @@ export function LoginPage() {
       setError(null);
       await queryClient.invalidateQueries({ queryKey: queryKeys.auth.session });
       await queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.access.currentBoardAccess });
       navigate(nextPath, { replace: true });
     },
     onError: (err) => {
       setError(err instanceof Error ? err.message : "Authentication failed");
     },
   });
+
+  // Redirect declaratively once every hook above has run on each render.
+  if (session) return <Navigate to={nextPath} replace />;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

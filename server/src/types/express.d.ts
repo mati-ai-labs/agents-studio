@@ -25,6 +25,8 @@ declare global {
           status?: string;
         }>;
         isInstanceAdmin?: boolean;
+        /** Holder of the `restricted_operator` instance role. */
+        isRestricted?: boolean;
         keyId?: string;
         keyScope?: AgentApiKeyScope;
         runId?: string;
