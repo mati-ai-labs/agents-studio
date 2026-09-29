@@ -89,6 +89,32 @@ describeEmbeddedPostgres("access service", () => {
     expect(unchanged.membershipRole).toBe("owner");
   });
 
+  it("keeps an existing member's role when granting permissions", async () => {
+    const { company } = await createCompanyWithOwner(db);
+    const access = accessService(db);
+    const userId = `restricted-${randomUUID()}`;
+    await access.ensureMembership(company.id, "user", userId, "restricted_operator", "active");
+
+    await access.ensureRestrictedOperatorGrants(userId, null);
+
+    const membership = await db
+      .select()
+      .from(companyMemberships)
+      .where(and(eq(companyMemberships.companyId, company.id), eq(companyMemberships.principalId, userId)))
+      .then((rows) => rows[0]!);
+    expect(membership.membershipRole).toBe("restricted_operator");
+    const grants = await db
+      .select()
+      .from(principalPermissionGrants)
+      .where(eq(principalPermissionGrants.principalId, userId));
+    expect(grants.length).toBeGreaterThan(0);
+
+    const newcomer = `newcomer-${randomUUID()}`;
+    await access.setPrincipalPermission(company.id, "user", newcomer, "tasks:assign", true, null);
+    const created = await access.getMembership(company.id, "user", newcomer);
+    expect(created?.membershipRole).toBe("member");
+  });
+
   it("rejects role-only updates that would suspend the last active owner", async () => {
     const { company, owner } = await createCompanyWithOwner(db);
     const access = accessService(db);
