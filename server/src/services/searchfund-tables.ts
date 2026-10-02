@@ -53,8 +53,23 @@ const HEAD_COLUMNS = [
   col("recommendation", "Recommendation", "status"),
 ];
 
+/**
+ * Overall opportunity / decision score. score.py leaves the point score empty when evidence coverage is below 100%
+ * and gives its possible range instead (overall.opportunity_bounds / decision_bounds); show that range, e.g. "56.7–58.2".
+ */
+function overallScore(r: ScoreRow, value: unknown, kind: "opportunity" | "decision") {
+  if (num(value) !== null) return val(value);
+  const overall = isRecord(r.result?.overall) ? (r.result!.overall as Json) : {};
+  const bounds = Array.isArray(overall[`${kind}_bounds`]) ? (overall[`${kind}_bounds`] as unknown[]).map(num) : [];
+  if (bounds.length === 2 && bounds[0] !== null && bounds[1] !== null) return `${bounds[0].toFixed(1)}–${bounds[1].toFixed(1)}`;
+  return val(value);
+}
+
 function head(r: ScoreRow, h: Json) {
-  return [r.rank, r.subniche, val(h.opportunity_score), val(h.decision_score), val(h.evidence_confidence), val(h.coverage_pct), val(h.recommendation)];
+  return [
+    r.rank, r.subniche, overallScore(r, h.opportunity_score, "opportunity"), overallScore(r, h.decision_score, "decision"),
+    val(h.evidence_confidence), val(h.coverage_pct), val(h.recommendation),
+  ];
 }
 
 // The scoring sheet's conditional formatting: red → yellow → green at min / 50th percentile / max, per column.
@@ -118,8 +133,8 @@ function buildTables(input: ScoreRow[]): ScoringTable[] {
     rows: rows.map((r) => {
       const n = r.nicheSummary;
       return [
-        r.rank, r.subniche, val(n.scoring_status), val(n.l0_gate_status), val(n.l0_qualification), val(n.opportunity_score),
-        val(n.decision_score), val(n.evidence_confidence), val(n.coverage_pct), val(n.completeness_pct), val(n.overall_justification),
+        r.rank, r.subniche, val(n.scoring_status), val(n.l0_gate_status), val(n.l0_qualification), overallScore(r, n.opportunity_score, "opportunity"),
+        overallScore(r, n.decision_score, "decision"), val(n.evidence_confidence), val(n.coverage_pct), val(n.completeness_pct), val(n.overall_justification),
         val(n.recommendation), val(n.primary_reason), val(n.next_step), val(n.generated_at),
       ];
     }),

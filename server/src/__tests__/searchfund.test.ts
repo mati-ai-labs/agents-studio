@@ -35,7 +35,8 @@ describe("searchfund taxonomy sync", () => {
       sheetRow: 2,
     });
     expect(rows[0].fields.map((f) => f.header)).not.toContain("RUN AGENT WORKFLOW");
-    expect(rows[0].fields.map((f) => f.header)).not.toContain("Research Task");
+    // Research Task is kept: it links the niche to its run task.
+    expect(rows[0].fields.find((f) => f.header === "Research Task")?.value).toBe("SEA-293");
     expect(rows[1]).toMatchObject({ taxonomyId: "SF-002", shortName: "SF-002", sheetRow: 4 });
   });
 

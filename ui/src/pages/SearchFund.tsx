@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Download, Filter, Info, Lock, Play, Search, Telescope, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Filter, Info, Lock, Play, Search, Telescope, X } from "lucide-react";
 import { Link, useNavigate, useParams } from "@/lib/router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -140,8 +140,18 @@ function CellValue({ type, value }: { type: SearchfundColumnType; value: Value }
   switch (type) {
     case "rank":
       return <span className="font-semibold tabular-nums">{n !== null && n > 0 ? `#${n}` : "—"}</span>;
-    case "score":
-      return n === null ? <StatusBadge value={text} /> : <ScoreCell value={n} />;
+    case "score": {
+      if (n !== null) return <ScoreCell value={n} />;
+      // A score range (score.py's bounds when evidence coverage is below 100%).
+      if (/^\d+(\.\d+)?–\d+(\.\d+)?$/.test(text)) {
+        return (
+          <span className="whitespace-nowrap tabular-nums" title="Evidence coverage is below 100%, so the score is given as a range">
+            {text} <span className="text-[10px] text-muted-foreground">range</span>
+          </span>
+        );
+      }
+      return <StatusBadge value={text} />;
+    }
     case "percent":
       return <span className="tabular-nums">{n === null ? text : `${n.toFixed(n % 1 ? 1 : 0)}%`}</span>;
     case "weight":
@@ -993,6 +1003,8 @@ function ScoringTab({ companyId }: { companyId: string }) {
   const decisions = summary.rows.map((r) => toNumber(r[col("decision")])).filter((n): n is number => n !== null);
   const top = summary.rows.find((r) => r[0] === 1);
   const current = tables.find((t) => t.key === tab);
+  const isRange = (v: Value) => typeof v === "string" && /^\d+(\.\d+)?–\d+(\.\d+)?$/.test(v);
+  const hasRanges = summary.rows.some((r) => isRange(r[col("opportunity")]) || isRange(r[col("decision")]));
 
   return (
     <div className="space-y-3">
@@ -1017,6 +1029,17 @@ function ScoringTab({ companyId }: { companyId: string }) {
       {current ? (
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground">{current.description}</p>
+          {hasRanges && current.columns.some((c) => c.key === "opportunity" || c.key === "decision") ? (
+            <div className="flex gap-2 rounded-md border border-blue-500/30 bg-blue-500/5 px-3 py-2 text-xs text-muted-foreground">
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-600" />
+              <div>
+                <span className="font-semibold text-foreground">Some scores show as a range (e.g. 56.7–58.2).</span> An exact Opportunity
+                or Decision score is given only when every criterion has evidence (Coverage 100%). Below that, the range shows the lowest
+                and highest the score could be once the missing evidence is in. See the <span className="font-medium">Coverage %</span> column,
+                and the <span className="font-medium">Gap Queue</span> tab for what's missing.
+              </div>
+            </div>
+          ) : null}
           <ScoringTable key={current.key} companyId={companyId} table={current} />
         </div>
       ) : tab === "charts" ? (
@@ -1203,11 +1226,6 @@ function FilesTab({ companyId }: { companyId: string }) {
             <SubTabs items={[{ key: "read", label: "How To Read This" }, { key: "data", label: "Layer Data" }]} value={sub} onChange={setSub} />
             <div className="flex items-center gap-2">
               <Link to={`/issues/${run.issue}`} className="text-xs text-primary underline">{run.issue}</Link>
-              {run.fileId ? (
-                <a href={searchfundApi.fileUrl(companyId, run.fileId)} className="inline-flex items-center rounded-md border border-border px-3 py-1.5 text-xs hover:bg-accent">
-                  <Download className="mr-1 h-3.5 w-3.5" /> Download .xlsx
-                </a>
-              ) : null}
             </div>
           </div>
           {sub === "read" ? (
