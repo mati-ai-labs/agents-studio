@@ -156,3 +156,4 @@ export { pluginJobs, pluginJobRuns } from "./plugin_jobs.js";
 export { pluginWebhookDeliveries } from "./plugin_webhooks.js";
 export { chatSessions, chatMessages } from "./chat.js";
 export { pluginLogs } from "./plugin_logs.js";
+export { searchfundNiches, searchfundScores, searchfundFiles, searchfundSheets, searchfundLayerDocs } from "./searchfund.js";

@@ -56,6 +56,7 @@ import {
 import { llmRoutes } from "./routes/llms.js";
 import { authRoutes } from "./routes/auth.js";
 import { assetRoutes } from "./routes/assets.js";
+import { searchfundRoutes } from "./routes/searchfund.js";
 import { accessRoutes } from "./routes/access.js";
 import { pluginRoutes } from "./routes/plugins.js";
 import { mcpGatewayProtocolRoutes, toolGatewayRoutes } from "./routes/tool-gateway.js";
@@ -193,6 +194,10 @@ export async function createApp(
     limit: PORTABLE_JSON_BODY_LIMIT,
     verify: captureRawBody,
   }));
+  app.use(/^\/api\/companies\/[^/]+\/searchfund\/ingest$/, express.json({
+    limit: PORTABLE_JSON_BODY_LIMIT,
+    verify: captureRawBody,
+  }));
   app.use(express.json({
     limit: DEFAULT_JSON_BODY_LIMIT,
     verify: captureRawBody,
@@ -255,6 +260,7 @@ export async function createApp(
   api.use(teamsCatalogRoutes(db));
   api.use(agentRoutes(db, { pluginWorkerManager: workerManager }));
   api.use(assetRoutes(db, opts.storageService));
+  api.use(searchfundRoutes(db, opts.storageService));
   api.use(projectRoutes(db));
   api.use(caseRoutes(db, opts.storageService));
   api.use(issueTreeControlRoutes(db));

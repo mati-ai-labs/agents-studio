@@ -1324,6 +1324,20 @@
       "when": 1786120683158,
       "tag": "0191_company_connectors",
       "breakpoints": true
+    },
+    {
+      "idx": 192,
+      "version": "7",
+      "when": 1786120683168,
+      "tag": "0192_searchfund_dashboard",
+      "breakpoints": true
+    },
+    {
+      "idx": 193,
+      "version": "7",
+      "when": 1786200000000,
+      "tag": "0193_searchfund_niche_query",
+      "breakpoints": true
     }
   ]
 }

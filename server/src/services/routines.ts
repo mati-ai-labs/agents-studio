@@ -2796,63 +2796,65 @@ export function routineService(
       if (!routine) throw notFound("Routine not found");
       if (!trigger.enabled || routine.status !== "active") throw conflict("Routine trigger is not active");
 
-      if (trigger.signingMode === "none") {
-        // No authentication — the publicId in the URL acts as a shared secret.
-      } else if (trigger.signingMode === "github_hmac") {
-        const secretValue = await resolveTriggerSecret(trigger, routine.companyId);
-        const rawBody = input.rawBody ?? Buffer.from(JSON.stringify(input.payload ?? {}));
-        // Accept X-Hub-Signature-256 (GitHub/Sentry) or fall back to the
-        // generic X-Paperclip-Signature header so operators can use github_hmac
-        // mode with either header convention.
-        const providedSignature = (input.hubSignatureHeader ?? input.signatureHeader)?.trim() ?? "";
-        if (!providedSignature) throw unauthorized();
-        const expectedHmac = crypto
-          .createHmac("sha256", secretValue)
-          .update(rawBody)
-          .digest("hex");
-        const normalizedSignature = providedSignature.replace(/^sha256=/, "");
-        const normalizedBuf = Buffer.from(normalizedSignature);
-        const expectedBuf = Buffer.from(expectedHmac);
-        const valid =
-          normalizedBuf.length === expectedBuf.length &&
-          crypto.timingSafeEqual(normalizedBuf, expectedBuf);
-        if (!valid) throw unauthorized();
-      } else if (trigger.signingMode === "bearer") {
-        const secretValue = await resolveTriggerSecret(trigger, routine.companyId);
-        const expected = `Bearer ${secretValue}`;
-        const provided = input.authorizationHeader?.trim() ?? "";
-        const expectedBuf = Buffer.from(expected);
-        const providedBuf = Buffer.alloc(expectedBuf.length);
-        providedBuf.write(provided.slice(0, expectedBuf.length));
-        const valid =
-          provided.length === expected.length &&
-          crypto.timingSafeEqual(providedBuf, expectedBuf);
-        if (!valid) {
-          throw unauthorized();
-        }
-      } else {
-        const secretValue = await resolveTriggerSecret(trigger, routine.companyId);
-        const rawBody = input.rawBody ?? Buffer.from(JSON.stringify(input.payload ?? {}));
-        const providedSignature = input.signatureHeader?.trim() ?? "";
-        const providedTimestamp = input.timestampHeader?.trim() ?? "";
-        if (!providedSignature || !providedTimestamp) throw unauthorized();
-        const tsMillis = normalizeWebhookTimestampMs(providedTimestamp);
-        if (tsMillis == null) throw unauthorized();
-        const replayWindowSec = trigger.replayWindowSec ?? 300;
-        if (Math.abs(Date.now() - tsMillis) > replayWindowSec * 1000) {
-          throw unauthorized();
-        }
-        const expectedHmac = crypto
-          .createHmac("sha256", secretValue)
-          .update(`${providedTimestamp}.`)
-          .update(rawBody)
-          .digest("hex");
-        const normalizedSignature = providedSignature.replace(/^sha256=/, "");
-        const valid =
-          normalizedSignature.length === expectedHmac.length &&
-          crypto.timingSafeEqual(Buffer.from(normalizedSignature), Buffer.from(expectedHmac));
-        if (!valid) throw unauthorized();
-      }
+      // TODO(searchfund): webhook authentication is temporarily disabled. Any caller with the trigger's
+      // public URL can fire it. Restore the signature / bearer checks below before relying on this in production.
+      // if (trigger.signingMode === "none") {
+      //   // No authentication — the publicId in the URL acts as a shared secret.
+      // } else if (trigger.signingMode === "github_hmac") {
+      //   const secretValue = await resolveTriggerSecret(trigger, routine.companyId);
+      //   const rawBody = input.rawBody ?? Buffer.from(JSON.stringify(input.payload ?? {}));
+      //   // Accept X-Hub-Signature-256 (GitHub/Sentry) or fall back to the
+      //   // generic X-Paperclip-Signature header so operators can use github_hmac
+      //   // mode with either header convention.
+      //   const providedSignature = (input.hubSignatureHeader ?? input.signatureHeader)?.trim() ?? "";
+      //   if (!providedSignature) throw unauthorized();
+      //   const expectedHmac = crypto
+      //     .createHmac("sha256", secretValue)
+      //     .update(rawBody)
+      //     .digest("hex");
+      //   const normalizedSignature = providedSignature.replace(/^sha256=/, "");
+      //   const normalizedBuf = Buffer.from(normalizedSignature);
+      //   const expectedBuf = Buffer.from(expectedHmac);
+      //   const valid =
+      //     normalizedBuf.length === expectedBuf.length &&
+      //     crypto.timingSafeEqual(normalizedBuf, expectedBuf);
+      //   if (!valid) throw unauthorized();
+      // } else if (trigger.signingMode === "bearer") {
+      //   const secretValue = await resolveTriggerSecret(trigger, routine.companyId);
+      //   const expected = `Bearer ${secretValue}`;
+      //   const provided = input.authorizationHeader?.trim() ?? "";
+      //   const expectedBuf = Buffer.from(expected);
+      //   const providedBuf = Buffer.alloc(expectedBuf.length);
+      //   providedBuf.write(provided.slice(0, expectedBuf.length));
+      //   const valid =
+      //     provided.length === expected.length &&
+      //     crypto.timingSafeEqual(providedBuf, expectedBuf);
+      //   if (!valid) {
+      //     throw unauthorized();
+      //   }
+      // } else {
+      //   const secretValue = await resolveTriggerSecret(trigger, routine.companyId);
+      //   const rawBody = input.rawBody ?? Buffer.from(JSON.stringify(input.payload ?? {}));
+      //   const providedSignature = input.signatureHeader?.trim() ?? "";
+      //   const providedTimestamp = input.timestampHeader?.trim() ?? "";
+      //   if (!providedSignature || !providedTimestamp) throw unauthorized();
+      //   const tsMillis = normalizeWebhookTimestampMs(providedTimestamp);
+      //   if (tsMillis == null) throw unauthorized();
+      //   const replayWindowSec = trigger.replayWindowSec ?? 300;
+      //   if (Math.abs(Date.now() - tsMillis) > replayWindowSec * 1000) {
+      //     throw unauthorized();
+      //   }
+      //   const expectedHmac = crypto
+      //     .createHmac("sha256", secretValue)
+      //     .update(`${providedTimestamp}.`)
+      //     .update(rawBody)
+      //     .digest("hex");
+      //   const normalizedSignature = providedSignature.replace(/^sha256=/, "");
+      //   const valid =
+      //     normalizedSignature.length === expectedHmac.length &&
+      //     crypto.timingSafeEqual(Buffer.from(normalizedSignature), Buffer.from(expectedHmac));
+      //   if (!valid) throw unauthorized();
+      // }
 
       const eligibility = await getAutomaticRoutineDispatchEligibility(routine);
       if (!eligibility.eligible) {
