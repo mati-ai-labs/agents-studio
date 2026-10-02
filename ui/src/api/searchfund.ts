@@ -175,5 +175,4 @@ export const searchfundApi = {
     api.get<SearchfundLayerDoc[]>(`/companies/${companyId}/searchfund/runs/${encodeURIComponent(issue)}/layers`),
   harvest: (companyId: string, issue?: string) =>
     api.post<unknown>(`/companies/${companyId}/searchfund/harvest`, issue ? { issue } : {}),
-  fileUrl: (companyId: string, fileId: string) => `/api/companies/${companyId}/searchfund/files/${fileId}/content`,
 };

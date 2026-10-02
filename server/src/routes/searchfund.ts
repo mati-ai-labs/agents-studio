@@ -258,19 +258,7 @@ export function searchfundRoutes(db: Db, storage: StorageService, opts: { env?: 
     res.json(await svc.getSheet(companyId, req.params.workbook as string, req.params.tab as string));
   });
 
-  router.get("/companies/:companyId/searchfund/files/:fileId/content", async (req, res, next) => {
-    const companyId = req.params.companyId as string;
-    assertViewer(req, companyId);
-    const file = await svc.getFile(companyId, req.params.fileId as string);
-    const object = await storage.getObject(companyId, file.objectKey);
-    res.setHeader("Content-Type", file.contentType);
-    res.setHeader("Content-Length", String(file.byteSize));
-    res.setHeader("Cache-Control", "private, max-age=60");
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    res.setHeader("Content-Disposition", `attachment; filename="${file.filename.replaceAll("\"", "")}"`);
-    object.stream.on("error", (err) => next(err));
-    object.stream.pipe(res);
-  });
+  // No file download: the dashboard is view-only, data can't be exported from it.
 
   return router;
 }
