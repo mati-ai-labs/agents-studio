@@ -13,6 +13,7 @@ import {
   GitBranch,
   Settings,
   Bot,
+  Telescope,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { NavLink } from "@/lib/router";
@@ -25,6 +26,7 @@ import { useDialogActions } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
 import { heartbeatsApi } from "../api/heartbeats";
 import { instanceSettingsApi } from "../api/instanceSettings";
+import { searchfundApi } from "../api/searchfund";
 import { queryKeys } from "../lib/queryKeys";
 import { useInboxBadge } from "../hooks/useInboxBadge";
 import { Button } from "@/components/ui/button";
@@ -46,6 +48,12 @@ export function Sidebar() {
     refetchInterval: 10_000,
   });
   const liveRunCount = liveRuns?.length ?? 0;
+  const { data: searchfundAccess } = useQuery({
+    queryKey: ["searchfund", selectedCompanyId, "access"],
+    queryFn: () => searchfundApi.access(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+    staleTime: 5 * 60_000,
+  });
   const showWorkspacesLink = experimentalSettings?.enableIsolatedWorkspaces === true;
   const isRestricted = useRestrictedOperator();
 
@@ -117,6 +125,9 @@ export function Sidebar() {
           <SidebarNavItem to="/issues" label="Tasks" icon={CircleDot} />
           <SidebarNavItem to="/routines" label="Workflows" icon={Repeat} />
           <SidebarNavItem to="/goals" label="Goals" icon={Target} />
+          {searchfundAccess?.allowed ? (
+            <SidebarNavItem to="/searchfund" label="SearchFund" icon={Telescope} />
+          ) : null}
           {showWorkspacesLink ? (
             <SidebarNavItem to="/workspaces" label="Workspaces" icon={GitBranch} />
           ) : null}
