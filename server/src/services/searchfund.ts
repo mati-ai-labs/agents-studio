@@ -40,7 +40,8 @@ const ID_HEADER = "Taxonomy ID";
 const RESEARCH_STATUS_HEADERS = ["Agent Research Status", "Research Status"];
 const RUN_STATUS_HEADER = "Run Status";
 // Columns the sheet uses for its own controls; they mean nothing outside the sheet.
-const SHEET_CONTROL_HEADERS = /RUN AGENT WORKFLOW|^Research Task$/i;
+const SHEET_CONTROL_HEADERS = /RUN AGENT WORKFLOW/i;
+const RESEARCH_TASK_HEADER = "Research Task";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -244,14 +245,30 @@ export function searchfundService(db: Db, storage?: StorageService) {
     }
     const rows = parseTaxonomyRows(input);
     const now = new Date();
+    // The sheet's Research Task column (e.g. SEA-407) links the niche to its run task.
+    const identifiers = [...new Set(rows
+      .map((r) => r.fields.find((f) => f.header === RESEARCH_TASK_HEADER)?.value.trim() ?? "")
+      .filter((v) => /^[A-Z][A-Z0-9]*-\d+$/.test(v)))];
+    const issueIds = new Map(
+      identifiers.length
+        ? (await db
+            .select({ id: issues.id, identifier: issues.identifier })
+            .from(issues)
+            .where(and(eq(issues.companyId, companyId), inArray(issues.identifier, identifiers))))
+            .map((i) => [i.identifier!, i.id] as const)
+        : [],
+    );
     for (const parsed of rows) {
       const row = { ...parsed, ...nicheRow(parsed) };
+      const linkedIssueId = issueIds.get(parsed.fields.find((f) => f.header === RESEARCH_TASK_HEADER)?.value.trim() ?? "") ?? null;
       await db
         .insert(searchfundNiches)
-        .values({ companyId, ...row, updatedAt: now })
+        .values({ companyId, ...row, linkedIssueId, updatedAt: now })
         .onConflictDoUpdate({
           target: [searchfundNiches.companyId, searchfundNiches.taxonomyId],
           set: {
+            // Keep a link Agent Studio already has (e.g. a run started from the dashboard) when the sheet has none.
+            ...(linkedIssueId ? { linkedIssueId } : {}),
             shortName: row.shortName,
             fields: row.fields,
             row: row.row,
