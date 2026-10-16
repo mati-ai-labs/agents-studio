@@ -1,4 +1,11 @@
 export {
+  upsertSlackChannelRouteSchema,
+  slackChannelIdParamSchema,
+  slackChannelRoutesQuerySchema,
+  slackEventsInfoQuerySchema,
+  type UpsertSlackChannelRouteInput,
+} from "./slack.js";
+export {
   instanceSettingsSchema,
   instanceGeneralSettingsSchema,
   patchInstanceGeneralSettingsSchema,

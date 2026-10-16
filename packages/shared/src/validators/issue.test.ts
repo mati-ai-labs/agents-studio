@@ -327,6 +327,25 @@ describe("issue validators", () => {
     }).success).toBe(false);
   });
 
+  it("accepts a Slack completion destination with an optional thread", () => {
+    const parsed = createIssueSchema.parse({
+      title: "Ship it",
+      completionDestination: {
+        kind: "slack",
+        channelId: "C123",
+        channelName: "ship-alerts",
+        threadTs: "1712345678.000100",
+      },
+    });
+
+    expect(parsed.completionDestination).toEqual({
+      kind: "slack",
+      channelId: "C123",
+      channelName: "ship-alerts",
+      threadTs: "1712345678.000100",
+    });
+  });
+
   it("clamps oversized requestDepth values on update", () => {
     const parsed = updateIssueSchema.parse({
       requestDepth: MAX_ISSUE_REQUEST_DEPTH + 1,

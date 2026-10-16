@@ -481,6 +481,7 @@ export function issueCompletionDeliveryService(db: Db) {
           channelId: row.destination.channelId,
           text: payload.text,
           blocks: payload.blocks,
+          threadTs: row.destination.threadTs ?? null,
         });
 
         // Slack accepted the message. If the process crashes before the row is

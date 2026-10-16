@@ -63,6 +63,9 @@ import { mcpGatewayProtocolRoutes, toolGatewayRoutes } from "./routes/tool-gatew
 import { adapterRoutes } from "./routes/adapters.js";
 import { pluginUiStaticRoutes } from "./routes/plugin-ui-static.js";
 import { connectorsRoutes } from "./routes/connectors.js";
+import { slackEventsRoute } from "./routes/slack-events.js";
+import { slackChannelRoutes } from "./routes/slack-channel-routes.js";
+import { slackSlashCommandsRoute } from "./routes/slack-slash-commands.js";
 import { chatRoutes } from "./routes/chat.js";
 import { previewApiRoutes, previewProxyRoutes } from "./routes/previews.js";
 import { readBrandedStaticIndexHtml } from "./static-index-html.js";
@@ -90,6 +93,7 @@ import { createCachedViteHtmlRenderer } from "./vite-html-renderer.js";
 import { DEFAULT_JSON_BODY_LIMIT, PORTABLE_JSON_BODY_LIMIT } from "./http/body-limits.js";
 import { COMPANY_IMPORT_API_PATH } from "./routes/company-import-paths.js";
 import { apiCompression } from "./middleware/api-compression.js";
+import { createSlackDeliveryWorker } from "./services/slack-delivery-worker.js";
 
 type UiMode = "none" | "static" | "vite-dev";
 const FEEDBACK_EXPORT_FLUSH_INTERVAL_MS = 5_000;
@@ -233,6 +237,7 @@ export async function createApp(
 
   const hostServicesDisposers = new Map<string, () => void>();
   const workerManager = opts.pluginWorkerManager ?? createPluginWorkerManager();
+  const slackWorker = createSlackDeliveryWorker(db, { pluginWorkerManager: workerManager });
 
   // Mount API routes
   const api = Router();
@@ -400,6 +405,9 @@ export async function createApp(
   );
   api.use(adapterRoutes());
   const connectorsRouter = connectorsRoutes(db);
+  api.use("/connectors/slack", slackEventsRoute(db, slackWorker.kick));
+  api.use("/connectors/slack", slackChannelRoutes(db));
+  api.use("/connectors/slack", slackSlashCommandsRoute(db));
   api.use("/connectors", connectorsRouter);
   // Second mount: agent-runtime credentials endpoint. `api` is itself mounted
   // at `/api`, so this resolves to /api/agents/:agentId/connector-credentials/:type.
@@ -526,6 +534,7 @@ export async function createApp(
 
   jobCoordinator.start();
   scheduler.start();
+  slackWorker.start();
   let feedbackExportShuttingDown = false;
   let feedbackExportTimer: ReturnType<typeof setInterval> | null = null;
   const disableFeedbackExportFlushes = () => {
@@ -640,6 +649,7 @@ export async function createApp(
     if (appServicesShutdown) return;
     appServicesShutdown = true;
     disableFeedbackExportFlushes();
+    slackWorker.stop();
     devWatcher?.close();
     viteHtmlRenderer?.dispose();
     hostServiceCleanup.disposeAll();

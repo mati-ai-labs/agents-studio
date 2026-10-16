@@ -30,6 +30,11 @@ export const queryKeys = {
     detectModel: (companyId: string, adapterType: string) =>
       ["agents", companyId, "detect-model", adapterType] as const,
   },
+  connectors: {
+    list: (companyId: string) => ["connectors", companyId] as const,
+    detail: (companyId: string, type: string) => ["connectors", companyId, type] as const,
+    slackChannels: (companyId: string) => ["connectors", companyId, "slack", "channels"] as const,
+  },
   issues: {
     list: (companyId: string) => ["issues", companyId] as const,
     search: (companyId: string, q: string, projectId?: string, limit?: number) =>

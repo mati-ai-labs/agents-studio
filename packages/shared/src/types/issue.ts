@@ -678,6 +678,7 @@ export interface IssueSlackCompletionDestination {
   kind: "slack";
   channelId: string;
   channelName: string;
+  threadTs?: string;
 }
 
 export type IssueCompletionDestination = IssueSlackCompletionDestination;
@@ -908,6 +909,9 @@ export interface IssueComment {
   deletedByUserId?: string | null;
   deletedByRunId?: string | null;
   sourceTrust?: SourceTrustMetadata | null;
+  externalSource?: string | null;
+  externalId?: string | null;
+  externalAuthorId?: string | null;
   followUpRequested?: boolean;
   createdAt: Date;
   updatedAt: Date;

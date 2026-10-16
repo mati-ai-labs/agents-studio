@@ -1439,6 +1439,11 @@ export {
   type TrustPresetInput,
   type LowTrustBoundaryInput,
   type TrustAuthorizationPolicyInput,
+  upsertSlackChannelRouteSchema,
+  slackChannelIdParamSchema,
+  slackChannelRoutesQuerySchema,
+  slackEventsInfoQuerySchema,
+  type UpsertSlackChannelRouteInput,
 } from "./validators/index.js";
 
 export {

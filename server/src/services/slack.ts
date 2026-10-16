@@ -31,6 +31,34 @@ export interface SlackOAuthExchangeResult {
   installation: SlackWorkspaceInstallation;
 }
 
+export interface SlackWorkspaceMetadata {
+  workspaceId: string;
+  workspaceName: string | null;
+  workspaceDomain: string | null;
+  enterpriseId: string | null;
+  enterpriseName: string | null;
+  botUserId: string | null;
+  scope: string[];
+}
+
+export function readSlackWorkspaceMetadata(raw: unknown): SlackWorkspaceMetadata | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  const workspaceId = readTrimmedString(record.teamId) ?? readTrimmedString(record.workspaceId);
+  if (!workspaceId) return null;
+  return {
+    workspaceId,
+    workspaceName: readTrimmedString(record.teamName) ?? readTrimmedString(record.workspaceName),
+    workspaceDomain: readTrimmedString(record.teamDomain),
+    enterpriseId: readTrimmedString(record.enterpriseId),
+    enterpriseName: readTrimmedString(record.enterpriseName),
+    botUserId: readTrimmedString(record.botUserId),
+    scope: (Array.isArray(record.scope) ? record.scope : (readTrimmedString(record.scope) ?? "").split(","))
+      .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+      .filter((entry) => entry.length > 0),
+  };
+}
+
 export interface SlackChannel {
   id: string;
   name: string;
@@ -43,6 +71,9 @@ export interface SlackPostMessageInput {
   channelId: string;
   text: string;
   blocks?: Array<Record<string, unknown>>;
+  /** Reply inside an existing thread instead of posting a new top-level message. */
+  threadTs?: string | null;
+  clientMsgId?: string | null;
 }
 
 export interface SlackPostMessageResult {
@@ -148,6 +179,16 @@ export class SlackApiError extends Error {
     this.status = options.status ?? 500;
     this.retryAfterMs = options.retryAfterMs;
   }
+
+  /** Slack's error string (e.g. "invalid_auth"); alias of `code`. */
+  get slackError(): string {
+    return this.code;
+  }
+}
+
+export function isRetryableSlackError(error: unknown): boolean {
+  if (error instanceof SlackApiError) return error.retryable;
+  return error instanceof Error;
 }
 
 function buildSlackApiError(code: string | null, response: Response, fallbackMessage: string): SlackApiError {
@@ -424,6 +465,8 @@ export async function postSlackMessage(
       channel: input.channelId,
       text: input.text,
       ...(Array.isArray(input.blocks) && input.blocks.length > 0 ? { blocks: input.blocks } : {}),
+      ...(input.threadTs ? { thread_ts: input.threadTs } : {}),
+      ...(input.clientMsgId ? { client_msg_id: input.clientMsgId } : {}),
       unfurl_links: false,
       unfurl_media: false,
     }),

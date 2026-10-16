@@ -168,5 +168,8 @@ export const issues = pgTable(
           and ${table.hiddenAt} is null
           and ${table.status} not in ('done', 'cancelled')`,
       ),
+    slackThreadOriginIdx: uniqueIndex("issues_slack_thread_origin_uq")
+      .on(table.companyId, table.originKind, table.originId)
+      .where(sql`${table.originKind} = 'slack_thread' and ${table.originId} is not null`),
   }),
 );

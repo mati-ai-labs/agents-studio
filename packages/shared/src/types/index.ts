@@ -655,6 +655,19 @@ export type {
   IssueWatchdogStatus,
   IssueWatchdogSummary,
 } from "./issue.js";
+
+export type { IssueCommentAuthorType } from "../constants.js";
+
+export type {
+  SlackChannelRoute,
+  SlackChannelRouteListResponse,
+  UpsertSlackChannelRouteInput,
+  SlackEventsInfo,
+  SlackChannelRouteEventsInfo,
+  SlackDeliveryStatus,
+  SlackOutboundDeliveryKind,
+} from "./slack.js";
+
 export type {
   IssueTreeControlPreview,
   IssueTreeHold,

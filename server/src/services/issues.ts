@@ -31,6 +31,7 @@ import {
   issueReadStates,
   routineResultDeliveries,
   issueThreadInteractions,
+  slackThreadBindings,
   issues,
   labels,
   projectWorkspaces,
@@ -111,6 +112,8 @@ import { classifyIssueGraphLiveness, type IssueLivenessFinding } from "./recover
 import { visibleIssueCondition } from "./issue-visibility.js";
 import { finalizeSummarySlotsForTerminalIssue } from "./summary-slot-finalization.js";
 import { issueCompletionDeliveryService } from "./issue-completion-deliveries.js";
+import { enqueueSlackOutbound } from "./slack-outbound-dispatch.js";
+import { buildSlackProgressMessage } from "./slack-message-builder.js";
 
 const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
 const MAX_ISSUE_COMMENT_PAGE_LIMIT = 500;
@@ -7478,15 +7481,18 @@ export function issueService(db: Db) {
         presentation?: IssueCommentPresentation | null;
         metadata?: IssueCommentMetadata | null;
         sourceTrust?: typeof issueComments.$inferInsert.sourceTrust;
+        externalSource?: string | null;
+        externalId?: string | null;
+        externalAuthorId?: string | null;
         createdAt?: Date | string | null;
       },
       dbOrTx: any = db,
     ) => {
       const issue = await dbOrTx
-        .select({ companyId: issues.companyId })
+        .select({ companyId: issues.companyId, id: issues.id, status: issues.status, title: issues.title, identifier: issues.identifier })
         .from(issues)
         .where(eq(issues.id, issueId))
-        .then((rows: Array<{ companyId: string }>) => rows[0] ?? null);
+        .then((rows: Array<{ companyId: string; id: string; status: string; title: string; identifier: string | null }>) => rows[0] ?? null);
 
       if (!issue) throw notFound("Issue not found");
 
@@ -7522,6 +7528,9 @@ export function issueService(db: Db) {
           presentation,
           metadata,
           sourceTrust: options?.sourceTrust ?? null,
+          externalSource: options?.externalSource ?? null,
+          externalId: options?.externalId ?? null,
+          externalAuthorId: options?.externalAuthorId ?? null,
           ...(createdAt && !Number.isNaN(createdAt.getTime()) ? { createdAt } : {}),
         })
         .returning();
@@ -7531,6 +7540,34 @@ export function issueService(db: Db) {
         .update(issues)
         .set({ updatedAt: new Date() })
         .where(eq(issues.id, issueId));
+
+      // Mirror agent progress into the Slack thread an issue was created from.
+      if (actor.agentId && !options?.externalSource && !["done", "cancelled"].includes(issue.status)) {
+        const binding = await dbOrTx
+          .select()
+          .from(slackThreadBindings)
+          .where(eq(slackThreadBindings.issueId, issueId))
+          .then((rows: Array<typeof slackThreadBindings.$inferSelect>) => rows[0] ?? null);
+        if (binding) {
+          const agent = await dbOrTx
+            .select({ name: agents.name })
+            .from(agents)
+            .where(eq(agents.id, actor.agentId))
+            .then((rows: Array<{ name: string }>) => rows[0] ?? null);
+          await enqueueSlackOutbound(dbOrTx as Db, {
+            companyId: binding.companyId,
+            connectorId: binding.connectorId,
+            issueId,
+            bindingId: binding.id,
+            commentId: comment.id,
+            kind: "progress",
+            dedupeKey: `progress:comment:${comment.id}`,
+            channelId: binding.channelId,
+            threadTs: binding.threadTs,
+            payload: { text: buildSlackProgressMessage({ issue, agentName: agent?.name, body: redactedBody }) },
+          });
+        }
+      }
 
       return redactIssueComment(comment, currentUserRedactionOptions.enabled);
     },

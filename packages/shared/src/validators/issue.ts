@@ -245,6 +245,8 @@ export const issueSlackCompletionDestinationSchema = z.object({
   kind: z.literal("slack"),
   channelId: z.string().trim().min(1).max(64),
   channelName: z.string().trim().min(1).max(120),
+  /** Reply in this thread (set for issues created from a Slack thread). */
+  threadTs: z.string().trim().min(1).max(64).optional(),
 }).strict();
 
 export const issueCompletionDestinationSchema = z.discriminatedUnion("kind", [

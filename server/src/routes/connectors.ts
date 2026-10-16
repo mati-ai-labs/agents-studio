@@ -41,6 +41,7 @@ import { logger } from "../middleware/logger.js";
 import {
   exchangeSlackOAuthCode,
   listSlackChannels,
+  readSlackWorkspaceMetadata,
   SlackApiError,
 } from "../services/slack.js";
 
@@ -69,6 +70,9 @@ const META_ADS_OAUTH_SCOPES = [
   "business_management",
 ] as const;
 const SLACK_OAUTH_SCOPES = [
+  // Two-way Slack: receive @mentions and read thread replies.
+  "app_mentions:read",
+  "channels:history",
   "channels:read",
   "groups:read",
   "chat:write",
@@ -706,7 +710,7 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
       }
 
       const channels = await listSlackChannels(db, companyId);
-      res.json({ channels });
+      res.json({ workspace: readSlackWorkspaceMetadata(connector.config), channels });
     } catch (err) {
       if (err instanceof SlackApiError) {
         res.status(err.status).json({ error: err.message });

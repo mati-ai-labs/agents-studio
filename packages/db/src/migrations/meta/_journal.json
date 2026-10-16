@@ -1338,6 +1338,13 @@
       "when": 1786200000000,
       "tag": "0193_searchfund_niche_query",
       "breakpoints": true
+    },
+    {
+      "idx": 194,
+      "version": "7",
+      "when": 1786300000000,
+      "tag": "0194_slack_integration",
+      "breakpoints": true
     }
   ]
 }
