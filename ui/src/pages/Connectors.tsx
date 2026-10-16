@@ -129,7 +129,7 @@ const CONNECTOR_META: Record<ConnectorType, {
     name: "Slack",
     description: "Connect a Slack workspace so agents can read channels, send messages, and collaborate through Slack.",
     icon: "#",
-    scopes: ["channels:read", "chat:write", "chat:write.public", "users:read", "team:read"],
+    scopes: ["app_mentions:read", "channels:read", "channels:history", "chat:write", "chat:write.public", "users:read", "team:read"],
     mode: "oauth",
   },
 };
