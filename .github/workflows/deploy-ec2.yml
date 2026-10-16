@@ -73,6 +73,9 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      # Production host behind agentstudio.matilabs.com.
+      EC2_HOST: ec2-13-204-80-56.ap-south-1.compute.amazonaws.com
 
     steps:
       - name: Download build artifact
@@ -101,7 +104,7 @@ jobs:
             -o StrictHostKeyChecking=yes \
             agents-studio-build.tgz \
             agents-studio-build.tgz.sha256 \
-            ubuntu@ec2-3-110-115-154.ap-south-1.compute.amazonaws.com:/tmp/
+            "ubuntu@$EC2_HOST":/tmp/
 
       - name: Activate pushed revision
         env:
@@ -111,7 +114,7 @@ jobs:
             -i ~/.ssh/agents-studio.pem \
             -o BatchMode=yes \
             -o StrictHostKeyChecking=yes \
-            ubuntu@ec2-3-110-115-154.ap-south-1.compute.amazonaws.com \
+            "ubuntu@$EC2_HOST" \
             "DEPLOY_SHA=$DEPLOY_SHA bash -s" <<'DEPLOY_SCRIPT'
           set -Eeuo pipefail
 
