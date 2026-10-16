@@ -45,6 +45,7 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import type { RoutineListItem, RoutineVariable } from "@paperclipai/shared";
+import { useRestrictedOperator } from "@/hooks/useRestrictedOperator";
 
 const concurrencyPolicies = ["coalesce_if_active", "always_enqueue", "skip_if_active"];
 const catchUpPolicies = ["skip_missed", "enqueue_missed_with_cap"];
@@ -200,6 +201,7 @@ function buildRoutinesTabHref(tab: RoutinesTab) {
 }
 
 export function Routines() {
+  const isRestricted = useRestrictedOperator();
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
@@ -497,10 +499,12 @@ export function Routines() {
             Recurring work definitions that materialize into auditable execution issues.
           </p>
         </div>
-        <Button onClick={() => setComposerOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Create routine
-        </Button>
+        {isRestricted ? null : (
+          <Button onClick={() => setComposerOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Create routine
+          </Button>
+        )}
       </div>
 
       <Tabs value={activeTab} onValueChange={handleTabChange}>
@@ -770,22 +774,24 @@ export function Routines() {
               </div>
             </div>
 
-            <div className="border-t border-border/60 px-5 py-4">
-              <MarkdownEditor
-                ref={descriptionEditorRef}
-                value={draft.description}
-                onChange={(description) => setDraft((current) => ({ ...current, description }))}
-                placeholder="Add instructions..."
-                bordered={false}
-                contentClassName="min-h-[160px] text-sm text-muted-foreground"
-                mentions={mentionOptions}
-                onSubmit={() => {
-                  if (!createRoutine.isPending && draft.title.trim() && draft.projectId && draft.assigneeAgentId) {
-                    createRoutine.mutate();
-                  }
-                }}
-              />
-            </div>
+            {isRestricted ? null : (
+              <div className="border-t border-border/60 px-5 py-4">
+                <MarkdownEditor
+                  ref={descriptionEditorRef}
+                  value={draft.description}
+                  onChange={(description) => setDraft((current) => ({ ...current, description }))}
+                  placeholder="Add instructions..."
+                  bordered={false}
+                  contentClassName="min-h-[160px] text-sm text-muted-foreground"
+                  mentions={mentionOptions}
+                  onSubmit={() => {
+                    if (!createRoutine.isPending && draft.title.trim() && draft.projectId && draft.assigneeAgentId) {
+                      createRoutine.mutate();
+                    }
+                  }}
+                />
+              </div>
+            )}
 
             <div className="border-t border-border/60 px-5 py-3">
               <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
@@ -877,7 +883,11 @@ export function Routines() {
             <div className="py-12">
               <EmptyState
                 icon={Repeat}
-                message="No routines yet. Use Create routine to define the first recurring workflow."
+                message={
+                  isRestricted
+                    ? "No routines yet."
+                    : "No routines yet. Use Create routine to define the first recurring workflow."
+                }
               />
             </div>
           ) : (

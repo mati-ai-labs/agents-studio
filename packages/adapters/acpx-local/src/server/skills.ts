@@ -53,14 +53,12 @@ async function buildAcpxSkillSnapshot(config: Record<string, unknown>): Promise<
       desired,
       managed: true,
       state: desired ? "configured" : "available",
-      origin: entry.required ? "paperclip_required" : "company_managed",
-      originLabel: entry.required ? "Required by Paperclip" : "Managed by Paperclip",
+      origin: "company_managed",
+      originLabel: "Managed by Paperclip",
       readOnly: false,
       sourcePath: entry.source,
       targetPath: null,
       detail: desired ? (supported ? configuredDetail(acpxAgent) : unsupportedDetail()) : null,
-      required: Boolean(entry.required),
-      requiredReason: entry.requiredReason ?? null,
     };
   });
 

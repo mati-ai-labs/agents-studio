@@ -39,6 +39,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { cn } from "@/lib/utils";
 import { useSidebar } from "../context/SidebarContext";
 import { CompanyPatternIcon } from "./CompanyPatternIcon";
+import { useRestrictedOperator } from "@/hooks/useRestrictedOperator";
 
 interface SidebarCompanyMenuProps {
   open?: boolean;
@@ -130,6 +131,7 @@ function SortableCompanyItem({
 
 export function SidebarCompanyMenu({ open: controlledOpen, onOpenChange }: SidebarCompanyMenuProps = {}) {
   const [internalOpen, setInternalOpen] = useState(false);
+  const isRestricted = useRestrictedOperator();
   const [isEditingOrder, setIsEditingOrder] = useState(false);
   const queryClient = useQueryClient();
   const { companies, selectedCompany, setSelectedCompanyId } = useCompany();
@@ -279,15 +281,19 @@ export function SidebarCompanyMenu({ open: controlledOpen, onOpenChange }: Sideb
           ) : null}
         </div>
         <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onClick={addCompany}
-          className="gap-2 py-2 text-muted-foreground"
-          disabled={isEditingOrder}
-        >
-          <Plus className="size-4" />
-          <span>Add company...</span>
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
+        {isRestricted ? null : (
+          <>
+            <DropdownMenuItem
+              onClick={addCompany}
+              className="gap-2 py-2 text-muted-foreground"
+              disabled={isEditingOrder}
+            >
+              <Plus className="size-4" />
+              <span>Add company...</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
         <DropdownMenuItem asChild disabled={isEditingOrder}>
           <Link
             to="/company/settings/invites"

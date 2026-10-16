@@ -8,6 +8,8 @@ import type { DeploymentMode } from "@paperclipai/shared";
 import type { BetterAuthSessionResult } from "../auth/better-auth.js";
 import { logger } from "./logger.js";
 import { boardAuthService } from "../services/board-auth.js";
+import { isRestrictedOperatorAccess } from "../services/restricted-operator.js";
+import { ensureHumanRoleDefaultGrants } from "../services/principal-access-compatibility.js";
 
 function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
@@ -18,8 +20,79 @@ interface ActorMiddlewareOptions {
   resolveSession?: (req: Request) => Promise<BetterAuthSessionResult | null>;
 }
 
+function isPreviewRequest(req: Request): boolean {
+  const path = req.originalUrl ?? req.url ?? "";
+  return path === "/preview" || path.startsWith("/preview/");
+}
+
 export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHandler {
   const boardAuth = boardAuthService(db);
+
+  /**
+   * Resolve a board actor from the browser session (cookie-based). Returns
+   * true when req.actor was populated and the caller should stop processing.
+   */
+  const tryResolveSessionActor = async (req: Request, runIdHeader?: string): Promise<boolean> => {
+    if (opts.deploymentMode !== "authenticated" || !opts.resolveSession) return false;
+
+    const cloudTenantActor = await resolveCloudTenantActor(db, req);
+    if (cloudTenantActor) {
+      req.actor = {
+        ...cloudTenantActor,
+        runId: runIdHeader ?? undefined,
+      };
+      return true;
+    }
+
+    let session: BetterAuthSessionResult | null = null;
+    try {
+      session = await opts.resolveSession(req);
+    } catch (err) {
+      logger.warn(
+        { err, method: req.method, url: req.originalUrl },
+        "Failed to resolve auth session from request headers",
+      );
+    }
+    if (!session?.user?.id) return false;
+
+    const userId = session.user.id;
+    const [roleRows, memberships] = await Promise.all([
+      db
+        .select({ role: instanceUserRoles.role })
+        .from(instanceUserRoles)
+        .where(eq(instanceUserRoles.userId, userId)),
+      db
+        .select({
+          companyId: companyMemberships.companyId,
+          membershipRole: companyMemberships.membershipRole,
+          status: companyMemberships.status,
+        })
+        .from(companyMemberships)
+        .where(
+          and(
+            eq(companyMemberships.principalType, "user"),
+            eq(companyMemberships.principalId, userId),
+            eq(companyMemberships.status, "active"),
+          ),
+        ),
+    ]);
+    const roles = new Set(roleRows.map((row) => row.role));
+    const isRestricted = isRestrictedOperatorAccess(roles, memberships);
+    req.actor = {
+      type: "board",
+      userId,
+      userName: session.user.name ?? null,
+      userEmail: session.user.email ?? null,
+      companyIds: memberships.map((row) => row.companyId),
+      memberships,
+      isInstanceAdmin: roles.has("instance_admin") && !isRestricted,
+      isRestricted,
+      runId: runIdHeader ?? undefined,
+      source: "session",
+    };
+    return true;
+  };
+
   return async (req, _res, next) => {
     req.actor =
       opts.deploymentMode === "local_trusted"
@@ -37,63 +110,9 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
 
     const authHeader = req.header("authorization");
     if (!authHeader?.toLowerCase().startsWith("bearer ")) {
-      if (opts.deploymentMode === "authenticated" && opts.resolveSession) {
-        const cloudTenantActor = await resolveCloudTenantActor(db, req);
-        if (cloudTenantActor) {
-          req.actor = {
-            ...cloudTenantActor,
-            runId: runIdHeader ?? undefined,
-          };
-          next();
-          return;
-        }
-
-        let session: BetterAuthSessionResult | null = null;
-        try {
-          session = await opts.resolveSession(req);
-        } catch (err) {
-          logger.warn(
-            { err, method: req.method, url: req.originalUrl },
-            "Failed to resolve auth session from request headers",
-          );
-        }
-        if (session?.user?.id) {
-          const userId = session.user.id;
-          const [roleRow, memberships] = await Promise.all([
-            db
-              .select({ id: instanceUserRoles.id })
-              .from(instanceUserRoles)
-              .where(and(eq(instanceUserRoles.userId, userId), eq(instanceUserRoles.role, "instance_admin")))
-              .then((rows) => rows[0] ?? null),
-            db
-              .select({
-                companyId: companyMemberships.companyId,
-                membershipRole: companyMemberships.membershipRole,
-                status: companyMemberships.status,
-              })
-              .from(companyMemberships)
-              .where(
-                and(
-                  eq(companyMemberships.principalType, "user"),
-                  eq(companyMemberships.principalId, userId),
-                  eq(companyMemberships.status, "active"),
-                ),
-              ),
-          ]);
-          req.actor = {
-            type: "board",
-            userId,
-            userName: session.user.name ?? null,
-            userEmail: session.user.email ?? null,
-            companyIds: memberships.map((row) => row.companyId),
-            memberships,
-            isInstanceAdmin: Boolean(roleRow),
-            runId: runIdHeader ?? undefined,
-            source: "session",
-          };
-          next();
-          return;
-        }
+      if (await tryResolveSessionActor(req, runIdHeader)) {
+        next();
+        return;
       }
       if (runIdHeader) req.actor.runId = runIdHeader;
       next();
@@ -119,6 +138,7 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
           companyIds: access.companyIds,
           memberships: access.memberships,
           isInstanceAdmin: access.isInstanceAdmin,
+          isRestricted: access.isRestricted,
           keyId: boardKey.id,
           runId: runIdHeader || undefined,
           source: "board_key",
@@ -138,6 +158,18 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
     if (!key) {
       const claims = verifyLocalAgentJwt(token);
       if (!claims) {
+        // The bearer token isn't a Paperclip credential. Preview requests from
+        // a browser carry the previewed app's own JWT in the Authorization
+        // header (the app sets it on every API call), which shadows the board
+        // user's session cookie and would otherwise 401 here. For preview
+        // requests, fall back to session auth so the board user is still
+        // authenticated to the control plane while the app JWT flows upstream.
+        if (isPreviewRequest(req)) {
+          if (await tryResolveSessionActor(req, runIdHeader)) {
+            next();
+            return;
+          }
+        }
         next();
         return;
       }
@@ -199,7 +231,11 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
   };
 }
 
-async function resolveCloudTenantActor(db: Db, req: Request): Promise<Express.Request["actor"] | null> {
+export function isCloudManagedInstance(): boolean {
+  return Boolean(process.env.PAPERCLIP_CLOUD_TENANT_SERVER_TOKEN?.trim());
+}
+
+export async function resolveCloudTenantActor(db: Db, req: Request): Promise<Express.Request["actor"] | null> {
   const expectedToken = process.env.PAPERCLIP_CLOUD_TENANT_SERVER_TOKEN?.trim();
   if (!expectedToken) return null;
 
@@ -238,15 +274,8 @@ async function resolveCloudTenantActor(db: Db, req: Request): Promise<Express.Re
     });
 
   await db
-    .insert(instanceUserRoles)
-    .values({
-      userId,
-      role: "instance_admin",
-      updatedAt: now,
-    })
-    .onConflictDoNothing({
-      target: [instanceUserRoles.userId, instanceUserRoles.role],
-    });
+    .delete(instanceUserRoles)
+    .where(and(eq(instanceUserRoles.userId, userId), eq(instanceUserRoles.role, "instance_admin")));
 
   await db
     .insert(companies)
@@ -292,6 +321,13 @@ async function resolveCloudTenantActor(db: Db, req: Request): Promise<Express.Re
       status: "active",
     });
 
+  await ensureHumanRoleDefaultGrants(db, {
+    companyId,
+    principalId: userId,
+    membershipRole: membership.membershipRole,
+    grantedByUserId: null,
+  });
+
   return {
     type: "board",
     userId,
@@ -303,7 +339,7 @@ async function resolveCloudTenantActor(db: Db, req: Request): Promise<Express.Re
       membershipRole: membership.membershipRole,
       status: membership.status,
     }],
-    isInstanceAdmin: true,
+    isInstanceAdmin: false,
     source: "cloud_tenant",
   };
 }

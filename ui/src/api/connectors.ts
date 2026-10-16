@@ -38,7 +38,7 @@ export interface InitiateOAuthResponse {
 export interface SlackWorkspaceSummary {
   workspaceId: string;
   workspaceName: string | null;
-  workspaceUrl: string | null;
+  workspaceDomain: string | null;
   enterpriseId?: string | null;
   enterpriseName?: string | null;
   botUserId?: string | null;
@@ -47,10 +47,9 @@ export interface SlackWorkspaceSummary {
 export interface SlackChannelSummary {
   id: string;
   name: string;
-  channelType: "public" | "private";
   isPrivate: boolean;
   isMember: boolean;
-  memberCount: number | null;
+  isArchived: boolean;
 }
 
 export interface SlackChannelListResponse {

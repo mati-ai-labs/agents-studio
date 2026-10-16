@@ -4,6 +4,7 @@ import { buildSkillMentionHref } from "@paperclipai/shared";
 import { companySkillsApi } from "../api/companySkills";
 import { useCompany } from "./CompanyContext";
 import { queryKeys } from "../lib/queryKeys";
+import { useRestrictedOperator } from "@/hooks/useRestrictedOperator";
 
 export interface SkillCommandOption {
   id: string;
@@ -27,12 +28,14 @@ const EditorAutocompleteContext = createContext<EditorAutocompleteContextValue>(
 
 export function EditorAutocompleteProvider({ children }: { children: ReactNode }) {
   const { selectedCompanyId } = useCompany();
+  const isRestricted = useRestrictedOperator();
   const { data: companySkills = [] } = useQuery({
     queryKey: selectedCompanyId
       ? queryKeys.companySkills.list(selectedCompanyId)
       : ["company-skills", "__none__"],
     queryFn: () => companySkillsApi.list(selectedCompanyId!),
-    enabled: Boolean(selectedCompanyId),
+    // Restricted operators cannot see skills, so no skill slash commands.
+    enabled: Boolean(selectedCompanyId) && !isRestricted,
   });
 
   const value = useMemo<EditorAutocompleteContextValue>(() => ({

@@ -1,9 +1,10 @@
-import { getPublicBaseUrl } from "../lib/public-url.js";
-
 export function connectorsRoutes(db: Db): Router {
   return createConnectorsRouter({
     db,
-    getBaseUrl: getPublicBaseUrl,
+    getBaseUrl: () =>
+      process.env.PAPERCLIP_API_URL?.trim() ||
+      process.env.PAPERCLIP_RUNTIME_API_URL?.trim() ||
+      `http://127.0.0.1:${process.env.PORT ?? 3100}`,
   });
 }
 
@@ -31,17 +32,18 @@ import crypto from "node:crypto";
 import { companies, type Db } from "@paperclipai/db";
 import { connectorRegistryService } from "../services/connector-registry.js";
 import {
-  exchangeSlackCodeForTokens,
-  listSlackChannels,
-  readSlackWorkspaceMetadata,
-} from "../services/slack.js";
-import {
   assertAuthenticated,
   assertBoard,
   assertCompanyAccess,
 } from "./authz.js";
 import { badRequest } from "../errors.js";
 import { logger } from "../middleware/logger.js";
+import {
+  exchangeSlackOAuthCode,
+  listSlackChannels,
+  readSlackWorkspaceMetadata,
+  SlackApiError,
+} from "../services/slack.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -59,6 +61,8 @@ const GOOGLE_OAUTH_SCOPES = [
   "profile",
   "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/drive.readonly",
+  "https://www.googleapis.com/auth/gmail.send",
+  "https://www.googleapis.com/auth/gmail.readonly",
 ] as const;
 const META_ADS_OAUTH_SCOPES = [
   "ads_management",
@@ -66,12 +70,13 @@ const META_ADS_OAUTH_SCOPES = [
   "business_management",
 ] as const;
 const SLACK_OAUTH_SCOPES = [
+  // Two-way Slack: receive @mentions and read thread replies.
   "app_mentions:read",
   "channels:history",
   "channels:read",
+  "groups:read",
   "chat:write",
   "chat:write.public",
-  "users:read",
   "team:read",
 ] as const;
 
@@ -179,10 +184,6 @@ function getOAuthConfig(type: ConnectorType, getBaseUrl: () => string): Connecto
   }
 }
 
-function isCompanyScopedConnector(type: ConnectorType): boolean {
-  return type === "slack";
-}
-
 // ---------------------------------------------------------------------------
 // PKCE helpers
 // ---------------------------------------------------------------------------
@@ -197,7 +198,7 @@ function buildAuthorizationUrl(
     client_id: config.clientId,
     redirect_uri: config.redirectUri,
     response_type: "code",
-    scope: config.scopes.join(" "),
+    scope: type === "slack" ? config.scopes.join(",") : config.scopes.join(" "),
     state,
     code_challenge: codeChallenge,
     code_challenge_method: "S256",
@@ -215,13 +216,11 @@ function buildAuthorizationUrl(
     params.delete("code_challenge");
     params.delete("code_challenge_method");
   }
-  if (type === "slack") {
-    // Slack OAuth uses the app secret on the server-side token exchange.
-    // Omitting PKCE keeps the install flow aligned with Slack's bot-token flow.
-    params.delete("code_challenge");
-    params.delete("code_challenge_method");
-  }
   return `${config.authorizationUrl}?${params.toString()}`;
+}
+
+function connectorPersistenceUserId(type: ConnectorType, userId: string): string | null {
+  return type === "slack" ? null : userId;
 }
 
 // ---------------------------------------------------------------------------
@@ -238,14 +237,16 @@ interface OAuthState {
 
 // Simple in-memory store keyed by state token
 const oauthStateStore = new Map<string, OAuthState>();
-const DEFAULT_CONNECTORS_RETURN_PATH = "/company/settings/connectors";
+const DEFAULT_CONNECTORS_RETURN_PATH = "/apps";
 
 function normalizeReturnPath(input: string | null | undefined): string {
   const raw = (input ?? "").trim();
   if (!raw.startsWith("/")) return DEFAULT_CONNECTORS_RETURN_PATH;
   if (raw.startsWith("//")) return DEFAULT_CONNECTORS_RETURN_PATH;
-  if (raw.startsWith("/connectors")) return raw;
-  if (raw.includes("/company/settings/connectors")) return raw;
+  if (/^\/(?:apps|[^/]+\/apps)(?:[\/?#]|$)/.test(raw)) return raw;
+  if (raw.startsWith("/connectors") || raw.includes("/company/settings/connectors")) {
+    return DEFAULT_CONNECTORS_RETURN_PATH;
+  }
   return DEFAULT_CONNECTORS_RETURN_PATH;
 }
 
@@ -292,18 +293,9 @@ function createOAuthState(
   return { state, oauthState };
 }
 
-function clearOAuthStatesForCompanyAndType(
-  companyId: string,
-  type: ConnectorType,
-  userId?: string | null,
-): void {
-  const normalizedUserId = readNonEmptyString(userId);
+function clearOAuthStatesForCompanyAndType(companyId: string, userId: string, type: ConnectorType): void {
   for (const [state, entry] of oauthStateStore.entries()) {
-    if (
-      entry.companyId === companyId
-      && entry.type === type
-      && (normalizedUserId ? entry.userId === normalizedUserId : true)
-    ) {
+    if (entry.companyId === companyId && entry.userId === userId && entry.type === type) {
       oauthStateStore.delete(state);
     }
   }
@@ -449,7 +441,11 @@ export interface CreateConnectorsRouterDeps {
 
 /** Returns the app's public base URL, used to construct OAuth redirect URIs. */
 function resolveBaseUrl(): string {
-  return getPublicBaseUrl();
+  return (
+    process.env.PAPERCLIP_API_URL?.trim() ||
+    process.env.PAPERCLIP_RUNTIME_API_URL?.trim() ||
+    `http://127.0.0.1:${process.env.PORT ?? 3100}`
+  );
 }
 
 export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router {
@@ -510,14 +506,12 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
 
   async function handleOAuthCallback(req: Request, res: Response): Promise<void> {
     let callbackReturnPath = DEFAULT_CONNECTORS_RETURN_PATH;
-    let callbackState: OAuthState | null = null;
     try {
       const callbackParams = {
         ...(req.query as Record<string, string>),
         ...((req.body ?? {}) as Record<string, string>),
       };
       const { code, state, error: oauthError } = callbackParams;
-      const callbackType = req.params.type as ConnectorType;
 
       if (oauthError) {
         logger.warn({ oauthError }, "OAuth error from provider");
@@ -535,18 +529,10 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
         res.redirect(appendQueryParam(callbackReturnPath, "error", "invalid_state"));
         return;
       }
-      callbackState = oauthState;
       oauthStateStore.delete(state);
 
       const { companyId, userId, type: connectorType, verifier, returnPath } = oauthState;
       callbackReturnPath = returnPath;
-      if (callbackType !== connectorType) {
-        if (connectorType === "slack") {
-          await registry.updateStatus(companyId, "slack", "error", "Slack callback type mismatch");
-        }
-        res.redirect(appendQueryParam(returnPath, "error", "invalid_state"));
-        return;
-      }
       const config = getOAuthConfig(connectorType as ConnectorType, getBaseUrl);
 
       if (!config) {
@@ -555,20 +541,18 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
       }
 
       // Exchange code for tokens. Meta Ads uses a GET-based endpoint with no
-      // PKCE; Slack uses a Slack-specific server-side exchange; everything
-      // else uses the standard POST + code_verifier flow.
-      const slackInstall = connectorType === "slack"
-        ? await exchangeSlackCodeForTokens(config, code)
-        : null;
-      const tokens = slackInstall
-        ? {
-            accessToken: slackInstall.accessToken,
-            refreshToken: slackInstall.refreshToken,
-            expiry: slackInstall.expiry,
-          }
-        : connectorType === META_ADS_CONNECTOR_TYPE
-          ? await exchangeMetaAdsCodeForTokens(config, code)
-          : await exchangeCodeForTokens(config, code, verifier);
+      // PKCE; everything else uses the standard POST + code_verifier flow.
+      let credentials: { accessToken: string; refreshToken?: string; expiry?: number };
+      let slackInstallation: Awaited<ReturnType<typeof exchangeSlackOAuthCode>>["installation"] | null = null;
+      if (connectorType === META_ADS_CONNECTOR_TYPE) {
+        credentials = await exchangeMetaAdsCodeForTokens(config, code);
+      } else if (connectorType === "slack") {
+        const slackExchange = await exchangeSlackOAuthCode(config, code, verifier);
+        credentials = slackExchange.credentials;
+        slackInstallation = slackExchange.installation;
+      } else {
+        credentials = await exchangeCodeForTokens(config, code, verifier);
+      }
 
       // Try to fetch user info for display name
       let displayName: string | undefined;
@@ -576,48 +560,60 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
       try {
         if (connectorType === "google_workspace") {
           const resp = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
-            headers: { Authorization: `Bearer ${tokens.accessToken}` },
+            headers: { Authorization: `Bearer ${credentials.accessToken}` },
           });
           if (resp.ok) {
             const info = (await resp.json()) as { email?: string; name?: string };
             displayName = info.email ?? info.name ?? undefined;
           }
+        } else if (connectorType === "slack" && slackInstallation) {
+          displayName = slackInstallation.teamName;
+          connectorConfig = {
+            appId: slackInstallation.appId,
+            teamId: slackInstallation.teamId,
+            teamName: slackInstallation.teamName,
+            teamDomain: slackInstallation.teamDomain,
+            enterpriseId: slackInstallation.enterpriseId,
+            enterpriseName: slackInstallation.enterpriseName,
+            botUserId: slackInstallation.botUserId,
+            scope: slackInstallation.scope,
+            tokenType: slackInstallation.tokenType,
+            mcpEnabled: true,
+          };
         }
       } catch {
         // non-fatal — continue without display name
       }
-      if (slackInstall) {
-        displayName = slackInstall.displayName;
-        connectorConfig = {
-          mcpEnabled: true,
-          workspaceId: slackInstall.workspace.workspaceId,
-          workspaceName: slackInstall.workspace.workspaceName,
-          workspaceUrl: slackInstall.workspace.workspaceUrl,
-          enterpriseId: slackInstall.workspace.enterpriseId,
-          enterpriseName: slackInstall.workspace.enterpriseName,
-          botUserId: slackInstall.workspace.botUserId,
-          installedByUserId: slackInstall.workspace.installedByUserId,
-          scope: slackInstall.workspace.scope,
-        };
-      }
 
       // Persist connector with credentials
+      const existingConnector = connectorType === "slack"
+        ? await registry.getByType(companyId, connectorType as ConnectorType, null)
+        : null;
       await registry.upsert({
         companyId,
-        userId: isCompanyScopedConnector(connectorType) ? null : userId,
+        userId: connectorPersistenceUserId(connectorType as ConnectorType, userId) ?? undefined,
         type: connectorType as ConnectorType,
         status: "connected",
-        ...(connectorConfig ? { config: connectorConfig } : {}),
-        credentials: tokens,
+        credentials,
+        ...(connectorConfig
+          ? {
+              config: {
+                ...(existingConnector?.config ?? {}),
+                ...connectorConfig,
+              },
+            }
+          : {}),
         displayName,
       });
+      if (connectorType === "slack") {
+        await registry.updateStatus(companyId, "slack", "connected");
+      }
 
       logger.info({ companyId, type: connectorType }, "Connector connected successfully");
       res.redirect(appendQueryParam(returnPath, "connected", connectorType));
     } catch (err) {
-      if (callbackState?.type === "slack") {
-        await registry.updateStatus(callbackState.companyId, "slack", "error", err instanceof Error ? err.message : "Slack callback failed")
-          .catch((updateErr) => logger.warn({ updateErr }, "failed to record Slack callback error state"));
+      if (err instanceof SlackApiError) {
+        logger.warn({ err }, "Slack OAuth callback failed");
       }
       logger.error({ err }, "OAuth callback failed");
       res.redirect(appendQueryParam(callbackReturnPath, "error", "callback_failed"));
@@ -702,48 +698,27 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
     }
   });
 
-  // -------------------------------------------------------------------------
-  // GET /api/connectors/slack/channels — list connected Slack channels
-  // -------------------------------------------------------------------------
   router.get("/slack/channels", async (req: Request, res: Response) => {
     assertAuthenticated(req);
     assertBoard(req);
     try {
       const companyId = await resolveCompanyId(req);
       const connector = await registry.getByType(companyId, "slack", null);
-      if (!connector) {
-        res.status(404).json({ error: "Slack connector not found" });
-        return;
-      }
-      if (connector.status !== "connected") {
-        res.status(409).json({ error: `Slack connector is ${connector.status}`, status: connector.status });
+      if (!connector || connector.status !== "connected") {
+        res.status(409).json({ error: "Slack is not connected" });
         return;
       }
 
-      const lookup = await registry.getCredentialsForAgentAsync(companyId, "slack");
-      if (!lookup) {
-        res.status(404).json({ error: "No Slack credentials stored for this company" });
-        return;
-      }
-
-      const workspace = readSlackWorkspaceMetadata(connector.config ?? null);
-      const channels = await listSlackChannels(lookup.credentials.accessToken);
-      res.json({
-        workspace: workspace
-          ? {
-              workspaceId: workspace.workspaceId,
-              workspaceName: workspace.workspaceName,
-              workspaceUrl: workspace.workspaceUrl,
-              enterpriseId: workspace.enterpriseId,
-              enterpriseName: workspace.enterpriseName,
-              botUserId: workspace.botUserId,
-            }
-          : null,
-        channels,
-      });
+      const channels = await listSlackChannels(db, companyId);
+      res.json({ workspace: readSlackWorkspaceMetadata(connector.config), channels });
     } catch (err) {
-      if (err instanceof Error && /missing_scope/i.test(err.message)) {
-        res.status(409).json({ error: err.message });
+      if (err instanceof SlackApiError) {
+        res.status(err.status).json({ error: err.message });
+        return;
+      }
+      if (isMissingConnectorsTableError(err)) {
+        logger.warn({ err }, "Connector table missing; Slack channels unavailable");
+        res.status(503).json({ error: "Connectors storage is not initialized on this instance" });
         return;
       }
       logger.error({ err }, "Failed to list Slack channels");
@@ -1266,12 +1241,15 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
         return;
       }
 
-      const scopedUserId = isCompanyScopedConnector(type) ? null : userId;
-
       // Mark connector as "connecting" immediately
-      await registry.upsert({ companyId, userId: scopedUserId, type, status: "connecting" });
+      await registry.upsert({
+        companyId,
+        userId: connectorPersistenceUserId(type, userId) ?? undefined,
+        type,
+        status: "connecting",
+      });
 
-      clearOAuthStatesForCompanyAndType(companyId, type, scopedUserId);
+      clearOAuthStatesForCompanyAndType(companyId, userId, type);
       const returnPath = resolveReturnPath(req);
       const { state, oauthState } = createOAuthState(companyId, userId, type, returnPath);
       const verifier = oauthState.verifier;
@@ -1349,7 +1327,7 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
         return;
       }
 
-      const result = isCompanyScopedConnector(type)
+      const result = type === "slack"
         ? await registry.disconnect(companyId, type)
         : await registry.disconnectForUser(companyId, type, userId);
       if (!result) {
@@ -1384,12 +1362,11 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
         res.status(400).json({ error: "Invalid connector type" });
         return;
       }
-      const scopedUserId = isCompanyScopedConnector(type) ? null : userId;
 
-      const existing = await registry.getByType(companyId, type, scopedUserId);
+      const existing = await registry.getByType(companyId, type, userId);
       const connector = await registry.upsert({
         companyId,
-        userId: scopedUserId,
+        userId,
         type,
         status: "connected",
         config: {
@@ -1425,12 +1402,11 @@ export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router
         res.status(400).json({ error: "Invalid connector type" });
         return;
       }
-      const scopedUserId = isCompanyScopedConnector(type) ? null : userId;
 
-      const existing = await registry.getByType(companyId, type, scopedUserId);
+      const existing = await registry.getByType(companyId, type, userId);
       const connector = await registry.upsert({
         companyId,
-        userId: scopedUserId,
+        userId,
         type,
         status: "connected",
         config: {

@@ -663,16 +663,15 @@ describe("NewIssueDialog", () => {
       workspace: {
         workspaceId: "T123",
         workspaceName: "Paperclip",
-        workspaceUrl: "https://paperclip.slack.com",
+        workspaceDomain: "paperclip",
       },
       channels: [
         {
           id: "C123",
           name: "ship-alerts",
-          channelType: "public",
           isPrivate: false,
           isMember: true,
-          memberCount: 12,
+          isArchived: false,
         },
       ],
     });
@@ -706,12 +705,10 @@ describe("NewIssueDialog", () => {
       "company-1",
       expect.objectContaining({
         title: "Ship Slack summary",
-        slackCompletion: {
+        completionDestination: {
+          kind: "slack",
           channelId: "C123",
           channelName: "ship-alerts",
-          workspaceId: "T123",
-          workspaceName: "Paperclip",
-          channelType: "public",
         },
       }),
     );

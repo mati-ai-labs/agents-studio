@@ -1,7 +1,8 @@
+import type { HumanCompanyMembershipRole } from "@paperclipai/shared";
 import type { AgentAdapterType, JoinRequest, PermissionKey } from "@paperclipai/shared";
 import { api } from "./client";
 
-export type HumanCompanyRole = "owner" | "admin" | "operator" | "viewer";
+export type HumanCompanyRole = HumanCompanyMembershipRole;
 
 type InviteSummary = {
   id: string;
@@ -206,6 +207,7 @@ export type AdminUserDirectoryEntry = {
   name: string | null;
   image: string | null;
   isInstanceAdmin: boolean;
+  isRestricted?: boolean;
   activeCompanyMembershipCount: number;
 };
 
@@ -229,6 +231,7 @@ export type UserCompanyAccessResponse = {
     name: string | null;
     image: string | null;
     isInstanceAdmin: boolean;
+    isRestricted?: boolean;
   } | null;
   companyAccess: UserCompanyAccessEntry[];
 };
@@ -237,6 +240,8 @@ export type CurrentBoardAccess = {
   user: { id: string; email: string | null; name: string | null; image: string | null } | null;
   userId: string;
   isInstanceAdmin: boolean;
+  /** Restricted operator: limited to granted companies, prompts and skills hidden. */
+  isRestricted?: boolean;
   companyIds: string[];
   memberships?: Array<{
     companyId: string;
@@ -410,6 +415,9 @@ export const accessApi = {
 
   setUserCompanyAccess: (userId: string, companyIds: string[]) =>
     api.put<UserCompanyAccessResponse>(`/admin/users/${userId}/company-access`, { companyIds }),
+
+  setUserRestricted: (userId: string, restricted: boolean) =>
+    api.put<UserCompanyAccessResponse>(`/admin/users/${userId}/restricted-operator`, { restricted }),
 
   getCurrentBoardAccess: () =>
     api.get<CurrentBoardAccess>("/cli-auth/me"),

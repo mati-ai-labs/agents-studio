@@ -27,6 +27,7 @@ import {
   DollarSign,
   Calendar,
 } from "lucide-react";
+import { useRestrictedOperator } from "@/hooks/useRestrictedOperator";
 
 export function Companies() {
   const {
@@ -37,6 +38,7 @@ export function Companies() {
     error,
   } = useCompany();
   const { openOnboarding } = useDialogActions();
+  const isRestricted = useRestrictedOperator();
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
 
@@ -90,10 +92,12 @@ export function Companies() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-end">
-        <Button size="sm" onClick={() => openOnboarding()}>
-          <Plus className="h-3.5 w-3.5 mr-1.5" />
-          New Company
-        </Button>
+        {isRestricted ? null : (
+          <Button size="sm" onClick={() => openOnboarding()}>
+            <Plus className="h-3.5 w-3.5 mr-1.5" />
+            New Company
+          </Button>
+        )}
       </div>
 
       <div className="h-6">

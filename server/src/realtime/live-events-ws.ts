@@ -9,6 +9,7 @@ import type { DeploymentMode } from "@paperclipai/shared";
 import type { BetterAuthSessionResult } from "../auth/better-auth.js";
 import { logger } from "../middleware/logger.js";
 import { subscribeCompanyLiveEvents } from "../services/live-events.js";
+import { isRestrictedOperatorAccess } from "../services/restricted-operator.js";
 
 interface WsSocket {
   readyState: number;
@@ -40,13 +41,18 @@ const { WebSocket, WebSocketServer } = require("ws") as {
   WebSocketServer: new (opts: { noServer: boolean }) => WsServer;
 };
 
+const RESTRICTED_EVENT_TYPES = new Set<string>(["heartbeat.run.log", "heartbeat.run.event"]);
+
 interface UpgradeContext {
   companyId: string;
   actorType: "board" | "agent";
+  /** Restricted operators never receive run log/transcript events. */
+  restricted?: boolean;
   actorId: string;
 }
 
 interface IncomingMessageWithContext extends IncomingMessage {
+  paperclipWebSocketHandled?: boolean;
   paperclipUpgradeContext?: UpgradeContext;
 }
 
@@ -54,10 +60,31 @@ function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
+function isWritableUpgradeSocket(socket: Duplex) {
+  const maybeWritableState = socket as Duplex & { writable?: boolean; writableEnded?: boolean; writableDestroyed?: boolean };
+  return !socket.destroyed && maybeWritableState.writable !== false && !maybeWritableState.writableEnded && !maybeWritableState.writableDestroyed;
+}
+
+function closeUpgradeSocket(socket: Duplex) {
+  if (!socket.destroyed) {
+    socket.destroy();
+  }
+}
+
 export function rejectUpgrade(socket: Duplex, statusLine: string, message: string) {
   const safe = message.replace(/[\r\n]+/g, " ").trim();
-  socket.write(`HTTP/1.1 ${statusLine}\r\nConnection: close\r\nContent-Type: text/plain\r\n\r\n${safe}`);
-  socket.destroy();
+  if (!isWritableUpgradeSocket(socket)) {
+    closeUpgradeSocket(socket);
+    return;
+  }
+
+  try {
+    socket.once("finish", () => closeUpgradeSocket(socket));
+    socket.end(`HTTP/1.1 ${statusLine}\r\nConnection: close\r\nContent-Type: text/plain\r\n\r\n${safe}`);
+  } catch (err) {
+    logger.warn({ err }, "failed to reject live websocket upgrade");
+    closeUpgradeSocket(socket);
+  }
 }
 
 function parseCompanyId(pathname: string) {
@@ -124,14 +151,13 @@ export async function authorizeUpgrade(
     const userId = session?.user?.id;
     if (!userId) return null;
 
-    const [roleRow, memberships] = await Promise.all([
+    const [roleRows, memberships] = await Promise.all([
       db
-        .select({ id: instanceUserRoles.id })
+        .select({ role: instanceUserRoles.role })
         .from(instanceUserRoles)
-        .where(and(eq(instanceUserRoles.userId, userId), eq(instanceUserRoles.role, "instance_admin")))
-        .then((rows) => rows[0] ?? null),
+        .where(eq(instanceUserRoles.userId, userId)),
       db
-        .select({ companyId: companyMemberships.companyId })
+        .select({ companyId: companyMemberships.companyId, membershipRole: companyMemberships.membershipRole })
         .from(companyMemberships)
         .where(
           and(
@@ -143,12 +169,16 @@ export async function authorizeUpgrade(
     ]);
 
     const hasCompanyMembership = memberships.some((row) => row.companyId === companyId);
-    if (!roleRow && !hasCompanyMembership) return null;
+    const roles = new Set(roleRows.map((row) => row.role));
+    const restricted = isRestrictedOperatorAccess(roles, memberships);
+    const isAdmin = roles.has("instance_admin") && !restricted;
+    if (!isAdmin && !hasCompanyMembership) return null;
 
     return {
       companyId,
       actorType: "board",
       actorId: userId,
+      restricted,
     };
   }
 
@@ -207,6 +237,7 @@ export function setupLiveEventsWebSocketServer(
 
     const unsubscribe = subscribeCompanyLiveEvents(context.companyId, (event) => {
       if (socket.readyState !== WebSocket.OPEN) return;
+      if (context.restricted && RESTRICTED_EVENT_TYPES.has(event.type)) return;
       socket.send(JSON.stringify(event));
     });
 
@@ -234,6 +265,21 @@ export function setupLiveEventsWebSocketServer(
   });
 
   server.on("upgrade", (req, socket, head) => {
+    if ((req as IncomingMessageWithContext).paperclipWebSocketHandled) {
+      return;
+    }
+
+    const onRawSocketError = (err: Error) => {
+      logger.warn({ err, path: req.url }, "live websocket upgrade socket error");
+    };
+    const cleanupRawSocketListeners = () => {
+      socket.off("error", onRawSocketError);
+      socket.off("close", cleanupRawSocketListeners);
+    };
+
+    socket.on("error", onRawSocketError);
+    socket.once("close", cleanupRawSocketListeners);
+
     if (!req.url) {
       rejectUpgrade(socket, "400 Bad Request", "missing url");
       return;
@@ -245,7 +291,7 @@ export function setupLiveEventsWebSocketServer(
     }
     const companyId = parseCompanyId(url.pathname);
     if (!companyId) {
-      socket.destroy();
+      closeUpgradeSocket(socket);
       return;
     }
 
@@ -259,9 +305,15 @@ export function setupLiveEventsWebSocketServer(
           return;
         }
 
+        if (!isWritableUpgradeSocket(socket)) {
+          cleanupRawSocketListeners();
+          return;
+        }
+
         const reqWithContext = req as IncomingMessageWithContext;
         reqWithContext.paperclipUpgradeContext = context;
 
+        cleanupRawSocketListeners();
         wss.handleUpgrade(req, socket, head, (ws: WsSocket) => {
           wss.emit("connection", ws, reqWithContext);
         });

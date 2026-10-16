@@ -7,10 +7,12 @@ import { queryKeys } from "@/lib/queryKeys";
 import { useCompany } from "@/context/CompanyContext";
 import { useSidebar } from "@/context/SidebarContext";
 import { SidebarNavItem } from "./SidebarNavItem";
+import { useRestrictedOperator } from "@/hooks/useRestrictedOperator";
 
 export function CompanySettingsSidebar() {
   const { selectedCompany, selectedCompanyId } = useCompany();
   const { isMobile, setSidebarOpen } = useSidebar();
+  const isRestricted = useRestrictedOperator();
   const { data: badges } = useQuery({
     queryKey: selectedCompanyId
       ? queryKeys.sidebarBadges(selectedCompanyId)
@@ -54,12 +56,14 @@ export function CompanySettingsSidebar() {
       <nav className="flex-1 min-h-0 overflow-y-auto scrollbar-auto-hide px-3 py-2">
         <div className="flex flex-col gap-0.5">
           <SidebarNavItem to="/company/settings" label="General" icon={SlidersHorizontal} end />
-          <SidebarNavItem
-            to="/company/settings/environments"
-            label="Environments"
-            icon={MonitorCog}
-            end
-          />
+          {isRestricted ? null : (
+            <SidebarNavItem
+              to="/company/settings/environments"
+              label="Environments"
+              icon={MonitorCog}
+              end
+            />
+          )}
           <SidebarNavItem
             to="/company/settings/access"
             label="Access"
@@ -68,8 +72,12 @@ export function CompanySettingsSidebar() {
             end
           />
           <SidebarNavItem to="/company/settings/invites" label="Invites" icon={MailPlus} end />
-          <SidebarNavItem to="/company/settings/secrets" label="Secrets" icon={KeyRound} end />
-          <SidebarNavItem to="/company/settings/connectors" label="Connectors" icon={Plug2} end />
+          {isRestricted ? null : (
+            <>
+              <SidebarNavItem to="/company/settings/secrets" label="Secrets" icon={KeyRound} end />
+              <SidebarNavItem to="/company/settings/connectors" label="Connectors" icon={Plug2} end />
+            </>
+          )}
         </div>
       </nav>
     </aside>

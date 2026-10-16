@@ -1,6 +1,6 @@
 import { and, eq, lte, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { issues, slackEventDeliveries, slackOutboundDeliveries } from "@paperclipai/db";
+import { slackEventDeliveries, slackOutboundDeliveries } from "@paperclipai/db";
 import { connectorRegistryService } from "./connector-registry.js";
 import { isRetryableSlackError, postSlackMessage, SlackApiError } from "./slack.js";
 import { slackInboundHandler } from "./slack-inbound-handler.js";
@@ -52,20 +52,16 @@ export function createSlackDeliveryWorker(db: Db, options: { pluginWorkerManager
 
   async function processOutbound(row: typeof slackOutboundDeliveries.$inferSelect) {
     const connector = await registry.getById(row.connectorId);
-    const credentials = await registry.getCredentialsForAgentAsync(row.companyId, "slack");
     const payload = row.payload as { text?: string; blocks?: Array<Record<string, unknown>> } | null;
-    if (!connector || connector.status !== "connected" || !credentials || !payload?.text) {
+    if (!connector || connector.status !== "connected" || !payload?.text) {
       await db.update(slackOutboundDeliveries).set({ status: "failed", lastError: "Slack connector or delivery payload unavailable", updatedAt: new Date() }).where(eq(slackOutboundDeliveries.id, row.id));
       return;
     }
     try {
-      const sent = await postSlackMessage(credentials.credentials.accessToken, { channelId: row.channelId, text: payload.text, blocks: payload.blocks, threadTs: row.threadTs, clientMsgId: row.id });
-      await db.update(slackOutboundDeliveries).set({ status: "sent", sentAt: new Date(), slackMessageTs: sent.ts, lastError: null, updatedAt: new Date() }).where(eq(slackOutboundDeliveries.id, row.id));
+      const sent = await postSlackMessage(db, row.companyId, { channelId: row.channelId, text: payload.text, blocks: payload.blocks, threadTs: row.threadTs, clientMsgId: row.id });
+      await db.update(slackOutboundDeliveries).set({ status: "sent", sentAt: new Date(), slackMessageTs: sent.messageTs, lastError: null, updatedAt: new Date() }).where(eq(slackOutboundDeliveries.id, row.id));
       if (row.kind === "completion") {
-        const issue = await db.select().from(issues).where(eq(issues.id, row.issueId)).then((rows) => rows[0] ?? null);
-        const current = issue?.slackCompletion;
-        if (issue && current) await db.update(issues).set({ slackCompletion: { ...current, postAttemptCount: (current.postAttemptCount ?? 0) + 1, lastAttemptAt: new Date().toISOString(), lastPostedAt: new Date().toISOString(), lastPostedCompletedAt: issue.completedAt instanceof Date ? issue.completedAt.toISOString() : issue.completedAt, lastPostedMessageTs: sent.ts, lastError: null }, updatedAt: new Date() }).where(eq(issues.id, issue.id));
-        await logActivity(db, { companyId: row.companyId, actorType: "system", actorId: "slack", action: "issue.slack_completion_posted", entityType: "issue", entityId: row.issueId, details: { deliveryId: row.id, messageTs: sent.ts } });
+        await logActivity(db, { companyId: row.companyId, actorType: "system", actorId: "slack", action: "issue.slack_completion_posted", entityType: "issue", entityId: row.issueId, details: { deliveryId: row.id, messageTs: sent.messageTs } });
       }
     } catch (error) {
       const retry = isRetryableSlackError(error) && row.attemptCount < OUTBOUND_MAX_ATTEMPTS;

@@ -9,6 +9,7 @@ import { useCompany } from "@/context/CompanyContext";
 import { useToast } from "@/context/ToastContext";
 import { Link } from "@/lib/router";
 import { queryKeys } from "@/lib/queryKeys";
+import { useRestrictedOperator } from "@/hooks/useRestrictedOperator";
 
 const inviteRoleOptions = [
   {
@@ -16,6 +17,12 @@ const inviteRoleOptions = [
     label: "Viewer",
     description: "Can view company work and follow along without operational permissions.",
     gets: "No built-in grants.",
+  },
+  {
+    value: "restricted_operator",
+    label: "Restricted Operator",
+    description: "Runs work in this company only. Prompts, skills, configuration, and run logs stay hidden.",
+    gets: "Can assign tasks, run agents, and view access and invites. Invites they send use this same role.",
   },
   {
     value: "operator",
@@ -45,11 +52,12 @@ function isInviteHistoryRow(value: unknown): value is Awaited<ReturnType<typeof 
 }
 
 export function CompanyInvites() {
+  const isRestricted = useRestrictedOperator();
   const { selectedCompany, selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const { pushToast } = useToast();
   const queryClient = useQueryClient();
-  const [humanRole, setHumanRole] = useState<"owner" | "admin" | "operator" | "viewer">("operator");
+  const [humanRole, setHumanRole] = useState<(typeof inviteRoleOptions)[number]["value"]>("operator");
   const [latestInviteUrl, setLatestInviteUrl] = useState<string | null>(null);
   const [latestInviteCopied, setLatestInviteCopied] = useState(false);
 
@@ -188,41 +196,48 @@ export function CompanyInvites() {
           </p>
         </div>
 
-        <fieldset className="space-y-3">
-          <legend className="text-sm font-medium">Choose a role</legend>
-          <div className="rounded-xl border border-border">
-            {inviteRoleOptions.map((option, index) => {
-              const checked = humanRole === option.value;
-              return (
-                <label
-                  key={option.value}
-                  className={`flex cursor-pointer gap-3 px-4 py-4 ${index > 0 ? "border-t border-border" : ""}`}
-                >
-                  <input
-                    type="radio"
-                    name="invite-role"
-                    value={option.value}
-                    checked={checked}
-                    onChange={() => setHumanRole(option.value)}
-                    className="mt-1 h-4 w-4 border-border text-foreground"
-                  />
-                  <span className="min-w-0 space-y-1">
-                    <span className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-medium">{option.label}</span>
-                      {option.value === "operator" ? (
-                        <span className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
-                          Default
-                        </span>
-                      ) : null}
-                    </span>
-                    <span className="block max-w-2xl text-sm text-muted-foreground">{option.description}</span>
-                    <span className="block text-sm text-foreground">{option.gets}</span>
-                  </span>
-                </label>
-              );
-            })}
+        {isRestricted ? (
+          <div className="rounded-lg border border-border px-4 py-3 text-sm text-muted-foreground">
+            Invites you create always grant the Restricted Operator role, with the same restricted
+            access you have. The role cannot be changed.
           </div>
-        </fieldset>
+        ) : (
+          <fieldset className="space-y-3">
+            <legend className="text-sm font-medium">Choose a role</legend>
+            <div className="rounded-xl border border-border">
+              {inviteRoleOptions.map((option, index) => {
+                const checked = humanRole === option.value;
+                return (
+                  <label
+                    key={option.value}
+                    className={`flex cursor-pointer gap-3 px-4 py-4 ${index > 0 ? "border-t border-border" : ""}`}
+                  >
+                    <input
+                      type="radio"
+                      name="invite-role"
+                      value={option.value}
+                      checked={checked}
+                      onChange={() => setHumanRole(option.value)}
+                      className="mt-1 h-4 w-4 border-border text-foreground"
+                    />
+                    <span className="min-w-0 space-y-1">
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-medium">{option.label}</span>
+                        {option.value === "operator" ? (
+                          <span className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
+                            Default
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="block max-w-2xl text-sm text-muted-foreground">{option.description}</span>
+                      <span className="block text-sm text-foreground">{option.gets}</span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </fieldset>
+        )}
 
         <div className="rounded-lg border border-border px-4 py-3 text-sm text-muted-foreground">
           Each invite link is single-use. The first successful use consumes the link and creates or reuses the matching join request before approval.

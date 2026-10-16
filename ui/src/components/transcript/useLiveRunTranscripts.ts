@@ -6,6 +6,7 @@ import { instanceSettingsApi } from "../../api/instanceSettings";
 import { heartbeatsApi } from "../../api/heartbeats";
 import { buildTranscript, getUIAdapter, onAdapterChange, type RunLogChunk, type TranscriptEntry } from "../../adapters";
 import { queryKeys } from "../../lib/queryKeys";
+import { useRestrictedOperator } from "@/hooks/useRestrictedOperator";
 
 const LOG_POLL_INTERVAL_MS = 2000;
 const LOG_READ_LIMIT_BYTES = 256_000;
@@ -86,14 +87,19 @@ function parsePersistedLogContent(
   return parsed;
 }
 
+const NO_RUNS: never[] = [];
+
 export function useLiveRunTranscripts({
-  runs,
+  runs: requestedRuns,
   companyId,
   maxChunksPerRun = 200,
   logPollIntervalMs = LOG_POLL_INTERVAL_MS,
   logReadLimitBytes = LOG_READ_LIMIT_BYTES,
   enableRealtimeUpdates = true,
 }: UseLiveRunTranscriptsOptions) {
+  // Restricted operators never receive run logs or transcripts.
+  const isRestricted = useRestrictedOperator();
+  const runs = isRestricted ? NO_RUNS : requestedRuns;
   const runsKey = useMemo(
     () =>
       runs

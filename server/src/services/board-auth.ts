@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   authUsers,
@@ -9,6 +9,7 @@ import {
   companyMemberships,
   instanceUserRoles,
 } from "@paperclipai/db";
+import { isRestrictedOperatorAccess } from "./restricted-operator.js";
 import { conflict, forbidden, notFound } from "../errors.js";
 
 export const BOARD_API_KEY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -51,7 +52,7 @@ function challengeStatusForRow(row: typeof cliAuthChallenges.$inferSelect): CliA
 
 export function boardAuthService(db: Db) {
   async function resolveBoardAccess(userId: string) {
-    const [user, memberships, adminRole] = await Promise.all([
+    const [user, memberships, roleRows] = await Promise.all([
       db
         .select({
           id: authUsers.id,
@@ -77,17 +78,19 @@ export function boardAuthService(db: Db) {
         )
         .then((rows) => rows),
       db
-        .select({ id: instanceUserRoles.id })
+        .select({ role: instanceUserRoles.role })
         .from(instanceUserRoles)
-        .where(and(eq(instanceUserRoles.userId, userId), eq(instanceUserRoles.role, "instance_admin")))
-        .then((rows) => rows[0] ?? null),
+        .where(eq(instanceUserRoles.userId, userId)),
     ]);
 
+    const roles = new Set(roleRows.map((row) => row.role));
+    const isRestricted = isRestrictedOperatorAccess(roles, memberships);
     return {
       user,
       companyIds: memberships.map((row) => row.companyId),
       memberships,
-      isInstanceAdmin: Boolean(adminRole),
+      isInstanceAdmin: roles.has("instance_admin") && !isRestricted,
+      isRestricted,
     };
   }
 
@@ -157,6 +160,79 @@ export function boardAuthService(db: Db) {
       .set({ revokedAt: now, lastUsedAt: now })
       .where(and(eq(boardApiKeys.id, id), isNull(boardApiKeys.revokedAt)))
       .returning()
+      .then((rows) => rows[0] ?? null);
+  }
+
+  async function createNamedBoardApiKey(input: {
+    userId: string;
+    name: string;
+    expiresAt?: Date | null;
+  }) {
+    const token = createBoardApiToken();
+    const created = await db
+      .insert(boardApiKeys)
+      .values({
+        userId: input.userId,
+        name: input.name.trim(),
+        keyHash: hashBearerToken(token),
+        expiresAt: input.expiresAt === undefined ? boardApiKeyExpiresAt() : input.expiresAt,
+      })
+      .returning()
+      .then((rows) => rows[0]);
+
+    return {
+      id: created.id,
+      name: created.name,
+      token,
+      createdAt: created.createdAt,
+      lastUsedAt: created.lastUsedAt,
+      revokedAt: created.revokedAt,
+      expiresAt: created.expiresAt,
+    };
+  }
+
+  async function listBoardApiKeys(
+    userId: string,
+    opts: { includeInactive?: boolean } = {},
+  ) {
+    const conditions = [eq(boardApiKeys.userId, userId)];
+    if (!opts.includeInactive) {
+      const activeExpirationCondition = or(
+        isNull(boardApiKeys.expiresAt),
+        gt(boardApiKeys.expiresAt, new Date()),
+      );
+      conditions.push(
+        isNull(boardApiKeys.revokedAt),
+      );
+      if (activeExpirationCondition) conditions.push(activeExpirationCondition);
+    }
+    return db
+      .select({
+        id: boardApiKeys.id,
+        name: boardApiKeys.name,
+        createdAt: boardApiKeys.createdAt,
+        lastUsedAt: boardApiKeys.lastUsedAt,
+        revokedAt: boardApiKeys.revokedAt,
+        expiresAt: boardApiKeys.expiresAt,
+      })
+      .from(boardApiKeys)
+      .where(and(...conditions))
+      .orderBy(sql`${boardApiKeys.createdAt} desc`);
+  }
+
+  async function getBoardApiKeyForUser(keyId: string, userId: string) {
+    return db
+      .select({
+        id: boardApiKeys.id,
+        userId: boardApiKeys.userId,
+        name: boardApiKeys.name,
+        createdAt: boardApiKeys.createdAt,
+        lastUsedAt: boardApiKeys.lastUsedAt,
+        revokedAt: boardApiKeys.revokedAt,
+        expiresAt: boardApiKeys.expiresAt,
+      })
+      .from(boardApiKeys)
+      .where(and(eq(boardApiKeys.id, keyId), eq(boardApiKeys.userId, userId)))
       .then((rows) => rows[0] ?? null);
   }
 
@@ -348,6 +424,9 @@ export function boardAuthService(db: Db) {
     findBoardApiKeyByToken,
     touchBoardApiKey,
     revokeBoardApiKey,
+    createNamedBoardApiKey,
+    listBoardApiKeys,
+    getBoardApiKeyForUser,
     createCliAuthChallenge,
     getCliAuthChallengeBySecret,
     describeCliAuthChallenge,

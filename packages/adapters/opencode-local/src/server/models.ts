@@ -11,13 +11,18 @@ import { isValidOpenCodeModelId } from "../index.js";
 const MODELS_CACHE_TTL_MS = 60_000;
 const MODELS_DISCOVERY_TIMEOUT_MS = 20_000;
 
-function resolveOpenCodeCommand(input: unknown): string {
+export function resolveOpenCodeCommand(input: unknown): string {
   const envOverride =
     typeof process.env.PAPERCLIP_OPENCODE_COMMAND === "string" &&
     process.env.PAPERCLIP_OPENCODE_COMMAND.trim().length > 0
       ? process.env.PAPERCLIP_OPENCODE_COMMAND.trim()
-      : "opencode";
-  return asString(input, envOverride);
+      : "";
+  const configured = asString(input, "").trim();
+  // The UI stores the adapter default as the literal "opencode". Prefer the
+  // deployment-provided absolute path for that sentinel so discovery and
+  // execution invoke the same binary in PM2/non-login environments.
+  if (!configured || configured === "opencode") return envOverride || "opencode";
+  return configured;
 }
 
 const discoveryCache = new Map<string, { expiresAt: number; models: AdapterModel[] }>();
@@ -175,6 +180,12 @@ export async function discoverOpenCodeModelsCached(input: {
   return models;
 }
 
+export function isTruthyEnvFlag(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  const v = value.trim().toLowerCase();
+  return v === "true" || v === "1" || v === "yes";
+}
+
 export async function ensureOpenCodeModelConfiguredAndAvailable(input: {
   model?: unknown;
   command?: unknown;
@@ -182,6 +193,16 @@ export async function ensureOpenCodeModelConfiguredAndAvailable(input: {
   env?: unknown;
 }): Promise<AdapterModel[]> {
   const model = requireOpenCodeModelId(input.model);
+
+  // When the caller opts into OPENCODE_ALLOW_ALL_MODELS, OpenCode accepts any
+  // provider/model at run time (e.g. gateway-routed models that never appear in
+  // `opencode models` output). Honour that by skipping the availability probe;
+  // we still enforce the provider/model format above and do not second-guess
+  // the configured model. Prefer the explicit run env, then the process env.
+  const env = normalizeEnv(input.env);
+  if (isTruthyEnvFlag(env.OPENCODE_ALLOW_ALL_MODELS ?? process.env.OPENCODE_ALLOW_ALL_MODELS)) {
+    return [{ id: model, label: model }];
+  }
 
   const models = await discoverOpenCodeModelsCached({
     command: input.command,

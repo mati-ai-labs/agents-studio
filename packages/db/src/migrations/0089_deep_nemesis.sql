@@ -1,1 +1,0 @@
-ALTER TABLE "issues" ADD COLUMN "slack_completion" jsonb;

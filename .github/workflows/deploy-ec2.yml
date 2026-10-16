@@ -1,0 +1,170 @@
+name: Deploy Agents Studio to EC2
+
+on:
+  push:
+    branches:
+      - deployment
+
+concurrency:
+  group: agents-studio-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build deployment artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout deployment revision
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all workspaces
+        run: pnpm build
+
+      - name: Package build outputs
+        run: |
+          mapfile -d '' build_dirs < <(
+            find . \
+              -type d \
+              -name dist \
+              -not -path './node_modules/*' \
+              -not -path '*/node_modules/*' \
+              -print0
+          )
+
+          if (( ${#build_dirs[@]} == 0 )); then
+            echo "No build output directories were produced." >&2
+            exit 1
+          fi
+
+          tar -czf agents-studio-build.tgz "${build_dirs[@]}"
+          sha256sum agents-studio-build.tgz > agents-studio-build.tgz.sha256
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: agents-studio-${{ github.sha }}
+          path: |
+            agents-studio-build.tgz
+            agents-studio-build.tgz.sha256
+          retention-days: 1
+          if-no-files-found: error
+
+  deploy:
+    name: Deploy verified artifact to EC2
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Production host behind agentstudio.matilabs.com.
+      EC2_HOST: ec2-13-204-80-56.ap-south-1.compute.amazonaws.com
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: agents-studio-${{ github.sha }}
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.AGENTS_STUDIO_EC2_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.AGENTS_STUDIO_EC2_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/agents-studio.pem
+          chmod 600 ~/.ssh/agents-studio.pem
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Upload verified build artifact
+        env:
+          DEPLOY_SHA: ${{ github.sha }}
+        run: |
+          scp \
+            -i ~/.ssh/agents-studio.pem \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            agents-studio-build.tgz \
+            agents-studio-build.tgz.sha256 \
+            "ubuntu@$EC2_HOST":/tmp/
+
+      - name: Activate pushed revision
+        env:
+          DEPLOY_SHA: ${{ github.sha }}
+        run: |
+          ssh \
+            -i ~/.ssh/agents-studio.pem \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            "ubuntu@$EC2_HOST" \
+            "DEPLOY_SHA=$DEPLOY_SHA bash -s" <<'DEPLOY_SCRIPT'
+          set -Eeuo pipefail
+
+          repo=/home/ubuntu/agents-studio
+          export PATH=/home/ubuntu/.nvm/versions/node/v24.16.0/bin:$PATH
+
+          cd /tmp
+          sha256sum --check agents-studio-build.tgz.sha256
+
+          cd "$repo"
+
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            echo "Refusing to deploy: tracked files on EC2 contain uncommitted changes." >&2
+            git status --short >&2
+            exit 1
+          fi
+
+          git fetch --prune origin deployment
+
+          remote_sha=$(git rev-parse origin/deployment)
+          if [[ "$remote_sha" != "$DEPLOY_SHA" ]]; then
+            echo "Refusing to deploy: origin/deployment is $remote_sha, expected $DEPLOY_SHA." >&2
+            exit 1
+          fi
+
+          # The tracked worktree is clean at this point, so make the local
+          # deployment branch exactly match the revision that triggered CI.
+          # EC2-only untracked runtime files are intentionally preserved.
+          git switch --force-create deployment origin/deployment
+
+          corepack pnpm install --frozen-lockfile
+          tar -xzf /tmp/agents-studio-build.tgz -C "$repo"
+          rm -f /tmp/agents-studio-build.tgz /tmp/agents-studio-build.tgz.sha256
+
+          npx --yes pm2 reload ecosystem.config.cjs --update-env
+
+          for attempt in $(seq 1 150); do
+            if curl --fail --silent --show-error http://127.0.0.1:3100/api/health >/dev/null \
+              && curl --fail --silent --show-error http://127.0.0.1:3101/orchestrator/health >/dev/null; then
+              echo "Agents Studio deployed successfully at $DEPLOY_SHA."
+              exit 0
+            fi
+
+            echo "Waiting for services to become healthy ($attempt/150)..."
+            sleep 2
+          done
+
+          echo "Deployment completed, but one or more health checks failed." >&2
+          npx --yes pm2 status >&2
+          npx --yes pm2 logs paperclip --lines 100 --nostream >&2
+          npx --yes pm2 logs orchestrator --lines 100 --nostream >&2
+          exit 1
+          DEPLOY_SCRIPT

@@ -1,14 +1,17 @@
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
-  agents,
   companyMemberships,
   instanceUserRoles,
   issues,
   principalPermissionGrants,
 } from "@paperclipai/db";
-import type { PermissionKey, PrincipalType } from "@paperclipai/shared";
+import { RESTRICTED_OPERATOR_ROLE, type PermissionKey, type PrincipalType } from "@paperclipai/shared";
 import { conflict } from "../errors.js";
+import { assertAssignableAgent } from "./agent-assignability.js";
+import { authorizationService, type AuthorizationActor, type AuthorizationResource } from "./authorization.js";
+import { ensureHumanRoleDefaultGrants } from "./principal-access-compatibility.js";
+import { isRestrictedOperatorAccess } from "./restricted-operator.js";
 
 type MembershipRow = typeof companyMemberships.$inferSelect;
 type GrantInput = {
@@ -23,15 +26,103 @@ type MemberArchiveInput = {
   } | null;
 };
 
+const RESTRICTED_OPERATOR_COMPANY_GRANTS: PermissionKey[] = [
+  "tasks:assign",
+  "agents:create",
+  "users:invite",
+  "users:manage_permissions",
+  "joins:approve",
+];
+
 export function accessService(db: Db) {
-  async function isInstanceAdmin(userId: string | null | undefined): Promise<boolean> {
-    if (!userId) return false;
-    const row = await db
-      .select({ id: instanceUserRoles.id })
+  const authorization = authorizationService(db);
+
+  async function getInstanceRoles(userId: string | null | undefined): Promise<Set<string>> {
+    if (!userId) return new Set();
+    const rows = await db
+      .select({ role: instanceUserRoles.role })
       .from(instanceUserRoles)
-      .where(and(eq(instanceUserRoles.userId, userId), eq(instanceUserRoles.role, "instance_admin")))
-      .then((rows) => rows[0] ?? null);
-    return Boolean(row);
+      .where(eq(instanceUserRoles.userId, userId));
+    return new Set(rows.map((row) => row.role));
+  }
+
+  async function isRestrictedOperator(userId: string | null | undefined): Promise<boolean> {
+    if (!userId) return false;
+    const [roles, memberships] = await Promise.all([
+      getInstanceRoles(userId),
+      db
+        .select({ membershipRole: companyMemberships.membershipRole, status: companyMemberships.status })
+        .from(companyMemberships)
+        .where(and(eq(companyMemberships.principalType, "user"), eq(companyMemberships.principalId, userId))),
+    ]);
+    return isRestrictedOperatorAccess(roles, memberships);
+  }
+
+  /** Effective instance admin: the restricted operator role overrides admin. */
+  async function isInstanceAdmin(userId: string | null | undefined): Promise<boolean> {
+    const roles = await getInstanceRoles(userId);
+    if (!roles.has("instance_admin")) return false;
+    return !(await isRestrictedOperator(userId));
+  }
+
+  /**
+   * Restricted operators still run day-to-day work in their granted companies:
+   * running agents, assigning tasks, and managing access and invites there.
+   * Additive: existing grants are never removed.
+   */
+  async function ensureRestrictedOperatorGrants(userId: string, grantedByUserId: string | null) {
+    const memberships = await listUserCompanyAccess(userId);
+    for (const membership of memberships) {
+      if (membership.status !== "active") continue;
+      for (const permissionKey of RESTRICTED_OPERATOR_COMPANY_GRANTS) {
+        await setPrincipalPermission(membership.companyId, "user", userId, permissionKey, true, grantedByUserId);
+      }
+    }
+  }
+
+  /**
+   * Keeps company roles in step with the instance-level restriction: restricting
+   * moves every active membership to `restricted_operator`; lifting it moves
+   * those memberships back to `operator`.
+   */
+  async function syncRestrictedOperatorMemberships(userId: string, restricted: boolean) {
+    const now = new Date();
+    if (restricted) {
+      await db
+        .update(companyMemberships)
+        .set({ membershipRole: "restricted_operator", updatedAt: now })
+        .where(
+          and(
+            eq(companyMemberships.principalType, "user"),
+            eq(companyMemberships.principalId, userId),
+            eq(companyMemberships.status, "active"),
+          ),
+        );
+      return;
+    }
+    await db
+      .update(companyMemberships)
+      .set({ membershipRole: "operator", updatedAt: now })
+      .where(
+        and(
+          eq(companyMemberships.principalType, "user"),
+          eq(companyMemberships.principalId, userId),
+          eq(companyMemberships.membershipRole, "restricted_operator"),
+        ),
+      );
+  }
+
+  async function setRestrictedOperator(userId: string, restricted: boolean) {
+    if (!restricted) {
+      await db
+        .delete(instanceUserRoles)
+        .where(and(eq(instanceUserRoles.userId, userId), eq(instanceUserRoles.role, RESTRICTED_OPERATOR_ROLE)));
+      return;
+    }
+    await db
+      .insert(instanceUserRoles)
+      .values({ userId, role: RESTRICTED_OPERATOR_ROLE })
+      .onConflictDoNothing();
   }
 
   async function getMembership(
@@ -58,21 +149,13 @@ export function accessService(db: Db) {
     principalId: string,
     permissionKey: PermissionKey,
   ): Promise<boolean> {
-    const membership = await getMembership(companyId, principalType, principalId);
-    if (!membership || membership.status !== "active") return false;
-    const grant = await db
-      .select({ id: principalPermissionGrants.id })
-      .from(principalPermissionGrants)
-      .where(
-        and(
-          eq(principalPermissionGrants.companyId, companyId),
-          eq(principalPermissionGrants.principalType, principalType),
-          eq(principalPermissionGrants.principalId, principalId),
-          eq(principalPermissionGrants.permissionKey, permissionKey),
-        ),
-      )
-      .then((rows) => rows[0] ?? null);
-    return Boolean(grant);
+    return authorization.decidePrincipalGrant({
+      companyId,
+      principalType,
+      principalId,
+      permissionKey,
+      action: permissionKey,
+    }).then((decision) => decision.allowed);
   }
 
   async function canUser(
@@ -80,9 +163,20 @@ export function accessService(db: Db) {
     userId: string | null | undefined,
     permissionKey: PermissionKey,
   ): Promise<boolean> {
-    if (!userId) return false;
-    if (await isInstanceAdmin(userId)) return true;
-    return hasPermission(companyId, "user", userId, permissionKey);
+    return authorization.decide({
+      actor: { type: "board", userId },
+      action: permissionKey,
+      resource: { type: "company", companyId },
+    }).then((decision) => decision.allowed);
+  }
+
+  async function decide(input: {
+    actor: AuthorizationActor;
+    action: Parameters<typeof authorization.decide>[0]["action"];
+    resource: AuthorizationResource;
+    scope?: Record<string, unknown> | null;
+  }) {
+    return authorization.decide(input);
   }
 
   async function listMembers(companyId: string) {
@@ -308,21 +402,7 @@ export function accessService(db: Db) {
       return;
     }
 
-    const agent = await tx
-      .select({
-        id: agents.id,
-        companyId: agents.companyId,
-        status: agents.status,
-      })
-      .from(agents)
-      .where(eq(agents.id, input.assigneeAgentId!))
-      .then((rows) => rows[0] ?? null);
-    if (!agent || agent.companyId !== companyId) {
-      throw conflict("Replacement agent must belong to the same company");
-    }
-    if (agent.status === "pending_approval" || agent.status === "terminated") {
-      throw conflict("Replacement agent must be assignable");
-    }
+    await assertAssignableAgent(tx as Db, companyId, input.assigneeAgentId, { kind: "work" });
   }
 
   async function archiveMember(companyId: string, memberId: string, input: MemberArchiveInput = {}) {
@@ -616,8 +696,28 @@ export function accessService(db: Db) {
         membership.membershipRole,
         "active",
       );
+      await ensureHumanRoleDefaultGrants(db, {
+        companyId: targetCompanyId,
+        principalId: membership.principalId,
+        membershipRole: membership.membershipRole,
+        grantedByUserId: null,
+      });
     }
     return sourceMemberships;
+  }
+
+  async function ensureRoleDefaultGrants(
+    companyId: string,
+    principalId: string,
+    membershipRole: string | null | undefined,
+    grantedByUserId: string | null,
+  ) {
+    return ensureHumanRoleDefaultGrants(db, {
+      companyId,
+      principalId,
+      membershipRole,
+      grantedByUserId,
+    });
   }
 
   async function listPrincipalGrants(
@@ -661,7 +761,10 @@ export function accessService(db: Db) {
       return;
     }
 
-    await ensureMembership(companyId, principalType, principalId, "member", "active");
+    // Granting a permission must not change an existing member's company role
+    // (e.g. demote restricted_operator/owner to "member"); new principals join as "member".
+    const membership = await getMembership(companyId, principalType, principalId);
+    await ensureMembership(companyId, principalType, principalId, membership?.membershipRole ?? "member", "active");
 
     const existing = await db
       .select()
@@ -768,6 +871,11 @@ export function accessService(db: Db) {
 
   return {
     isInstanceAdmin,
+    isRestrictedOperator,
+    setRestrictedOperator,
+    ensureRestrictedOperatorGrants,
+    syncRestrictedOperatorMemberships,
+    decide,
     canUser,
     hasPermission,
     getMembership,
@@ -776,6 +884,7 @@ export function accessService(db: Db) {
     listMembers,
     listActiveUserMemberships,
     copyActiveUserMemberships,
+    ensureRoleDefaultGrants,
     archiveMember,
     setMemberPermissions,
     updateMemberAndPermissions,

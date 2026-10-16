@@ -1,4 +1,3 @@
-import type { IssueSlackCompletion } from "@paperclipai/shared";
 import type { issues } from "@paperclipai/db";
 import { getPublicBaseUrl } from "../lib/public-url.js";
 
@@ -23,7 +22,7 @@ export function buildSlackErrorMessage(message: string): string {
   return `Paperclip Slack integration error: ${message.trim().slice(0, 1_000)}`;
 }
 
-export function buildSlackCompletionMessage(input: { issue: IssueRow; completionComment?: string | null; slackCompletion?: IssueSlackCompletion | null }): string {
+export function buildSlackCompletionMessage(input: { issue: IssueRow; completionComment?: string | null }): string {
   const title = `${input.issue.identifier ?? input.issue.id} ${input.issue.title}`.trim();
   const link = buildIssueLink(input.issue);
   const note = input.completionComment?.trim();

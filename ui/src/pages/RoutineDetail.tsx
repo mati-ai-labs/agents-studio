@@ -8,6 +8,7 @@ import {
   Clock3,
   Copy,
   History as HistoryIcon,
+  Link2,
   Play,
   RefreshCw,
   Repeat,
@@ -64,6 +65,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import type { RoutineDetail as RoutineDetailType, RoutineTrigger, RoutineVariable } from "@paperclipai/shared";
+import { useRestrictedOperator } from "@/hooks/useRestrictedOperator";
 
 const concurrencyPolicies = ["coalesce_if_active", "always_enqueue", "skip_if_active"];
 const catchUpPolicies = ["skip_missed", "enqueue_missed_with_cap"];
@@ -107,9 +109,13 @@ function isRoutineTab(value: string | null): value is RoutineTab {
   return value !== null && routineTabs.includes(value as RoutineTab);
 }
 
-function getRoutineTabFromSearch(search: string, options?: { hideTriggers?: boolean }): RoutineTab {
+function getRoutineTabFromSearch(
+  search: string,
+  options?: { hideTriggers?: boolean; hideHistory?: boolean },
+): RoutineTab {
   const tab = new URLSearchParams(search).get("tab");
   if (options?.hideTriggers && tab === "triggers") return "runs";
+  if (options?.hideHistory && tab === "history") return "runs";
   if (isRoutineTab(tab)) {
     if (options?.hideTriggers && tab === "triggers") return "runs";
     return tab;
@@ -155,16 +161,26 @@ function buildRoutineMutationPayload(input: {
   };
 }
 
+const SOURCE_ISSUE_MARKER = "__PAPERCLIP_SOURCE_ISSUE_ID__";
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
 function TriggerEditor({
   trigger,
   onSave,
   onRotate,
+  onConnect,
   onDelete,
+  variables,
 }: {
   trigger: RoutineTrigger;
   onSave: (id: string, patch: Record<string, unknown>) => void;
   onRotate: (id: string) => void;
+  onConnect: (id: string) => Promise<RotateRoutineTriggerResponse>;
   onDelete: (id: string) => void;
+  variables: RoutineVariable[];
 }) {
   const [draft, setDraft] = useState({
     label: trigger.label ?? "",
@@ -172,6 +188,8 @@ function TriggerEditor({
     signingMode: trigger.signingMode ?? "bearer",
     replayWindowSec: String(trigger.replayWindowSec ?? 300),
   });
+  const [connection, setConnection] = useState<SecretMessage["entries"][number] | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
 
   useEffect(() => {
     setDraft({
@@ -181,6 +199,27 @@ function TriggerEditor({
       replayWindowSec: String(trigger.replayWindowSec ?? 300),
     });
   }, [trigger]);
+
+  const connectionCommand = useMemo(() => {
+    if (!connection) return "";
+    const values = Object.fromEntries(
+      variables.map((variable) => [variable.name, variable.defaultValue ?? `<${variable.name}>`]),
+    );
+    const payload = JSON.stringify({
+      source_issue_id: SOURCE_ISSUE_MARKER,
+      variables: values,
+    });
+    const [beforeSourceIssue, afterSourceIssue] = payload.split(SOURCE_ISSUE_MARKER);
+
+    return [
+      'SOURCE_ISSUE_ID="${PAPERCLIP_SOURCE_ISSUE_ID:-$PAPERCLIP_TASK_ID}"',
+      `curl -X POST ${shellQuote(connection.webhookUrl)} \\
+  -H ${shellQuote(`Authorization: Bearer ${connection.webhookSecret}`)} \\
+  -H 'Content-Type: application/json' \\
+  -H "X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID" \\
+  --data ${shellQuote(beforeSourceIssue ?? "")}"$SOURCE_ISSUE_ID"${shellQuote(afterSourceIssue ?? "")}`,
+    ].join("\n");
+  }, [connection, variables]);
 
   return (
     <div className="rounded-lg border border-border p-4 space-y-4">
@@ -250,10 +289,29 @@ function TriggerEditor({
         {trigger.lastResult && <span className="text-xs text-muted-foreground">Last: {trigger.lastResult}</span>}
         <div className="ml-auto flex items-center gap-2">
           {trigger.kind === "webhook" && (
-            <Button variant="outline" size="sm" onClick={() => onRotate(trigger.id)}>
-              <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-              Rotate secret
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isConnecting}
+                onClick={async () => {
+                  setIsConnecting(true);
+                  try {
+                    const result = await onConnect(trigger.id);
+                    setConnection(result.secretMaterial);
+                  } finally {
+                    setIsConnecting(false);
+                  }
+                }}
+              >
+                <Link2 className="mr-1.5 h-3.5 w-3.5" />
+                {isConnecting ? "Preparing…" : "Connect to your agent"}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => onRotate(trigger.id)}>
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                Rotate secret
+              </Button>
+            </>
           )}
           <Button
             variant="outline"
@@ -273,11 +331,27 @@ function TriggerEditor({
           </Button>
         </div>
       </div>
+      {connection ? (
+        <div className="space-y-3 rounded-md border border-blue-500/30 bg-blue-500/5 p-3 text-sm">
+          <div>
+            <p className="font-medium">Agent connection instructions</p>
+            <p className="text-xs text-muted-foreground">
+              A new bearer token was generated. Copy this into the calling agent now; Paperclip will not show it again.
+            </p>
+          </div>
+          <pre className="max-h-48 overflow-auto rounded bg-background p-3 text-xs leading-relaxed whitespace-pre-wrap">{connectionCommand}</pre>
+          <Button variant="outline" size="sm" onClick={() => void navigator.clipboard.writeText(connectionCommand)}>
+            <Copy className="mr-1.5 h-3.5 w-3.5" />
+            Copy invocation
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }
 
 export function RoutineDetail() {
+  const isRestricted = useRestrictedOperator();
   const { routineId } = useParams<{ routineId: string }>();
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
@@ -320,9 +394,12 @@ export function RoutineDetail() {
     catchUpPolicy: "skip_missed",
     variables: [],
   });
+  // Restricted operators see neither triggers nor revision history.
+  const hideTriggers = isWorkflowView || isRestricted;
+  const hideHistory = isRestricted;
   const activeTab = useMemo(
-    () => getRoutineTabFromSearch(location.search, { hideTriggers: isWorkflowView }),
-    [isWorkflowView, location.search],
+    () => getRoutineTabFromSearch(location.search, { hideTriggers, hideHistory }),
+    [hideTriggers, hideHistory, location.search],
   );
 
   const { data: routine, isLoading, error } = useQuery({
@@ -452,9 +529,10 @@ export function RoutineDetail() {
 
   const setActiveTab = (value: string) => {
     if (!routineId || !isRoutineTab(value)) return;
-    if (isWorkflowView && value === "triggers") return;
+    if (hideTriggers && value === "triggers") return;
+    if (hideHistory && value === "history") return;
     const params = new URLSearchParams(location.search);
-    const defaultTab: RoutineTab = isWorkflowView ? "runs" : "triggers";
+    const defaultTab: RoutineTab = hideTriggers ? "runs" : "triggers";
     if (value === defaultTab) {
       params.delete("tab");
     } else {
@@ -655,6 +733,24 @@ export function RoutineDetail() {
       });
     },
   });
+
+  const connectTrigger = async (id: string): Promise<RotateRoutineTriggerResponse> => {
+    try {
+      const result = await routinesApi.rotateTriggerSecret(id);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.routines.detail(routineId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.routines.activity(selectedCompanyId!, routineId!) }),
+      ]);
+      return result;
+    } catch (triggerError) {
+      pushToast({
+        title: "Failed to prepare agent connection",
+        body: triggerError instanceof Error ? triggerError.message : "Paperclip could not create a connection token.",
+        tone: "error",
+      });
+      throw triggerError;
+    }
+  };
 
   const rotateTrigger = useMutation({
     mutationFn: (id: string): Promise<RotateRoutineTriggerResponse> => routinesApi.rotateTriggerSecret(id),
@@ -990,22 +1086,26 @@ export function RoutineDetail() {
         </div>
       </div>
 
-      {/* Instructions */}
-      <MarkdownEditor
-        ref={descriptionEditorRef}
-        value={editDraft.description}
-        onChange={(description) => setEditDraft((current) => ({ ...current, description }))}
-        placeholder="Add instructions..."
-        bordered={false}
-        contentClassName="min-h-[120px] text-[15px] leading-7"
-        mentions={mentionOptions}
-        onSubmit={() => {
-          if (!saveRoutine.isPending && editDraft.title.trim()) {
-            saveRoutine.mutate();
-          }
-        }}
-      />
-      <RoutineVariablesHint />
+      {/* Instructions (routine prompt) are hidden from restricted operators. */}
+      {isRestricted ? null : (
+        <>
+          <MarkdownEditor
+            ref={descriptionEditorRef}
+            value={editDraft.description}
+            onChange={(description) => setEditDraft((current) => ({ ...current, description }))}
+            placeholder="Add instructions..."
+            bordered={false}
+            contentClassName="min-h-[120px] text-[15px] leading-7"
+            mentions={mentionOptions}
+            onSubmit={() => {
+              if (!saveRoutine.isPending && editDraft.title.trim()) {
+                saveRoutine.mutate();
+              }
+            }}
+          />
+          <RoutineVariablesHint />
+        </>
+      )}
       <RoutineVariablesEditor
         title={editDraft.title}
         description={editDraft.description}
@@ -1080,7 +1180,7 @@ export function RoutineDetail() {
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-3">
         <TabsList variant="line" className="w-full justify-start gap-1">
-          {!isWorkflowView ? (
+          {!hideTriggers ? (
             <TabsTrigger value="triggers" className="gap-1.5">
               <Clock3 className="h-3.5 w-3.5" />
               Triggers
@@ -1091,17 +1191,19 @@ export function RoutineDetail() {
             Runs
             {hasLiveRun && <span className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />}
           </TabsTrigger>
-<TabsTrigger value="activity" className="gap-1.5">
+          <TabsTrigger value="activity" className="gap-1.5">
             <ActivityIcon className="h-3.5 w-3.5" />
             Activity
           </TabsTrigger>
-          <TabsTrigger value="history" className="gap-1.5">
-            <HistoryIcon className="h-3.5 w-3.5" />
-            History
-          </TabsTrigger>
+          {!hideHistory ? (
+            <TabsTrigger value="history" className="gap-1.5">
+              <HistoryIcon className="h-3.5 w-3.5" />
+              History
+            </TabsTrigger>
+          ) : null}
         </TabsList>
 
-        {!isWorkflowView ? (
+        {!hideTriggers ? (
           <TabsContent value="triggers" className="space-y-4">
             {/* Add trigger form */}
             <div className="rounded-lg border border-border p-4 space-y-3">
@@ -1114,9 +1216,9 @@ export function RoutineDetail() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {triggerKinds.map((kind) => (
-                        <SelectItem key={kind} value={kind} disabled={kind === "webhook"}>
-                          {kind}{kind === "webhook" ? " — COMING SOON" : ""}
+                      {triggerKinds.filter((kind) => !isRestricted || kind !== "webhook").map((kind) => (
+                        <SelectItem key={kind} value={kind}>
+                          {kind}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -1172,8 +1274,10 @@ export function RoutineDetail() {
                   <TriggerEditor
                     key={trigger.id}
                     trigger={trigger}
+                    variables={routine.variables ?? []}
                     onSave={(id, patch) => updateTrigger.mutate({ id, patch })}
                     onRotate={(id) => rotateTrigger.mutate(id)}
+                    onConnect={connectTrigger}
                     onDelete={(id) => deleteTrigger.mutate(id)}
                   />
                 ))}
@@ -1241,62 +1345,64 @@ export function RoutineDetail() {
           )}
         </TabsContent>
 
-        <TabsContent value="history">
-          <RoutineHistoryTab
-            routine={routine}
-            isEditDirty={isEditDirty}
-            dirtyFields={dirtyFields}
-            onDiscardEdits={() => {
-              if (routineDefaults) setEditDraft(routineDefaults);
-            }}
-            onSaveEdits={() => {
-              if (!saveRoutine.isPending && editDraft.title.trim()) {
-                saveRoutine.mutate();
-              }
-            }}
-            agents={agentById}
-            projects={projectById}
-            onRestoreSecretMaterials={(response: RestoreRoutineRevisionResponse) => {
-              if (response.secretMaterials.length > 0) {
-                setSecretMessage({
-                  title: response.secretMaterials.length === 1
-                    ? "Webhook trigger restored"
-                    : `${response.secretMaterials.length} webhook triggers restored`,
-                  entries: response.secretMaterials.map((recreated) => ({
-                    webhookUrl: recreated.webhookUrl,
-                    webhookSecret: recreated.webhookSecret,
-                  })),
+        {!hideHistory ? (
+          <TabsContent value="history">
+            <RoutineHistoryTab
+              routine={routine}
+              isEditDirty={isEditDirty}
+              dirtyFields={dirtyFields}
+              onDiscardEdits={() => {
+                if (routineDefaults) setEditDraft(routineDefaults);
+              }}
+              onSaveEdits={() => {
+                if (!saveRoutine.isPending && editDraft.title.trim()) {
+                  saveRoutine.mutate();
+                }
+              }}
+              agents={agentById}
+              projects={projectById}
+              onRestoreSecretMaterials={(response: RestoreRoutineRevisionResponse) => {
+                if (response.secretMaterials.length > 0) {
+                  setSecretMessage({
+                    title: response.secretMaterials.length === 1
+                      ? "Webhook trigger restored"
+                      : `${response.secretMaterials.length} webhook triggers restored`,
+                    entries: response.secretMaterials.map((recreated) => ({
+                      webhookUrl: recreated.webhookUrl,
+                      webhookSecret: recreated.webhookSecret,
+                    })),
+                  });
+                }
+              }}
+              onRestored={(response: RestoreRoutineRevisionResponse) => {
+                setSaveConflict(false);
+                queryClient.setQueryData<RoutineDetailType | undefined>(
+                  queryKeys.routines.detail(routineId!),
+                  (prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          ...response.routine,
+                          latestRevisionId: response.revision.id,
+                          latestRevisionNumber: response.revision.revisionNumber,
+                        }
+                      : prev,
+                );
+                setEditDraft({
+                  title: response.routine.title,
+                  description: response.routine.description ?? "",
+                  projectId: response.routine.projectId ?? "",
+                  assigneeAgentId: response.routine.assigneeAgentId ?? "",
+                  priority: response.routine.priority,
+                  concurrencyPolicy: response.routine.concurrencyPolicy,
+                  catchUpPolicy: response.routine.catchUpPolicy,
+                  variables: response.routine.variables,
                 });
-              }
-            }}
-            onRestored={(response: RestoreRoutineRevisionResponse) => {
-              setSaveConflict(false);
-              queryClient.setQueryData<RoutineDetailType | undefined>(
-                queryKeys.routines.detail(routineId!),
-                (prev) =>
-                  prev
-                    ? {
-                        ...prev,
-                        ...response.routine,
-                        latestRevisionId: response.revision.id,
-                        latestRevisionNumber: response.revision.revisionNumber,
-                      }
-                    : prev,
-              );
-              setEditDraft({
-                title: response.routine.title,
-                description: response.routine.description ?? "",
-                projectId: response.routine.projectId ?? "",
-                assigneeAgentId: response.routine.assigneeAgentId ?? "",
-                priority: response.routine.priority,
-                concurrencyPolicy: response.routine.concurrencyPolicy,
-                catchUpPolicy: response.routine.catchUpPolicy,
-                variables: response.routine.variables,
-              });
-              hydratedRoutineIdRef.current = response.routine.id;
-            }}
-          />
-        </TabsContent>
+                hydratedRoutineIdRef.current = response.routine.id;
+              }}
+            />
+          </TabsContent>
+        ) : null}
       </Tabs>
 
       <RoutineRunVariablesDialog

@@ -133,4 +133,43 @@ describe("actorMiddleware authenticated session profile", () => {
       emailVerified: true,
     });
   });
+
+  it("falls back to the browser session on preview requests when Authorization carries a foreign JWT", async () => {
+    // The previewed app puts its own JWT in the Authorization header on every
+    // call. That token is not a Paperclip credential, but the board user's
+    // session cookie should still authenticate preview requests.
+    const db = {
+      select: vi.fn(() => createSelectChain([])),
+    } as any;
+    const app = express();
+    app.use(
+      actorMiddleware(db, {
+        deploymentMode: "authenticated",
+        resolveSession: async () => ({
+          session: { id: "session-1", userId: "user-1" },
+          user: {
+            id: "user-1",
+            name: "Board User",
+            email: "board@example.com",
+          },
+        }),
+      }),
+    );
+    app.get("/preview/site-abc/nutrition-agent-api/auth/whoami", (req, res) => {
+      res.json(req.actor);
+    });
+
+    const res = await request(app)
+      .get("/preview/site-abc/nutrition-agent-api/auth/whoami")
+      .set("Authorization", "Bearer eyJhbGciOiJIUzI1NiJ9.not-a-paperclip-token.zzz")
+      .set("Cookie", "paperclip-default.session_token=board-session");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      type: "board",
+      userId: "user-1",
+      userName: "Board User",
+      source: "session",
+    });
+  });
 });

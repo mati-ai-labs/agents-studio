@@ -1059,7 +1059,7 @@ export function NewIssueDialog() {
             channelName: selectedSlackChannel.name,
             workspaceId: connectedSlackWorkspace.workspaceId,
             workspaceName: connectedSlackWorkspace.workspaceName,
-            channelType: selectedSlackChannel.channelType,
+            channelType: selectedSlackChannel.isPrivate ? "private" as const : "public" as const,
           }
         : null;
     createIssue.mutate({
@@ -1083,7 +1083,15 @@ export function NewIssueDialog() {
         : {}),
       ...(executionWorkspaceSettings ? { executionWorkspaceSettings } : {}),
       ...(executionPolicy ? { executionPolicy } : {}),
-      ...(nextSlackCompletion ? { slackCompletion: nextSlackCompletion } : {}),
+      ...(nextSlackCompletion
+        ? {
+            completionDestination: {
+              kind: "slack" as const,
+              channelId: nextSlackCompletion.channelId,
+              channelName: nextSlackCompletion.channelName,
+            },
+          }
+        : {}),
     });
   }
 
@@ -2090,7 +2098,7 @@ export function NewIssueDialog() {
                                 channelName: channel.name,
                                 workspaceId: slackChannelsData?.workspace?.workspaceId ?? "",
                                 workspaceName: slackChannelsData?.workspace?.workspaceName ?? null,
-                                channelType: channel.channelType,
+                                channelType: channel.isPrivate ? "private" : "public",
                               });
                               setSlackOpen(false);
                             }}

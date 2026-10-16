@@ -46,7 +46,7 @@ import {
 } from "./parse.js";
 import { pathExists, prepareManagedCodexHome, resolveManagedCodexHomeDir, resolveSharedCodexHomeDir } from "./codex-home.js";
 import { resolveCodexDesiredSkillNames } from "./skills.js";
-import { buildCodexExecArgs } from "./codex-args.js";
+import { buildCodexExecArgs, buildCodexMcpOverrides } from "./codex-args.js";
 import { SANDBOX_INSTALL_COMMAND } from "../index.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -91,6 +91,48 @@ function resolveCodexBiller(env: Record<string, string>, billingType: "api" | "s
   const openAiCompatibleBiller = inferOpenAiCompatibleBiller(env, "openai");
   if (openAiCompatibleBiller === "openrouter") return "openrouter";
   return billingType === "subscription" ? "chatgpt" : openAiCompatibleBiller ?? "openai";
+}
+
+async function readClaudeHttpMcpServers(): Promise<Record<string, unknown>> {
+  const homeDir = process.env.HOME?.trim();
+  if (!homeDir) return {};
+
+  try {
+    const raw = await fs.readFile(path.join(homeDir, ".claude.json"), "utf8");
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+    const servers = (parsed as Record<string, unknown>).mcpServers;
+    if (typeof servers !== "object" || servers === null || Array.isArray(servers)) return {};
+    return servers as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+function mergeCodexMcpServers(
+  claudeServers: Record<string, unknown>,
+  paperclipConfig: unknown,
+): Record<string, unknown> {
+  const normalizeName = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const paperclipServers =
+    typeof paperclipConfig === "object" && paperclipConfig !== null && !Array.isArray(paperclipConfig)
+      ? (paperclipConfig as Record<string, unknown>)
+      : {};
+  const merged = { ...claudeServers, ...paperclipServers };
+  const paperclipNames = new Set(
+    Object.entries(paperclipServers).map(([name, value]) => {
+      if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+        const serverName = (value as Record<string, unknown>).serverName;
+        if (typeof serverName === "string" && serverName.trim()) return normalizeName(serverName.trim());
+      }
+      return normalizeName(name);
+    }),
+  );
+
+  for (const name of Object.keys(claudeServers)) {
+    if (paperclipNames.has(normalizeName(name))) delete merged[name];
+  }
+  return merged;
 }
 
 async function isLikelyPaperclipRepoRoot(candidate: string): Promise<boolean> {
@@ -217,6 +259,21 @@ function buildCodexTransientHandoffNote(input: {
     .join("\n");
 }
 
+function buildCodexMcpPromptNote(serverNames: string[]): string {
+  if (serverNames.length === 0) return "";
+
+  const normalizedNames = new Set(serverNames.map((name) => name.toLowerCase()));
+  const notes = [
+    `Paperclip MCP servers connected for this run: ${serverNames.join(", ")}. Use these connected MCP tools for external integrations before falling back to local credentials or unauthenticated remotes.`,
+  ];
+  if (normalizedNames.has("github")) {
+    notes.push(
+      "For GitHub repository, branch, commit, and pull-request operations, use the connected GitHub MCP tools directly. Do not treat a local git remote asking for credentials as proof that GitHub publication is unavailable.",
+    );
+  }
+  return notes.join("\n");
+}
+
 export async function ensureCodexSkillsInjected(
   onLog: AdapterExecutionContext["onLog"],
   options: EnsureCodexSkillsInjectedOptions = {},
@@ -283,7 +340,7 @@ export async function ensureCodexSkillsInjected(
 }
 
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
-  const { runId, agent, runtime, config, context, onLog, onMeta, onSpawn, authToken } = ctx;
+  const { runId, agent, runtime, config, context, mcpConfig, onLog, onMeta, onSpawn, authToken } = ctx;
 
   const promptTemplate = asString(
     config.promptTemplate,
@@ -411,6 +468,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     (typeof context.taskId === "string" && context.taskId.trim().length > 0 && context.taskId.trim()) ||
     (typeof context.issueId === "string" && context.issueId.trim().length > 0 && context.issueId.trim()) ||
     null;
+  const sourceIssueId =
+    typeof context.sourceIssueId === "string" && context.sourceIssueId.trim().length > 0
+      ? context.sourceIssueId.trim()
+      : null;
   const wakeReason =
     typeof context.wakeReason === "string" && context.wakeReason.trim().length > 0
       ? context.wakeReason.trim()
@@ -434,6 +495,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const issueWorkMode = readPaperclipIssueWorkModeFromContext(context);
   if (wakeTaskId) {
     env.PAPERCLIP_TASK_ID = wakeTaskId;
+  }
+  if (sourceIssueId) {
+    env.PAPERCLIP_SOURCE_ISSUE_ID = sourceIssueId;
   }
   if (issueWorkMode) {
     env.PAPERCLIP_ISSUE_WORK_MODE = issueWorkMode;
@@ -498,6 +562,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     if (paperclipBridge) {
       Object.assign(env, paperclipBridge.env);
     }
+  }
+  const codexMcpOverrides = buildCodexMcpOverrides(
+    mergeCodexMcpServers(await readClaudeHttpMcpServers(), mcpConfig),
+  );
+  Object.assign(env, codexMcpOverrides.env);
+  if (codexMcpOverrides.serverNames.length > 0) {
+    await onLog(
+      "stdout",
+      `[paperclip] Injecting run-scoped Codex MCP servers: ${codexMcpOverrides.serverNames.join(", ")}\n`,
+    );
   }
   const effectiveEnv = Object.fromEntries(
     Object.entries({ ...process.env, ...env }).filter(
@@ -658,6 +732,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       "Added --skip-git-repo-check for sandbox execution because Codex requires an explicit trust bypass in headless remote workspaces.",
     );
   }
+  const codexMcpPromptNote = buildCodexMcpPromptNote(codexMcpOverrides.serverNames);
   const renderedPrompt = shouldUseResumeDeltaPrompt ? "" : renderTemplate(promptTemplate, templateData);
   const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
   const prompt = joinPromptSections([
@@ -666,6 +741,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     wakePrompt,
     codexFallbackHandoffNote,
     sessionHandoffNote,
+    codexMcpPromptNote,
     renderedPrompt,
   ]);
   const promptMetrics = {
@@ -683,6 +759,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       {
         resumeSessionId,
         skipGitRepoCheck: executionTargetIsSandbox,
+        mcpOverrides: codexMcpOverrides.args,
       },
     );
     const args = execArgs.args;

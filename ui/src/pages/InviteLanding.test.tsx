@@ -594,6 +594,43 @@ describe("InviteLandingPage", () => {
     });
   });
 
+  it("does not crash for signed-in users when CompanyContext already cached the company list", async () => {
+    getSessionMock.mockResolvedValue({
+      session: { id: "session-1", userId: "user-1" },
+      user: { id: "user-1", name: "Jane Example", email: "jane@example.com", image: null },
+    });
+    listCompaniesMock.mockResolvedValue([{ id: "company-1", name: "Acme Robotics" }]);
+
+    const root = createRoot(container);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    // CompanyContext shares this cache key and stores { companies, unauthorized }.
+    queryClient.setQueryData(["companies"], {
+      companies: [{ id: "company-1", name: "Acme Robotics" }],
+      unauthorized: false,
+    });
+
+    await act(async () => {
+      root.render(
+        <MemoryRouter initialEntries={["/invite/pcp_invite_test"]}>
+          <QueryClientProvider client={queryClient}>
+            <Routes>
+              <Route path="/invite/:token" element={<InviteLandingPage />} />
+              <Route path="/" element={<div>Company home</div>} />
+            </Routes>
+          </QueryClientProvider>
+        </MemoryRouter>,
+      );
+    });
+    await flushReact();
+    await flushReact();
+
+    expect(container.textContent).toContain("Company home");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
   it("waits for the membership check before showing invite acceptance to signed-in users", async () => {
     let resolveCompanies: ((value: Array<{ id: string; name: string }>) => void) | null = null;
     acceptInviteMock.mockResolvedValue({

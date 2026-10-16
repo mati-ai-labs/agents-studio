@@ -255,12 +255,9 @@ describe("slack connector routes", () => {
     expect(row?.status).toBe("connected");
     expect(row?.displayName).toBe("Paperclip");
     expect(row?.config).toMatchObject({
-      workspaceId: "T123",
-      workspaceName: "Paperclip",
-      workspaceUrl: "https://paperclip.slack.com/",
+      teamId: "T123",
+      teamName: "Paperclip",
       botUserId: "B123",
-      installedByUserId: "U123",
-      mcpEnabled: true,
     });
   });
 
@@ -286,19 +283,6 @@ describe("slack connector routes", () => {
     expect(callback.status).toBe(302);
     expect(callback.headers.location).toContain("connected=slack");
     expect(fakeRows.get(connectorKey(COMPANY_ID, "slack"))?.status).toBe("connected");
-  });
-
-  it("rejects callback route mismatches for Slack installs", async () => {
-    const connect = await request(app)
-      .post(`/connectors/slack/connect?companyId=${COMPANY_ID}`)
-      .send({});
-
-    const callback = await request(app)
-      .get(`/connectors/google_workspace/callback?state=${encodeURIComponent(connect.body.state)}&code=oauth-code`);
-
-    expect(callback.status).toBe(302);
-    expect(callback.headers.location).toContain("error=invalid_state");
-    expect(fakeRows.get(connectorKey(COMPANY_ID, "slack"))?.status).toBe("error");
   });
 
   it("lists joined Slack channels for the connected workspace", async () => {
@@ -332,16 +316,11 @@ describe("slack connector routes", () => {
     expect(response.body.workspace).toMatchObject({
       workspaceId: "T123",
       workspaceName: "Paperclip",
-      workspaceUrl: "https://paperclip.slack.com/",
     });
-    // Channels come back in API order: C789, C999, C123 (none are private).
-    expect(response.body.channels).toEqual([
-      expect.objectContaining({ id: "C789", name: "general", channelType: "public" }),
-      expect.objectContaining({ id: "C999", name: "random", channelType: "public" }),
-      expect.objectContaining({ id: "C123", name: "ship-alerts", channelType: "public" }),
-    ]);
-    // Public-only: private channels are excluded by the API filter
-    // (types=public_channel) and a defense-in-depth `is_private` skip in
-    // listSlackChannels.
+    expect(response.body.channels).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "C789", name: "general", isPrivate: false, isMember: false }),
+      expect.objectContaining({ id: "C999", name: "random", isPrivate: false, isMember: false }),
+      expect.objectContaining({ id: "C123", name: "ship-alerts", isPrivate: false, isMember: true }),
+    ]));
   });
 });

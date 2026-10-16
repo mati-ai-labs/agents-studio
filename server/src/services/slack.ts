@@ -1,4 +1,8 @@
-import { logger } from "../middleware/logger.js";
+import type { Db } from "@paperclipai/db";
+import { connectorRegistryService } from "./connector-registry.js";
+
+const SLACK_API_BASE_URL = "https://slack.com/api";
+const SLACK_EXPIRY_REFRESH_SKEW_MS = 60_000;
 
 export interface SlackOAuthConfig {
   clientId: string;
@@ -6,389 +10,470 @@ export interface SlackOAuthConfig {
   redirectUri: string;
 }
 
-export interface SlackWorkspaceMetadata {
-  workspaceId: string;
-  workspaceName: string | null;
-  workspaceUrl: string | null;
+export interface SlackWorkspaceInstallation {
+  appId: string | null;
+  teamId: string;
+  teamName: string;
+  teamDomain: string | null;
   enterpriseId: string | null;
   enterpriseName: string | null;
   botUserId: string | null;
-  installedByUserId: string | null;
+  scope: string | null;
+  tokenType: string | null;
+}
+
+export interface SlackOAuthExchangeResult {
+  credentials: {
+    accessToken: string;
+    refreshToken?: string;
+    expiry?: number;
+  };
+  installation: SlackWorkspaceInstallation;
+}
+
+export interface SlackWorkspaceMetadata {
+  workspaceId: string;
+  workspaceName: string | null;
+  workspaceDomain: string | null;
+  enterpriseId: string | null;
+  enterpriseName: string | null;
+  botUserId: string | null;
   scope: string[];
-}
-
-export interface SlackChannelSummary {
-  id: string;
-  name: string;
-  channelType: "public";
-  isMember: boolean;
-  memberCount: number | null;
-}
-
-export interface SlackMessagePostResult {
-  channel: string;
-  ts: string;
-}
-
-type SlackErrorPayload = {
-  ok?: boolean;
-  error?: string;
-  needed?: string;
-  provided?: string;
-};
-
-type SlackOAuthExchangeResponse = SlackErrorPayload & {
-  access_token?: string;
-  refresh_token?: string;
-  expires_in?: number;
-  scope?: string;
-  bot_user_id?: string;
-  team?: {
-    id?: string;
-    name?: string;
-  };
-  enterprise?: {
-    id?: string;
-    name?: string;
-  };
-  authed_user?: {
-    id?: string;
-  };
-};
-
-type SlackAuthTestResponse = SlackErrorPayload & {
-  team?: string;
-  team_id?: string;
-  url?: string;
-  user_id?: string;
-};
-
-type SlackConversationsListResponse = SlackErrorPayload & {
-  channels?: Array<{
-    id?: string;
-    name?: string;
-    is_archived?: boolean;
-    is_private?: boolean;
-    is_member?: boolean;
-    num_members?: number;
-  }>;
-  response_metadata?: {
-    next_cursor?: string;
-  };
-};
-
-type SlackChatPostMessageResponse = SlackErrorPayload & {
-  channel?: string;
-  ts?: string;
-};
-
-export class SlackApiError extends Error {
-  readonly status: number;
-  readonly slackError: string | null;
-  readonly retryAfterMs: number | null;
-
-  constructor(message: string, options: { status: number; slackError?: string | null; retryAfterMs?: number | null }) {
-    super(message);
-    this.name = "SlackApiError";
-    this.status = options.status;
-    this.slackError = options.slackError ?? null;
-    this.retryAfterMs = options.retryAfterMs ?? null;
-  }
-}
-
-function normalizeSlackScopes(scope: string | undefined): string[] {
-  return (scope ?? "")
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-}
-
-function readRetryAfterMs(response: Response): number | null {
-  const retryAfter = response.headers.get("retry-after");
-  if (!retryAfter) return null;
-  const seconds = Number(retryAfter);
-  if (!Number.isFinite(seconds) || seconds <= 0) return null;
-  return Math.max(1_000, Math.round(seconds * 1_000));
-}
-
-async function parseSlackResponse<T extends SlackErrorPayload>(
-  response: Response,
-  operation: string,
-): Promise<T> {
-  const retryAfterMs = readRetryAfterMs(response);
-  const text = await response.text();
-  let payload: T | null = null;
-
-  try {
-    payload = JSON.parse(text) as T;
-  } catch {
-    payload = null;
-  }
-
-  if (!response.ok) {
-    const slackError = payload?.error ?? null;
-    throw new SlackApiError(`${operation} failed with HTTP ${response.status}`, {
-      status: response.status,
-      slackError,
-      retryAfterMs,
-    });
-  }
-
-  if (payload?.ok === false) {
-    throw new SlackApiError(`${operation} failed: ${payload.error ?? "unknown_error"}`, {
-      status: response.status,
-      slackError: payload.error ?? null,
-      retryAfterMs,
-    });
-  }
-
-  if (!payload) {
-    throw new SlackApiError(`${operation} returned invalid JSON`, {
-      status: response.status,
-      retryAfterMs,
-    });
-  }
-
-  return payload;
-}
-
-async function callSlackFormApi<T extends SlackErrorPayload>(
-  accessToken: string,
-  method: string,
-  params: Record<string, string>,
-  signal?: AbortSignal,
-): Promise<T> {
-  const body = new URLSearchParams(params);
-  const response = await fetch(`https://slack.com/api/${method}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: body.toString(),
-    ...(signal ? { signal } : {}),
-  });
-  return parseSlackResponse<T>(response, `Slack ${method}`);
-}
-
-async function callSlackJsonApi<T extends SlackErrorPayload>(
-  accessToken: string,
-  method: string,
-  payload: Record<string, unknown>,
-): Promise<T> {
-  const response = await fetch(`https://slack.com/api/${method}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json; charset=utf-8",
-    },
-    body: JSON.stringify(payload),
-  });
-  return parseSlackResponse<T>(response, `Slack ${method}`);
-}
-
-async function fetchSlackWorkspace(accessToken: string): Promise<SlackAuthTestResponse> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10_000);
-  try {
-    return await callSlackFormApi<SlackAuthTestResponse>(accessToken, "auth.test", {}, controller.signal);
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 export function readSlackWorkspaceMetadata(raw: unknown): SlackWorkspaceMetadata | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const record = raw as Record<string, unknown>;
-  const workspaceId =
-    typeof record.workspaceId === "string" && record.workspaceId.trim().length > 0
-      ? record.workspaceId.trim()
-      : null;
+  const workspaceId = readTrimmedString(record.teamId) ?? readTrimmedString(record.workspaceId);
   if (!workspaceId) return null;
-
-  const scope = Array.isArray(record.scope)
-    ? record.scope.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
-    : [];
-
   return {
     workspaceId,
-    workspaceName: typeof record.workspaceName === "string" ? record.workspaceName : null,
-    workspaceUrl: typeof record.workspaceUrl === "string" ? record.workspaceUrl : null,
-    enterpriseId: typeof record.enterpriseId === "string" ? record.enterpriseId : null,
-    enterpriseName: typeof record.enterpriseName === "string" ? record.enterpriseName : null,
-    botUserId: typeof record.botUserId === "string" ? record.botUserId : null,
-    installedByUserId: typeof record.installedByUserId === "string" ? record.installedByUserId : null,
-    scope,
+    workspaceName: readTrimmedString(record.teamName) ?? readTrimmedString(record.workspaceName),
+    workspaceDomain: readTrimmedString(record.teamDomain),
+    enterpriseId: readTrimmedString(record.enterpriseId),
+    enterpriseName: readTrimmedString(record.enterpriseName),
+    botUserId: readTrimmedString(record.botUserId),
+    scope: (Array.isArray(record.scope) ? record.scope : (readTrimmedString(record.scope) ?? "").split(","))
+      .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+      .filter((entry) => entry.length > 0),
   };
 }
 
-export async function exchangeSlackCodeForTokens(
-  config: SlackOAuthConfig,
+export interface SlackChannel {
+  id: string;
+  name: string;
+  isPrivate: boolean;
+  isMember: boolean;
+  isArchived: boolean;
+}
+
+export interface SlackPostMessageInput {
+  channelId: string;
+  text: string;
+  blocks?: Array<Record<string, unknown>>;
+  /** Reply inside an existing thread instead of posting a new top-level message. */
+  threadTs?: string | null;
+  clientMsgId?: string | null;
+}
+
+export interface SlackPostMessageResult {
+  channelId: string;
+  messageTs: string | null;
+}
+
+type SlackTokenResponse = {
+  ok?: boolean;
+  error?: string;
+  access_token?: string;
+  refresh_token?: string;
+  expires_in?: number;
+  scope?: string;
+  token_type?: string;
+  app_id?: string;
+  bot_user_id?: string;
+  team?: {
+    id?: string;
+    name?: string;
+    domain?: string;
+  };
+  enterprise?: {
+    id?: string;
+    name?: string;
+  };
+};
+
+type SlackConversationsListResponse = {
+  ok?: boolean;
+  error?: string;
+  response_metadata?: {
+    next_cursor?: string;
+  };
+  channels?: Array<{
+    id?: string;
+    name?: string;
+    is_private?: boolean;
+    is_member?: boolean;
+    is_archived?: boolean;
+  }>;
+};
+
+type SlackPostMessageResponse = {
+  ok?: boolean;
+  error?: string;
+  channel?: string;
+  ts?: string;
+};
+
+function readTrimmedString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function parseSlackExpiry(expiresInSeconds: number | undefined): number | undefined {
+  if (typeof expiresInSeconds !== "number" || !Number.isFinite(expiresInSeconds) || expiresInSeconds <= 0) {
+    return undefined;
+  }
+  return Date.now() + expiresInSeconds * 1_000;
+}
+
+function isRetryableSlackErrorCode(code: string | null): boolean {
+  return code === "ratelimited"
+    || code === "internal_error"
+    || code === "fatal_error"
+    || code === "request_timeout"
+    || code === "service_unavailable";
+}
+
+function slackRetryableForHttpStatus(status: number): boolean {
+  return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
+}
+
+function readRetryAfterMs(response: Response): number | undefined {
+  const retryAfter = readTrimmedString(response.headers.get("retry-after"));
+  if (!retryAfter) return undefined;
+  const seconds = Number(retryAfter);
+  if (!Number.isFinite(seconds) || seconds <= 0) return undefined;
+  return Math.floor(seconds * 1_000);
+}
+
+export class SlackApiError extends Error {
+  readonly code: string;
+  readonly retryable: boolean;
+  readonly status: number;
+  readonly retryAfterMs?: number;
+
+  constructor(
+    message: string,
+    options: {
+      code: string;
+      retryable: boolean;
+      status?: number;
+      retryAfterMs?: number;
+    },
+  ) {
+    super(message);
+    this.name = "SlackApiError";
+    this.code = options.code;
+    this.retryable = options.retryable;
+    this.status = options.status ?? 500;
+    this.retryAfterMs = options.retryAfterMs;
+  }
+
+  /** Slack's error string (e.g. "invalid_auth"); alias of `code`. */
+  get slackError(): string {
+    return this.code;
+  }
+}
+
+export function isRetryableSlackError(error: unknown): boolean {
+  if (error instanceof SlackApiError) return error.retryable;
+  return error instanceof Error;
+}
+
+function buildSlackApiError(code: string | null, response: Response, fallbackMessage: string): SlackApiError {
+  return new SlackApiError(code ?? fallbackMessage, {
+    code: code ?? "slack_api_error",
+    retryable: code ? isRetryableSlackErrorCode(code) : slackRetryableForHttpStatus(response.status),
+    status: response.status,
+    retryAfterMs: readRetryAfterMs(response),
+  });
+}
+
+async function slackFetchJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(input, init);
+  } catch (error) {
+    throw new SlackApiError(
+      error instanceof Error && error.message ? error.message : "Slack request failed",
+      {
+        code: "slack_transport_error",
+        retryable: true,
+      },
+    );
+  }
+
+  const payload = await response.json().catch(async () => {
+    const bodyText = await response.text().catch(() => "");
+    throw new SlackApiError(bodyText || "Slack returned an invalid response", {
+      code: "slack_invalid_response",
+      retryable: slackRetryableForHttpStatus(response.status),
+      status: response.status,
+      retryAfterMs: readRetryAfterMs(response),
+    });
+  });
+
+  if (!response.ok) {
+    const errorCode = readTrimmedString((payload as { error?: unknown }).error);
+    throw buildSlackApiError(errorCode, response, `Slack request failed with HTTP ${response.status}`);
+  }
+
+  const ok = (payload as { ok?: unknown }).ok;
+  if (ok === false) {
+    const errorCode = readTrimmedString((payload as { error?: unknown }).error);
+    throw buildSlackApiError(errorCode, response, "Slack request was rejected");
+  }
+
+  return payload as T;
+}
+
+function requireSlackOAuthConfig(input: SlackOAuthConfig): SlackOAuthConfig {
+  if (!input.clientId || !input.clientSecret || !input.redirectUri) {
+    throw new SlackApiError("Slack OAuth is not configured", {
+      code: "slack_oauth_not_configured",
+      retryable: false,
+      status: 503,
+    });
+  }
+  return input;
+}
+
+function buildSlackTokenUrlParams(base: Record<string, string>): string {
+  const params = new URLSearchParams(base);
+  return params.toString();
+}
+
+function readSlackInstallation(data: SlackTokenResponse): SlackWorkspaceInstallation {
+  const teamId = readTrimmedString(data.team?.id);
+  const teamName = readTrimmedString(data.team?.name);
+  if (!teamId || !teamName) {
+    throw new SlackApiError("Slack OAuth response did not include workspace metadata", {
+      code: "slack_missing_team_metadata",
+      retryable: false,
+      status: 502,
+    });
+  }
+
+  return {
+    appId: readTrimmedString(data.app_id),
+    teamId,
+    teamName,
+    teamDomain: readTrimmedString(data.team?.domain),
+    enterpriseId: readTrimmedString(data.enterprise?.id),
+    enterpriseName: readTrimmedString(data.enterprise?.name),
+    botUserId: readTrimmedString(data.bot_user_id),
+    scope: readTrimmedString(data.scope),
+    tokenType: readTrimmedString(data.token_type),
+  };
+}
+
+function readSlackAccessToken(data: SlackTokenResponse): string {
+  const accessToken = readTrimmedString(data.access_token);
+  if (!accessToken) {
+    throw new SlackApiError("Slack OAuth response did not include a bot token", {
+      code: "slack_missing_access_token",
+      retryable: false,
+      status: 502,
+    });
+  }
+  return accessToken;
+}
+
+export async function exchangeSlackOAuthCode(
+  configInput: SlackOAuthConfig,
   code: string,
-): Promise<{
-  accessToken: string;
-  refreshToken?: string;
-  expiry?: number;
-  workspace: SlackWorkspaceMetadata;
-  displayName: string;
-}> {
-  const params = new URLSearchParams({
+  codeVerifier: string,
+): Promise<SlackOAuthExchangeResult> {
+  const config = requireSlackOAuthConfig(configInput);
+  const body = buildSlackTokenUrlParams({
+    grant_type: "authorization_code",
     client_id: config.clientId,
     client_secret: config.clientSecret,
     code,
     redirect_uri: config.redirectUri,
+    code_verifier: codeVerifier,
   });
 
-  const response = await fetch("https://slack.com/api/oauth.v2.access", {
+  const response = await slackFetchJson<SlackTokenResponse>(`${SLACK_API_BASE_URL}/oauth.v2.access`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: params.toString(),
+    body,
   });
-  const payload = await parseSlackResponse<SlackOAuthExchangeResponse>(response, "Slack OAuth exchange");
-  const accessToken = typeof payload.access_token === "string" ? payload.access_token.trim() : "";
-
-  if (!accessToken) {
-    throw new SlackApiError("Slack OAuth exchange returned no access token", { status: response.status });
-  }
-
-  // Slack's token exchange already returns the workspace identity. `auth.test`
-  // is useful for the richer URL/user metadata, but Slack can occasionally
-  // hold that request and return HTTP 408 immediately after an install. Do not
-  // make the OAuth browser callback wait for that optional enrichment call.
-  let auth: SlackAuthTestResponse = {};
-  try {
-    auth = await fetchSlackWorkspace(accessToken);
-  } catch (err) {
-    if (payload.team?.id) {
-      logger.warn(
-        { err },
-        "Slack auth.test failed after OAuth exchange; continuing with exchange metadata",
-      );
-    } else {
-      throw err;
-    }
-  }
-
-  const workspaceId = auth.team_id ?? payload.team?.id ?? null;
-  if (!workspaceId) {
-    throw new SlackApiError("Slack OAuth exchange did not return a workspace id", { status: 200 });
-  }
-
-  const scope = normalizeSlackScopes(payload.scope);
-  const workspace: SlackWorkspaceMetadata = {
-    workspaceId,
-    workspaceName: auth.team ?? payload.team?.name ?? null,
-    workspaceUrl: auth.url ?? null,
-    enterpriseId: payload.enterprise?.id ?? null,
-    enterpriseName: payload.enterprise?.name ?? null,
-    botUserId: payload.bot_user_id ?? auth.user_id ?? null,
-    installedByUserId: payload.authed_user?.id ?? null,
-    scope,
-  };
 
   return {
-    accessToken,
-    ...(typeof payload.refresh_token === "string" && payload.refresh_token.trim().length > 0
-      ? { refreshToken: payload.refresh_token.trim() }
-      : {}),
-    ...(typeof payload.expires_in === "number" && payload.expires_in > 0
-      ? { expiry: Date.now() + payload.expires_in * 1_000 }
-      : {}),
-    workspace,
-    displayName: workspace.workspaceName ?? workspace.workspaceId,
+    credentials: {
+      accessToken: readSlackAccessToken(response),
+      refreshToken: readTrimmedString(response.refresh_token) ?? undefined,
+      expiry: parseSlackExpiry(response.expires_in),
+    },
+    installation: readSlackInstallation(response),
   };
 }
 
-export async function listSlackChannels(accessToken: string): Promise<SlackChannelSummary[]> {
-  const channels = new Map<string, SlackChannelSummary>();
-  let cursor = "";
-  let pageCount = 0;
+export async function refreshSlackAccessToken(
+  configInput: SlackOAuthConfig,
+  refreshToken: string,
+): Promise<{
+  accessToken: string;
+  refreshToken?: string;
+  expiry?: number;
+}> {
+  const config = requireSlackOAuthConfig(configInput);
+  const body = buildSlackTokenUrlParams({
+    grant_type: "refresh_token",
+    client_id: config.clientId,
+    client_secret: config.clientSecret,
+    refresh_token: refreshToken,
+  });
+
+  const response = await slackFetchJson<SlackTokenResponse>(`${SLACK_API_BASE_URL}/oauth.v2.access`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body,
+  });
+
+  return {
+    accessToken: readSlackAccessToken(response),
+    refreshToken: readTrimmedString(response.refresh_token) ?? undefined,
+    expiry: parseSlackExpiry(response.expires_in),
+  };
+}
+
+async function getFreshSlackAccessToken(
+  db: Db,
+  companyId: string,
+): Promise<string> {
+  const registry = connectorRegistryService(db);
+  const connector = await registry.getByType(companyId, "slack", null);
+  if (!connector || connector.status !== "connected") {
+    throw new SlackApiError("Slack is not connected for this company", {
+      code: "slack_not_connected",
+      retryable: false,
+      status: 409,
+    });
+  }
+
+  const credentials = await registry.getCredentialsAsync(companyId, "slack");
+  if (!credentials?.accessToken) {
+    throw new SlackApiError("Slack credentials are missing", {
+      code: "slack_missing_credentials",
+      retryable: false,
+      status: 409,
+    });
+  }
+
+  const expiresAt = typeof credentials.expiry === "number" ? credentials.expiry : null;
+  if (!expiresAt || expiresAt > Date.now() + SLACK_EXPIRY_REFRESH_SKEW_MS) {
+    return credentials.accessToken;
+  }
+
+  if (!credentials.refreshToken) {
+    throw new SlackApiError("Slack token expired and cannot be refreshed", {
+      code: "slack_refresh_token_missing",
+      retryable: false,
+      status: 409,
+    });
+  }
+
+  const refreshed = await refreshSlackAccessToken({
+    clientId: process.env.SLACK_CLIENT_ID ?? "",
+    clientSecret: process.env.SLACK_CLIENT_SECRET ?? "",
+    redirectUri: `${process.env.PAPERCLIP_API_URL?.trim()
+      || process.env.PAPERCLIP_RUNTIME_API_URL?.trim()
+      || `http://127.0.0.1:${process.env.PORT ?? 3100}`}/api/connectors/slack/callback`,
+  }, credentials.refreshToken);
+
+  await registry.upsert({
+    companyId,
+    type: "slack",
+    status: "connected",
+    credentials: {
+      accessToken: refreshed.accessToken,
+      refreshToken: refreshed.refreshToken ?? credentials.refreshToken,
+      expiry: refreshed.expiry,
+    },
+  });
+  await registry.updateStatus(companyId, "slack", "connected");
+  return refreshed.accessToken;
+}
+
+export async function listSlackChannels(db: Db, companyId: string): Promise<SlackChannel[]> {
+  const accessToken = await getFreshSlackAccessToken(db, companyId);
+  const channels: SlackChannel[] = [];
+  let cursor: string | null = null;
 
   do {
-    pageCount += 1;
-    const payload = await callSlackFormApi<SlackConversationsListResponse>(
-      accessToken,
-      "conversations.list",
+    const params = new URLSearchParams({
+      exclude_archived: "true",
+      limit: "200",
+      types: "public_channel,private_channel",
+      ...(cursor ? { cursor } : {}),
+    });
+    const response = await slackFetchJson<SlackConversationsListResponse>(
+      `${SLACK_API_BASE_URL}/conversations.list?${params.toString()}`,
       {
-        exclude_archived: "true",
-        limit: "200",
-        types: "public_channel",
-        ...(cursor ? { cursor } : {}),
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
       },
     );
 
-    for (const channel of payload.channels ?? []) {
-      if (channel.is_archived) continue;
-      // Defense-in-depth: API is restricted to public_channel, but skip any
-      // private channels that may slip through (e.g. if scope ever widens).
-      if (channel.is_private) continue;
-      const id = typeof channel.id === "string" ? channel.id.trim() : "";
-      const name = typeof channel.name === "string" ? channel.name.trim() : "";
+    for (const channel of response.channels ?? []) {
+      const id = readTrimmedString(channel.id);
+      const name = readTrimmedString(channel.name);
       if (!id || !name) continue;
-
-      const summary: SlackChannelSummary = {
+      channels.push({
         id,
         name,
-        channelType: "public",
-        isMember: Boolean(channel.is_member),
-        memberCount:
-          typeof channel.num_members === "number" && Number.isFinite(channel.num_members)
-            ? channel.num_members
-            : null,
-      };
-
-      channels.set(summary.id, summary);
+        isPrivate: channel.is_private === true,
+        isMember: channel.is_member === true,
+        isArchived: channel.is_archived === true,
+      });
     }
 
-    cursor = payload.response_metadata?.next_cursor?.trim() ?? "";
-  } while (cursor && pageCount < 20);
+    cursor = readTrimmedString(response.response_metadata?.next_cursor);
+  } while (cursor);
 
-  if (cursor) {
-    logger.warn({ remainingCursor: cursor }, "Slack channel list pagination truncated after 20 pages");
-  }
-
-  return [...channels.values()].sort((left, right) => left.name.localeCompare(right.name));
+  channels.sort((left, right) => left.name.localeCompare(right.name));
+  return channels;
 }
 
 export async function postSlackMessage(
-  accessToken: string,
-  input: {
-    channelId: string;
-    text: string;
-    blocks?: Array<Record<string, unknown>>;
-    threadTs?: string | null;
-    clientMsgId?: string | null;
-  },
-): Promise<SlackMessagePostResult> {
-  const payload = await callSlackJsonApi<SlackChatPostMessageResponse>(accessToken, "chat.postMessage", {
-    channel: input.channelId,
-    text: input.text,
-    ...(input.blocks && input.blocks.length > 0 ? { blocks: input.blocks } : {}),
-    ...(input.threadTs ? { thread_ts: input.threadTs } : {}),
-    ...(input.clientMsgId ? { client_msg_id: input.clientMsgId } : {}),
-    unfurl_links: false,
-    unfurl_media: false,
+  db: Db,
+  companyId: string,
+  input: SlackPostMessageInput,
+): Promise<SlackPostMessageResult> {
+  const accessToken = await getFreshSlackAccessToken(db, companyId);
+  const response = await slackFetchJson<SlackPostMessageResponse>(`${SLACK_API_BASE_URL}/chat.postMessage`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify({
+      channel: input.channelId,
+      text: input.text,
+      ...(Array.isArray(input.blocks) && input.blocks.length > 0 ? { blocks: input.blocks } : {}),
+      ...(input.threadTs ? { thread_ts: input.threadTs } : {}),
+      ...(input.clientMsgId ? { client_msg_id: input.clientMsgId } : {}),
+      unfurl_links: false,
+      unfurl_media: false,
+    }),
   });
 
-  const channel = typeof payload.channel === "string" ? payload.channel : input.channelId;
-  const ts = typeof payload.ts === "string" ? payload.ts : null;
-  if (!ts) {
-    throw new SlackApiError("Slack chat.postMessage returned no message timestamp", { status: 200 });
-  }
-  return { channel, ts };
-}
-
-export function isRetryableSlackError(error: unknown): boolean {
-  if (error instanceof SlackApiError) {
-    if (error.status === 429) return true;
-    if (error.status >= 500) return true;
-    return error.slackError === "internal_error" || error.slackError === "fatal_error";
-  }
-  return error instanceof Error;
-}
-
-export async function waitForSlackRetry(error: unknown, attempt: number): Promise<void> {
-  const retryAfterMs = error instanceof SlackApiError ? error.retryAfterMs : null;
-  const backoffMs = retryAfterMs ?? Math.min(250 * (attempt + 1), 1_000);
-  await new Promise((resolve) => setTimeout(resolve, backoffMs));
+  return {
+    channelId: readTrimmedString(response.channel) ?? input.channelId,
+    messageTs: readTrimmedString(response.ts),
+  };
 }

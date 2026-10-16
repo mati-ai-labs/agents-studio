@@ -455,9 +455,9 @@ export function Connectors() {
             <div className="truncate text-xs font-medium">
               {workspace?.workspaceName ?? "Company workspace"}
             </div>
-            {workspace?.workspaceUrl ? (
+            {workspace?.workspaceDomain ? (
               <div className="truncate text-[11px] text-muted-foreground">
-                {workspace.workspaceUrl}
+                {workspace.workspaceDomain}.slack.com
               </div>
             ) : null}
           </div>

@@ -28,11 +28,9 @@ export function slackChannelRoutes(db: Db): Router {
       if (!connector || connector.status !== "connected") { res.status(409).json({ error: "Connected Slack connector required" }); return; }
       const workspace = readSlackWorkspaceMetadata(connector.config);
       if (!workspace) { res.status(409).json({ error: "Slack connector has no workspace metadata" }); return; }
-      const credentials = await registry.getCredentialsForAgentAsync(id, "slack");
-      if (!credentials) { res.status(409).json({ error: "Slack credentials unavailable" }); return; }
       const requestedChannelId = req.params.channelId ?? (typeof req.body.channelId === "string" ? req.body.channelId : "");
-      const channel = (await listSlackChannels(credentials.credentials.accessToken)).find((item) => item.id === requestedChannelId);
-      if (!channel || channel.channelType !== "public" || !channel.isMember) { res.status(422).json({ error: "Slack channel must be a joined public channel" }); return; }
+      const channel = (await listSlackChannels(db, id)).find((item) => item.id === requestedChannelId);
+      if (!channel || channel.isPrivate || !channel.isMember) { res.status(422).json({ error: "Slack channel must be a joined public channel" }); return; }
       const route = await service.upsert({ companyId: id, connectorId: connector.id, workspaceId: workspace.workspaceId, channelId: channel.id, channelName: channel.name, assigneeAgentId: input.assigneeAgentId, enabled: input.enabled, createdByUserId: req.actor.userId ?? null });
       res.json(route);
     } catch (error) { next(error); }

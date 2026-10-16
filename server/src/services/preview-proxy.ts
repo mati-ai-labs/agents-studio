@@ -146,13 +146,41 @@ export function rewritePreviewSetCookie(value: string, slug: string): string {
   });
 }
 
+const PREVIEW_SINGLE_URL_ATTRS =
+  "href|src|action|poster|data-src|data-lazy-src|data-original|data-bg|data-lazyload";
+const PREVIEW_SRCSET_ATTRS = "srcset|imagesrcset|data-srcset";
+
+/**
+ * Rewrite root-relative references inside the preview HTML shell so every
+ * asset stays under the lease prefix. In addition to the single-URL
+ * attributes and inline `url(...)`/`fetch(...)`/`import(...)` calls, this
+ * handles the comma-separated `srcset`/`imagesrcset`/`data-srcset` lists that
+ * responsive-image frameworks emit, plus the common lazy-load attribute names.
+ */
 export function rewritePreviewHtml(html: string, slug: string): string {
   const prefix = previewPathPrefix(slug);
   const prefixRootReference = (_match: string, start: string) => `${start}${prefix}/`;
+
   let rewritten = html.replace(
-    /((?:href|src|action|poster|data-src)\s*=\s*["'])\/(?!\/|preview\/)/gi,
+    new RegExp(
+      `((?:${PREVIEW_SINGLE_URL_ATTRS})\\s*=\\s*["'])\\/(?!\\/|preview\\/)`,
+      "gi",
+    ),
     prefixRootReference,
   );
+
+  // srcset-style lists: "…, /path/a.png 1x, /path/b.png 2x". Each entry keeps
+  // its descriptor; data: URLs (which contain commas and slashes in base64)
+  // are left untouched because they never begin with a root-relative slash.
+  rewritten = rewritten.replace(
+    new RegExp(
+      `((?:${PREVIEW_SRCSET_ATTRS})\\s*=\\s*["'])([^"']*)(["'])`,
+      "gi",
+    ),
+    (_match, start: string, value: string, end: string) =>
+      `${start}${rewritePreviewSrcset(value, prefix)}${end}`,
+  );
+
   rewritten = rewritten.replace(
     /((?:fetch|import)\s*\(\s*["'])\/(?!\/|preview\/)/gi,
     prefixRootReference,
@@ -161,6 +189,388 @@ export function rewritePreviewHtml(html: string, slug: string): string {
     /(url\(\s*["']?)\/(?!\/|preview\/)/gi,
     prefixRootReference,
   );
+}
+
+/**
+ * Prefix every root-relative URL in a srcset attribute value. The separator
+ * class deliberately excludes `/` so already-prefixed, external
+ * (`https://…`, `//cdn…`) and `data:` URLs are never split.
+ */
+function rewritePreviewSrcset(value: string, prefix: string): string {
+  return value.replace(
+    /(^|[\s,"'])(\/)(?!\/|preview\/)([^\s,"']+)/g,
+    (_match, lead: string, slash: string, path: string) =>
+      `${lead}${prefix}${slash}${path}`,
+  );
+}
+
+/**
+ * Vite (and most dev bundlers) emit absolute root-relative imports inside
+ * JavaScript and CSS responses, not only in the HTML shell. Those imports
+ * must stay inside the lease prefix or the browser requests them from the
+ * Paperclip root and receives the control-plane HTML document instead.
+ *
+ * IMPORTANT: this must NOT be a blind `quote + "/"` string rewrite. Dependency
+ * bundles contain regex literals, template literals, and comments that are
+ * legitimately full of `"/"` sequences (e.g. `/can't redefine ... "solana"/`).
+ * A global regex corrupts those into `"solana"/preview/<slug>/` and produces
+ * `Invalid regular expression flags`, blank pages, and broken HMR. We therefore
+ * lex the source and rewrite ONLY:
+ *   - static import/export module specifiers (`from "/x"`, `import "/x"`,
+ *     `export ... from "/x"`),
+ *   - dynamic `import("/x")` specifiers,
+ *   - `new URL("/x", import.meta.url)` asset references,
+ *   - Vite-injected HMR server hosts (`127.0.0.1:<port>/` / `localhost:<port>/`)
+ *     so the browser connects through the preview instead of the loopback.
+ * Regex literals, comments, template contents, arbitrary strings, and source
+ * maps are never rewritten.
+ */
+type RewriteModuleToken =
+  | { kind: "id" | "kw" | "num" | "str" | "template" | "regex"; value: string }
+  | { kind: "punct"; value: string };
+
+function regexAllowedAfter(previous: RewriteModuleToken | undefined): boolean {
+  if (!previous) return true;
+  if (previous.kind === "punct") {
+    return !(previous.value === ")" || previous.value === "]" || previous.value === "}" || previous.value === "++" || previous.value === "--");
+  }
+  return false;
+}
+
+function isModuleSpecifierString(history: RewriteModuleToken[]): boolean {
+  const last = history[history.length - 1];
+  if (!last) return false;
+  if ((last.kind === "id" || last.kind === "kw") && last.value === "from") return true;
+  if (last.kind === "kw" && (last.value === "import" || last.value === "export")) return true;
+  if (last.kind === "punct" && last.value === "(") {
+    const prev = history[history.length - 2];
+    if (!prev) return false;
+    if (prev.kind === "kw" && prev.value === "import") return true;
+    if (prev.kind === "id" && prev.value === "URL") {
+      const prev3 = history[history.length - 3];
+      return !!(prev3 && prev3.kind === "kw" && prev3.value === "new");
+    }
+  }
+  return false;
+}
+
+/**
+ * True when the token stream shows the string being read is the CSS payload
+ * of a Vite CSS JS module, e.g. `const __vite__css = "…css…"`. Vite compiles
+ * `.css` imports to JS modules whose stylesheet text lives in a single string
+ * literal, with root-relative asset URLs inside (`url("/fonts/x.woff2")`,
+ * `@import "/styles/x.css"`). Those must be rewritten along with the module.
+ */
+function isViteCssString(history: RewriteModuleToken[]): boolean {
+  const last = history[history.length - 1];
+  if (!last) return false;
+  if (last.kind === "id" && last.value === "__vite__css") return true;
+  return (
+    last.kind === "punct" &&
+    last.value === "=" &&
+    history[history.length - 2]?.kind === "id" &&
+    history[history.length - 2]?.value === "__vite__css"
+  );
+}
+
+/**
+ * True when the token stream shows the string being read is the default
+ * export of a Vite asset module, e.g. `export default "/src/assets/logo.png"`.
+ * Vite compiles `import logo from "./logo.png"` to a tiny JS module whose only
+ * body is the root-relative URL of the served asset. That URL must be prefixed
+ * so the browser requests it under the lease instead of the Paperclip root.
+ */
+function isDefaultExportAssetString(history: RewriteModuleToken[]): boolean {
+  const last = history[history.length - 1];
+  if (!last || last.kind !== "kw" || last.value !== "default") return false;
+  const prev = history[history.length - 2];
+  return !!prev && prev.kind === "kw" && prev.value === "export";
+}
+
+// Extensions Vite serves as static assets when imported as URLs.
+const PREVIEW_ASSET_EXTENSION_RE =
+  /\.(?:png|jpe?g|gif|webp|avif|svg|ico|woff2?|ttf|otf|eot|css|js|mjs|mp4|webm|mp3|wav|ogg|pdf)(?:[?#].*)?$/i;
+
+/**
+ * True when `value` is a root-relative URL that points at a static asset (the
+ * kind Vite emits as the default export of an asset module). Asset-directory
+ * paths and known asset extensions match; API routes, external/protocol-relative
+ * URLs, and already-prefixed paths do not.
+ */
+function isRootRelativeAssetUrl(value: string, prefix: string): boolean {
+  if (!value.startsWith("/") || value.startsWith("//")) return false;
+  if (value.startsWith(prefix + "/") || /^\/preview\//.test(value)) return false;
+  return (
+    /\/(?:assets|public|images|img|fonts|media|static|files)\//.test(value) ||
+    PREVIEW_ASSET_EXTENSION_RE.test(value)
+  );
+}
+
+const HMR_LOOPBACK_RE = /^(?:127\.0\.0\.1|localhost):(\d+)\/?$/;
+
+export function rewritePreviewModuleReferences(
+  source: string,
+  slug: string,
+  opts?: { upstreamPort?: number; browserHost?: string | null },
+): string {
+  const prefix = previewPathPrefix(slug);
+  const out: string[] = [];
+  let i = 0;
+  const n = source.length;
+  const history: RewriteModuleToken[] = [];
+
+  const pushToken = (token: RewriteModuleToken) => {
+    history.push(token);
+    if (history.length > 32) history.shift();
+  };
+
+  while (i < n) {
+    const c = source[i];
+
+    // Whitespace
+    if (/\s/.test(c)) {
+      out.push(c);
+      i++;
+      continue;
+    }
+
+    // Line comment
+    if (c === "/" && source[i + 1] === "/") {
+      const j = source.indexOf("\n", i);
+      const end = j === -1 ? n : j;
+      out.push(source.slice(i, end));
+      i = end;
+      continue;
+    }
+
+    // Block comment
+    if (c === "/" && source[i + 1] === "*") {
+      const j = source.indexOf("*/", i + 2);
+      const end = j === -1 ? n : j + 2;
+      out.push(source.slice(i, end));
+      i = end;
+      continue;
+    }
+
+    // String literal (single or double quote)
+    if (c === '"' || c === "'") {
+      const quote = c;
+      let j = i + 1;
+      while (j < n && source[j] !== quote) {
+        if (source[j] === "\\") {
+          j += 2;
+          continue;
+        }
+        j++;
+      }
+      const end = j < n ? j + 1 : n;
+      const raw = source.slice(i, end);
+      let rewritten = raw;
+      const inner = raw.slice(1, raw.length - 1);
+
+      if (isModuleSpecifierString(history)) {
+        if (inner.startsWith("/") && !inner.startsWith("//") && !inner.startsWith(prefix)) {
+          rewritten = quote + prefix + inner + quote;
+        }
+      } else if (isViteCssString(history)) {
+        // Vite CSS JS module — the string body is stylesheet text. Rewrite its
+        // root-relative url()/@import references so fonts, images, and @imports
+        // resolve under the lease prefix (quote characters stay escaped as
+        // Vite emitted them; only the referenced paths change).
+        rewritten = quote + rewritePreviewCssReferences(inner, slug) + quote;
+      } else if (isDefaultExportAssetString(history)) {
+        // Vite asset module — the string is the served asset URL
+        // (`export default "/src/assets/logo.png"`). Prefix root-relative asset
+        // paths; API strings, external/data URLs, and non-asset paths pass through.
+        if (isRootRelativeAssetUrl(inner, prefix)) {
+          rewritten = quote + prefix + inner + quote;
+        }
+      } else if (opts?.browserHost && opts.upstreamPort && HMR_LOOPBACK_RE.test(inner)) {
+        const match = HMR_LOOPBACK_RE.exec(inner)!;
+        if (Number(match[1]) === opts.upstreamPort) {
+          rewritten = quote + `${opts.browserHost}${prefix}/` + quote;
+        }
+      }
+
+      out.push(rewritten);
+      pushToken({ kind: "str", value: "s" });
+      i = end;
+      continue;
+    }
+
+    // Template literal — never rewrite contents; just skip over it (incl. ${}).
+    if (c === "`") {
+      let j = i + 1;
+      let depth = 0;
+      let s = "`";
+      while (j < n) {
+        if (source[j] === "\\") {
+          s += source.slice(j, j + 2);
+          j += 2;
+          continue;
+        }
+        if (source[j] === "$" && source[j + 1] === "{") {
+          depth++;
+          s += "${";
+          j += 2;
+          continue;
+        }
+        if (source[j] === "}" && depth > 0) {
+          depth--;
+          s += "}";
+          j++;
+          continue;
+        }
+        if (source[j] === "`" && depth === 0) {
+          s += "`";
+          j++;
+          break;
+        }
+        s += source[j];
+        j++;
+      }
+      out.push(s);
+      pushToken({ kind: "template", value: "t" });
+      i = j;
+      continue;
+    }
+
+    // Regex literal (only when in expression position).
+    if (c === "/" && regexAllowedAfter(history[history.length - 1])) {
+      let j = i + 1;
+      let k = j;
+      let closed = false;
+      while (k < n && source[k] !== "\n") {
+        if (source[k] === "\\") {
+          k += 2;
+          continue;
+        }
+        if (source[k] === "[") {
+          k++;
+          while (k < n && source[k] !== "]" && source[k] !== "\n") {
+            if (source[k] === "\\") k += 2;
+            else k++;
+          }
+          k++;
+          continue;
+        }
+        if (source[k] === "/") {
+          closed = true;
+          break;
+        }
+        k++;
+      }
+      if (closed) {
+        let e = k + 1;
+        while (e < n && /[a-z]/i.test(source[e])) e++;
+        out.push(source.slice(i, e));
+        pushToken({ kind: "regex", value: "r" });
+        i = e;
+        continue;
+      }
+      // Division operator — treat as plain punctuation.
+      out.push(c);
+      i++;
+      continue;
+    }
+
+    // Identifier / keyword
+    if (/[A-Za-z_$]/.test(c) || c.charCodeAt(0) > 127) {
+      let j = i;
+      while (j < n && /[A-Za-z0-9_$]/.test(source[j])) j++;
+      const word = source.slice(i, j);
+      const keywords = new Set([
+        "import", "from", "export", "new", "const", "let", "var", "function",
+        "return", "if", "else", "class", "async", "await", "of", "in",
+        "typeof", "instanceof", "throw", "try", "catch", "finally", "switch",
+        "case", "default", "break", "continue", "delete", "void", "this",
+        "super", "extends", "yield", "static", "get", "set", "do", "while",
+        "for", "with", "debugger", "true", "false", "null", "undefined",
+      ]);
+      out.push(word);
+      pushToken({ kind: keywords.has(word) ? "kw" : "id", value: word });
+      i = j;
+      continue;
+    }
+
+    // Number
+    if (/[0-9]/.test(c)) {
+      let j = i;
+      while (j < n && /[0-9a-fA-FxXoObB.eE_+-]/.test(source[j])) j++;
+      out.push(source.slice(i, j));
+      pushToken({ kind: "num", value: "n" });
+      i = j;
+      continue;
+    }
+
+    // Punctuation (including ++ / --)
+    if ("(){}[];,<>=!+-*%&|^~?:.".includes(c)) {
+      let tok = c;
+      if ((c === "+" && source[i + 1] === "+") || (c === "-" && source[i + 1] === "-")) {
+        tok = c + c;
+      }
+      out.push(tok);
+      pushToken({ kind: "punct", value: tok });
+      i += tok.length;
+      continue;
+    }
+
+    // Anything else (rare unicode operators, etc.) — pass through untouched.
+    out.push(c);
+    i++;
+  }
+
+  return out.join("");
+}
+
+/**
+ * Rewrite root-relative references inside CSS so they stay under the preview
+ * lease prefix. CSS has no regex literals, so a targeted rewrite is safe (it
+ * cannot corrupt JS-style literals).
+ *
+ * Handled forms:
+ *   - `url(/images/x.png)`, `url("/fonts/x.woff2")`, `url('/fonts/x.woff2')`,
+ *     including the JS-escaped `\"` / `\'` quotes emitted inside Vite
+ *     `__vite__css` string payloads,
+ *   - `@import "/styles/other.css"` and `@import url("/styles/other.css")`.
+ *
+ * External and special URLs (`https:`, `http:`, protocol-relative `//`,
+ * `data:`, `blob:`) and already-prefixed `/preview/<slug>/…` paths are left
+ * untouched.
+ */
+export function rewritePreviewCssReferences(source: string, slug: string): string {
+  const prefix = previewPathPrefix(slug);
+  return source
+    // url( ... ) with an optional quoted (incl. JS-escaped) argument.
+    .replace(
+      /url\(\s*(\\?["']?)(.*?)\1\s*\)/gi,
+      (_match, quote: string, url: string) =>
+        `url(${quote}${prefixCssPath(url, prefix)}${quote})`,
+    )
+    // @import "<path>" — bare string form (the url(...) form is matched above).
+    .replace(
+      /(@import\s+)(\\?["'])(.*?)\2/gi,
+      (_match, lead: string, quote: string, url: string) =>
+        `${lead}${quote}${prefixCssPath(url, prefix)}${quote}`,
+    );
+}
+
+/**
+ * Prefix `path` with the lease prefix when it is a root-relative URL; return
+ * it unchanged for external, protocol-relative, data/blob, and already-prefixed
+ * URLs.
+ */
+function prefixCssPath(path: string, prefix: string): string {
+  const trimmed = path.trim();
+  if (
+    !trimmed.startsWith("/") ||
+    trimmed.startsWith("//") ||
+    trimmed.startsWith(prefix + "/") ||
+    /^\/preview\//.test(trimmed)
+  ) {
+    return path;
+  }
+  return `${prefix}${path}`;
 }
 
 function getSetCookies(headers: Headers): string[] {
@@ -251,7 +661,11 @@ export async function proxyPreviewHttp(
   }
 
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-  const rewriteBody = contentType.includes("text/html");
+  const rewriteHtml = contentType.includes("text/html");
+  const rewriteJs =
+    contentType.includes("javascript") || contentType.includes("ecmascript");
+  const rewriteCss = contentType.includes("text/css");
+  const rewriteBody = rewriteHtml || rewriteJs || rewriteCss;
   res.status(response.status);
   res.setHeader("Cache-Control", "no-store");
   copyPreviewResponseHeaders(response, res, target.slug, targetOrigin, rewriteBody);
@@ -261,9 +675,27 @@ export async function proxyPreviewHttp(
     return;
   }
 
-  if (rewriteBody) {
+  if (rewriteHtml) {
     const html = await response.text();
     res.end(rewritePreviewHtml(html, target.slug));
+    return;
+  }
+
+  if (rewriteJs) {
+    const source = await response.text();
+    const forwardedHost = req.headers["x-forwarded-host"];
+    const hostHeader = req.headers["host"];
+    const browserHost =
+      (Array.isArray(forwardedHost) ? forwardedHost[0] : forwardedHost)?.split(",")[0]?.trim() ||
+      (Array.isArray(hostHeader) ? hostHeader[0] : hostHeader)?.split(",")[0]?.trim() ||
+      null;
+    res.end(rewritePreviewModuleReferences(source, target.slug, { upstreamPort: port, browserHost }));
+    return;
+  }
+
+  if (rewriteCss) {
+    const css = await response.text();
+    res.end(rewritePreviewCssReferences(css, target.slug));
     return;
   }
 

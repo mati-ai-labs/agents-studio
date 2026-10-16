@@ -56,7 +56,30 @@ const SIDEBAR_AGENT_GROUPS = [
   "Growth(GTM + Marketing)",
 ] as const;
 
-type SidebarAgentGroup = (typeof SIDEBAR_AGENT_GROUPS)[number];
+type SidebarAgentGroup = string;
+
+/** Promise One Agent Suite groups its research pipeline agents by layer. */
+const PROMISE_ONE_COMPANY_ID = "bb0eb340-f952-4a50-a92c-7bf9d7ae44a4";
+const PROMISE_ONE_AGENT_GROUPS = [
+  "Layered Research Agents",
+  "Orchestration & Support Agents",
+  "Other Agents",
+] as const;
+
+function groupPromiseOneAgent(agent: Agent): SidebarAgentGroup {
+  const name = agent.name.trim();
+  if (/^L[0-8]\b/i.test(name)) return "Layered Research Agents";
+  if (/\b(orchestrator|data (sources )?discovery|niche scoring)\b/i.test(name)) return "Orchestration & Support Agents";
+  return "Other Agents";
+}
+
+function agentGroupsForCompany(companyId: string | null | undefined): readonly SidebarAgentGroup[] {
+  return companyId === PROMISE_ONE_COMPANY_ID ? PROMISE_ONE_AGENT_GROUPS : SIDEBAR_AGENT_GROUPS;
+}
+
+function groupAgentForCompany(agent: Agent, companyId: string | null | undefined): SidebarAgentGroup {
+  return companyId === PROMISE_ONE_COMPANY_ID ? groupPromiseOneAgent(agent) : groupAgent(agent);
+}
 
 function groupAgent(agent: Agent): SidebarAgentGroup {
   const combined = `${agent.name} ${agent.role ?? ""} ${agent.title ?? ""} ${agent.capabilities ?? ""}`.toLowerCase();
@@ -227,13 +250,8 @@ function SidebarAgentItem({
 export function SidebarAgents() {
   const [open, setOpen] = useState(true);
   const [pendingAgentIds, setPendingAgentIds] = useState<Set<string>>(() => new Set());
-  const [groupOpen, setGroupOpen] = useState<Record<SidebarAgentGroup, boolean>>(() => ({
-    "Market Signals Research": true,
-    "Innovative Concepts Ideation": true,
-    "Product Team (Engineering & Design)": true,
-    "Concept Validation": true,
-    "Growth(GTM + Marketing)": true,
-  }));
+  // Groups start expanded; only explicit collapses are tracked.
+  const [groupOpen, setGroupOpen] = useState<Record<SidebarAgentGroup, boolean>>({});
   const queryClient = useQueryClient();
   const { selectedCompanyId } = useCompany();
   const { openNewAgent } = useDialogActions();
@@ -290,14 +308,15 @@ export function SidebarAgents() {
     () => sortAgents(orderedAgents, sortMode),
     [orderedAgents, sortMode],
   );
+  const agentGroups = agentGroupsForCompany(selectedCompanyId);
   const groupedAgents = useMemo(() => {
     const grouped = new Map<SidebarAgentGroup, Agent[]>();
-    for (const group of SIDEBAR_AGENT_GROUPS) grouped.set(group, []);
+    for (const group of agentGroups) grouped.set(group, []);
     for (const agent of sortedAgents) {
-      grouped.get(groupAgent(agent))?.push(agent);
+      grouped.get(groupAgentForCompany(agent, selectedCompanyId))?.push(agent);
     }
     return grouped;
-  }, [sortedAgents]);
+  }, [agentGroups, selectedCompanyId, sortedAgents]);
 
   const agentMatch = location.pathname.match(/^\/(?:[^/]+\/)?agents\/([^/]+)(?:\/([^/]+))?/);
   const activeAgentId = agentMatch?.[1] ?? null;
@@ -411,9 +430,9 @@ export function SidebarAgents() {
         onRadioValueChange: persistSortMode,
       }}
     >
-      {SIDEBAR_AGENT_GROUPS.map((group) => {
+      {agentGroups.map((group) => {
         const agentsInGroup = groupedAgents.get(group) ?? [];
-        const isGroupOpen = groupOpen[group] ?? false;
+        const isGroupOpen = groupOpen[group] ?? true;
         return (
           <div key={group} className="pt-2 first:pt-0">
             <button

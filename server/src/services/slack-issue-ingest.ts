@@ -39,12 +39,11 @@ export async function ingestSlackIssue(db: Db, input: SlackIssueIngestInput) {
       originKind: "slack_thread",
       originId,
       originFingerprint: input.eventId,
-      slackCompletion: {
-        workspaceId: input.workspaceId,
-        workspaceName: null,
+      // Report completion back into the originating Slack thread.
+      completionDestination: {
+        kind: "slack",
         channelId: input.channelId,
         channelName: input.channelName,
-        channelType: "public",
         threadTs: input.threadTs,
       },
     });
