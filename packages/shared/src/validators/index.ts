@@ -555,6 +555,7 @@ export {
 
 export {
   createApprovalSchema,
+  workspaceRuntimeConfigApprovalPayloadSchema,
   resolveApprovalSchema,
   requestApprovalRevisionSchema,
   resubmitApprovalSchema,

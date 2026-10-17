@@ -5,6 +5,7 @@ import {
   addApprovalCommentSchema,
   createApprovalSchema,
   requestApprovalRevisionSchema,
+  workspaceRuntimeConfigApprovalPayloadSchema,
   resolveApprovalSchema,
   resubmitApprovalSchema,
 } from "@paperclipai/shared";
@@ -16,6 +17,7 @@ import {
   heartbeatService,
   issueApprovalService,
   logActivity,
+  projectService,
   secretService,
 } from "../services/index.js";
 import { assertBoard, assertCompanyAccess, getAccessibleResource, getActorInfo, hasCompanyAccess } from "./authz.js";
@@ -132,6 +134,24 @@ export function approvalRoutes(
       : [];
     const uniqueIssueIds = Array.from(new Set(issueIds));
     const { issueIds: _issueIds, ...approvalInput } = req.body;
+    if (approvalInput.type === "workspace_runtime_config") {
+      const parsed = workspaceRuntimeConfigApprovalPayloadSchema.safeParse(approvalInput.payload);
+      if (!parsed.success) {
+        res.status(422).json({
+          error: "workspace_runtime_config payload requires projectId, workspaceId and workspaceRuntime.services[] with name and command",
+          details: parsed.error.issues,
+        });
+        return;
+      }
+      const project = await projectService(db).getById(parsed.data.projectId);
+      const workspace = project?.companyId === companyId
+        ? (await projectService(db).listWorkspaces(project.id)).find((entry) => entry.id === parsed.data.workspaceId)
+        : null;
+      if (!workspace) {
+        res.status(404).json({ error: "Project workspace not found" });
+        return;
+      }
+    }
     const normalizedPayload =
       approvalInput.type === "hire_agent"
         ? await secretsSvc.normalizeHireApprovalPayloadForPersistence(

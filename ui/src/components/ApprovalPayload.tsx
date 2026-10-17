@@ -6,6 +6,7 @@ export const typeLabel: Record<string, string> = {
   approve_ceo_strategy: "CEO Strategy",
   budget_override_required: "Budget Override",
   request_board_approval: "Board Approval",
+  workspace_runtime_config: "Workspace Services",
 };
 
 function firstNonEmptyString(...values: unknown[]): string | null {
@@ -41,6 +42,7 @@ export const typeIcon: Record<string, typeof UserPlus> = {
   approve_ceo_strategy: Lightbulb,
   budget_override_required: ShieldAlert,
   request_board_approval: ShieldCheck,
+  workspace_runtime_config: ShieldAlert,
 };
 
 export const defaultTypeIcon = ShieldCheck;
@@ -148,6 +150,39 @@ export function BudgetOverridePayload({ payload }: { payload: Record<string, unk
   );
 }
 
+function WorkspaceRuntimeConfigPayload({ payload }: { payload: Record<string, unknown> }) {
+  const runtime =
+    typeof payload.workspaceRuntime === "object" && payload.workspaceRuntime !== null
+      ? (payload.workspaceRuntime as Record<string, unknown>)
+      : {};
+  const services = Array.isArray(runtime.services)
+    ? runtime.services.filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null)
+    : [];
+  const summary = firstNonEmptyString(payload.summary);
+  return (
+    <div className="mt-4 space-y-3 text-sm">
+      {summary && <p className="text-muted-foreground">{summary}</p>}
+      <p className="text-xs text-muted-foreground">
+        Approving lets agents run these commands on the host for this project workspace.
+      </p>
+      {services.map((service, index) => (
+        <div key={index} className="space-y-1 rounded-md border border-border p-3">
+          <div className="font-medium">{firstNonEmptyString(service.name) ?? `Service ${index + 1}`}</div>
+          <pre className="whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs">
+            {firstNonEmptyString(service.command) ?? ""}
+          </pre>
+          <div className="text-xs text-muted-foreground">
+            cwd: {firstNonEmptyString(service.cwd) ?? "."}
+            {typeof service.expose === "object" && service.expose !== null
+              ? ` · expose: ${firstNonEmptyString((service.expose as Record<string, unknown>).type) ?? "none"}`
+              : ""}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function BoardApprovalPayload({
   payload,
   hideTitle = false,
@@ -239,6 +274,7 @@ export function ApprovalPayloadRenderer({
   hidePrimaryTitle?: boolean;
 }) {
   if (type === "hire_agent") return <HireAgentPayload payload={payload} />;
+  if (type === "workspace_runtime_config") return <WorkspaceRuntimeConfigPayload payload={payload} />;
   if (type === "budget_override_required") return <BudgetOverridePayload payload={payload} />;
   if (type === "request_board_approval") {
     return <BoardApprovalPayload payload={payload} hideTitle={hidePrimaryTitle} />;
