@@ -110,10 +110,15 @@ function computeRetryDelayMs(attemptCount: number, retryAfterMs?: number): numbe
   return Math.min(backoffMs, 60 * 60 * 1_000);
 }
 
-function completedAtMatches(snapshotCompletedAt: Date | null, currentCompletedAt: Date | null): boolean {
+// Rows claimed via raw SQL (`returning ...`) come back with timestamps as
+// strings rather than Date objects, so normalize both sides before comparing.
+export function completedAtMatches(
+  snapshotCompletedAt: Date | string | null,
+  currentCompletedAt: Date | string | null,
+): boolean {
   if (!snapshotCompletedAt && !currentCompletedAt) return true;
   if (!snapshotCompletedAt || !currentCompletedAt) return false;
-  return snapshotCompletedAt.getTime() === currentCompletedAt.getTime();
+  return new Date(snapshotCompletedAt).getTime() === new Date(currentCompletedAt).getTime();
 }
 
 function buildCompletionTransitionKey(
