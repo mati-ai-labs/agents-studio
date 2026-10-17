@@ -606,6 +606,7 @@ export const APPROVAL_TYPES = [
   "approve_ceo_strategy",
   "budget_override_required",
   "request_board_approval",
+  "workspace_runtime_config",
 ] as const;
 export type ApprovalType = (typeof APPROVAL_TYPES)[number];
 

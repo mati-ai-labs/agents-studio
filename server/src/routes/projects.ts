@@ -15,6 +15,23 @@ import { trackProjectCreated } from "@paperclipai/shared/telemetry";
 import { validate } from "../middleware/validate.js";
 import { accessService, projectService, logActivity, workspaceOperationService } from "../services/index.js";
 import { conflict, forbidden } from "../errors.js";
+import { existsSync } from "node:fs";
+import nodePath from "node:path";
+import { resolveManagedProjectWorkspaceDir } from "../home-paths.js";
+
+// Repo-only workspaces are cloned by Paperclip into a managed directory on first
+// run; runtime commands use that checkout when no explicit cwd is configured.
+function resolveExistingManagedCheckoutCwd(input: { companyId: string; projectId: string; repoUrl: string | null }) {
+  if (!input.repoUrl) return null;
+  let repoName: string | null = null;
+  try {
+    repoName = new URL(input.repoUrl).pathname.replace(/\/+$/, "").split("/").filter(Boolean).pop()?.replace(/\.git$/i, "") || null;
+  } catch {
+    return null;
+  }
+  const cwd = resolveManagedProjectWorkspaceDir({ companyId: input.companyId, projectId: input.projectId, repoName });
+  return existsSync(nodePath.join(cwd, ".git")) ? cwd : null;
+}
 import { externalObjectService } from "../services/external-objects.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
 import { assertCompanyAccess, getAccessibleResource, getActorInfo } from "./authz.js";
@@ -389,7 +406,11 @@ export function projectRoutes(db: Db) {
       projectWorkspaceId: workspace.id,
     });
 
-    const workspaceCwd = workspace.cwd;
+    const workspaceCwd = workspace.cwd ?? resolveExistingManagedCheckoutCwd({
+      companyId: project.companyId,
+      projectId: project.id,
+      repoUrl: workspace.repoUrl ?? null,
+    });
     if (!workspaceCwd) {
       res.status(422).json({ error: "Project workspace needs a local path before Paperclip can run workspace commands" });
       return;
