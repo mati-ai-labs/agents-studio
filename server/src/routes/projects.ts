@@ -465,6 +465,19 @@ export function projectRoutes(db: Db) {
     }
 
     const actor = getActorInfo(req);
+    // Services and jobs get the project's env bindings (including secret refs),
+    // the same values agent runs receive, so they don't depend on hand-built
+    // .env files.
+    const projectRuntimeEnv = project.env
+      ? (
+          await secretsSvc.resolveEnvBindings(project.companyId, project.env, {
+            consumerType: "project",
+            consumerId: project.id,
+            actorType: actor.actorType,
+            actorId: actor.actorId,
+          })
+        ).env
+      : {};
     const recorder = workspaceOperations.createRecorder({ companyId: project.companyId });
     let runtimeServiceCount = workspace.runtimeServices?.length ?? 0;
     let stdout = "";
@@ -511,7 +524,7 @@ export function projectRoutes(db: Db) {
               created: false,
             },
             command: workspaceCommand.rawConfig,
-            adapterEnv: {},
+            adapterEnv: projectRuntimeEnv,
             recorder,
             metadata: {
               action,
@@ -566,7 +579,7 @@ export function projectRoutes(db: Db) {
               created: false,
             },
             config: { workspaceRuntime: runtimeConfig },
-            adapterEnv: {},
+            adapterEnv: projectRuntimeEnv,
             onLog,
             serviceIndex: selectedServiceIndex,
           });
