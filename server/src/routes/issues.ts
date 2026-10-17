@@ -5188,6 +5188,8 @@ export function issueRoutes(
             name: project.name,
             status: project.status,
             targetDate: project.targetDate,
+            // Project-specific notes (repo, run and preview rules) agents must follow.
+            description: project.description ?? null,
           }
         : null,
       goal: goal

@@ -444,6 +444,20 @@ describe.sequential("issue goal context routes", () => {
     expect(res.body.attachments).toEqual([]);
   });
 
+  it("includes the project description (project notes) in GET /issues/:id/heartbeat-context", async () => {
+    const project = await mockProjectService.getById();
+    mockProjectService.getById.mockResolvedValue({ ...project, description: "## Agent notes\n- use development" });
+
+    const res = await request(createApp()).get(
+      "/api/issues/11111111-1111-4111-8111-111111111111/heartbeat-context",
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.project).toEqual(
+      expect.objectContaining({ name: "Onboarding", description: "## Agent notes\n- use development" }),
+    );
+  });
+
   it("preserves direct continuation summary lookup in GET /issues/:id/heartbeat-context", async () => {
     mockDocumentsService.getIssueDocumentByKey.mockResolvedValue({
       key: "continuation-summary",
