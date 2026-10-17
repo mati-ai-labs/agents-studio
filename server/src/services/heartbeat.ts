@@ -250,6 +250,7 @@ import { environmentRuntimeService } from "./environment-runtime.js";
 import { skillVersionSelectionMap } from "./runtime-skill-selections.js";
 import { environmentRunOrchestrator } from "./environment-run-orchestrator.js";
 import { connectorRegistryService } from "./connector-registry.js";
+import { buildGithubGitAuthEnv, resolveGithubConnectorAccessToken } from "./github-git-auth.js";
 import { resolveGoogleWorkspaceMcpAccessToken } from "./google-workspace-mcp-auth.js";
 import { resolveMetaAdsMcpAccessToken } from "./meta-ads-mcp-auth.js";
 import { isUnsafeSessionWorkspaceCwd } from "./session-workspace-cwd.js";
@@ -1335,6 +1336,7 @@ async function ensureManagedProjectWorkspace(input: {
   companyId: string;
   projectId: string;
   repoUrl: string | null;
+  resolveGitAuthEnv?: () => Promise<Record<string, string>>;
 }): Promise<{ cwd: string; warning: string | null }> {
   const cwd = resolveManagedProjectWorkspaceDir({
     companyId: input.companyId,
@@ -1371,8 +1373,9 @@ async function ensureManagedProjectWorkspace(input: {
   }
 
   try {
+    const gitAuthEnv = input.resolveGitAuthEnv ? await input.resolveGitAuthEnv() : {};
     await execFile("git", ["clone", input.repoUrl, cwd], {
-      env: sanitizeRuntimeServiceBaseEnv(process.env),
+      env: { ...sanitizeRuntimeServiceBaseEnv(process.env), ...gitAuthEnv },
       timeout: MANAGED_WORKSPACE_GIT_CLONE_TIMEOUT_MS,
     });
     return { cwd, warning: null };
@@ -7293,6 +7296,12 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     };
   }
 
+  async function resolveGithubGitAuthEnvForCompany(companyId: string): Promise<Record<string, string>> {
+    const token = await resolveGithubConnectorAccessToken(connectorRegistryService(db), companyId, null)
+      .catch(() => null);
+    return token ? buildGithubGitAuthEnv({}, token).env : {};
+  }
+
   async function resolveWorkspaceForRun(
     agent: typeof agents.$inferSelect,
     context: Record<string, unknown>,
@@ -7379,6 +7388,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
               companyId: agent.companyId,
               projectId: workspaceProjectId ?? resolvedProjectId ?? workspace.projectId,
               repoUrl: readNonEmptyString(workspace.repoUrl),
+              resolveGitAuthEnv: () => resolveGithubGitAuthEnvForCompany(agent.companyId),
             });
             projectCwd = managedWorkspace.cwd;
             managedWorkspaceWarning = managedWorkspace.warning;
@@ -12330,7 +12340,14 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       companyId: agent.companyId,
       issueId,
     });
-    const pushCapabilityPreflightRequired = requiresPushCapabilityPreflight({
+    const githubConnectorAccessToken = await resolveGithubConnectorAccessToken(
+      connectorRegistryService(db),
+      agent.companyId,
+      null,
+    ).catch(() => null);
+    // A connected GitHub connector supplies GH_TOKEN/GITHUB_TOKEN for the run,
+    // so it satisfies the push-capability preflight on its own.
+    const pushCapabilityPreflightRequired = !githubConnectorAccessToken && requiresPushCapabilityPreflight({
       adapterType: agent.adapterType,
       issueId,
       explicitRunScopedSkillKeys: runScopedMentionedSkillKeys,
@@ -13523,9 +13540,11 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       }
 
       const githubConnector = await connectorRegistry.getByType(agent.companyId, "github", runRequestedByUserId);
-      const githubCreds = await connectorRegistry.getCredentialsAsync(agent.companyId, "github", {
-        userId: runRequestedByUserId,
-      });
+      const githubConnectorMcpToken = await resolveGithubConnectorAccessToken(
+        connectorRegistry,
+        agent.companyId,
+        runRequestedByUserId,
+      );
       const githubMcpEnabled = (githubConnector?.config as Record<string, unknown> | null)?.mcpEnabled !== false;
       const githubMcpUrl =
         readNonEmptyString((githubConnector?.config as Record<string, unknown> | null)?.mcpUrl) ??
@@ -13533,7 +13552,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         readNonEmptyString(process.env.GITHUB_MCP_URL) ??
         "https://api.githubcopilot.com/mcp";
       const githubAccessToken =
-        readNonEmptyString(githubCreds?.accessToken) ??
+        githubConnectorMcpToken ??
         readNonEmptyString(runtimeConfig.githubMcpAccessToken) ??
         readNonEmptyString(runtimeConfig.githubPersonalAccessToken) ??
         readNonEmptyString(runtimeConfig.githubPat);
@@ -13842,6 +13861,17 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         adapterFinalizeOutcome = status;
       };
 
+      // Inject GitHub connector auth last, after config fingerprints are taken,
+      // so token rotation does not invalidate agent sessions.
+      if (githubConnectorAccessToken) {
+        const existingRuntimeEnv = parseObject(runtimeConfig.env);
+        const githubGitAuth = buildGithubGitAuthEnv(existingRuntimeEnv, githubConnectorAccessToken);
+        runtimeConfig = {
+          ...runtimeConfig,
+          env: { ...existingRuntimeEnv, ...githubGitAuth.env },
+        };
+        for (const key of githubGitAuth.secretKeys) secretKeys.add(key);
+      }
       let adapterResult: Awaited<ReturnType<typeof adapter.execute>>;
       try {
         const adapterContext = { ...context };
