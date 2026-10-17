@@ -1709,6 +1709,7 @@ export {
   type CreateGoal,
   type UpdateGoal,
   createApprovalSchema,
+  workspaceRuntimeConfigApprovalPayloadSchema,
   upsertBudgetPolicySchema,
   resolveBudgetIncidentSchema,
   resolveApprovalSchema,

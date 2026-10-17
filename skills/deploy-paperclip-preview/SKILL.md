@@ -78,7 +78,26 @@ The `expose.type` value must be exactly `paperclip_preview`. Keep
 `lifecycle: "shared"` and `reuseScope: "project_workspace"` unless the
 board operator has specified a different lifecycle.
 
-Start the service through Paperclip's workspace runtime controls. Do not
+**Agents cannot write runtime commands directly** (the API rejects agent keys
+for host-executed commands). If the project workspace has no suitable service,
+submit the config for board approval and stop until it is approved:
+
+```bash
+curl -fsS -X POST "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/approvals" \
+  -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
+  -H "X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID" \
+  -H "Content-Type: application/json" \
+  --data '{"type":"workspace_runtime_config","issueIds":["<issue-id>"],
+    "payload":{"projectId":"<project-id>","workspaceId":"<project-workspace-id>",
+      "workspaceRuntime":{"services":[ ...service objects as above... ]}}}'
+```
+
+Post one comment saying the preview service is awaiting board approval, set
+the issue to `blocked` on that approval, and exit. Do not search the host for
+workarounds. You are woken when it is approved; then continue below.
+
+Start the service through Paperclip's workspace runtime controls:
+`POST /api/projects/<project-id>/workspaces/<workspace-id>/runtime-services/start`. Do not
 start it only with `nohup`, `screen`, `tmux`, or a manually detached shell;
 Paperclip must own the runtime-service record and port.
 

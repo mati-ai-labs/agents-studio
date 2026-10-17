@@ -7,6 +7,7 @@ import { agentService } from "./agents.js";
 import { budgetService } from "./budgets.js";
 import { notifyHireApproved } from "./hire-hook.js";
 import { instanceSettingsService } from "./instance-settings.js";
+import { projectService } from "./projects.js";
 
 export function approvalService(db: Db) {
   const agentsSvc = agentService(db);
@@ -22,6 +23,27 @@ export function approvalService(db: Db) {
       ...comment,
       body: redactCurrentUserText(comment.body, { enabled: censorUsernameInLogs }),
     };
+  }
+
+  // An agent cannot write host-executed workspace commands directly; it submits
+  // them as a workspace_runtime_config approval and the board applies them here.
+  async function applyWorkspaceRuntimeConfigApproval(companyId: string, payload: Record<string, unknown>) {
+    const projectId = typeof payload.projectId === "string" ? payload.projectId : null;
+    const workspaceId = typeof payload.workspaceId === "string" ? payload.workspaceId : null;
+    const workspaceRuntime =
+      typeof payload.workspaceRuntime === "object" && payload.workspaceRuntime !== null && !Array.isArray(payload.workspaceRuntime)
+        ? (payload.workspaceRuntime as Record<string, unknown>)
+        : null;
+    if (!projectId || !workspaceId || !workspaceRuntime) {
+      throw unprocessable("workspace_runtime_config approval requires projectId, workspaceId and workspaceRuntime");
+    }
+    const projects = projectService(db);
+    const project = await projects.getById(projectId);
+    if (!project || project.companyId !== companyId) throw notFound("Project not found");
+    const updatedWorkspace = await projects.updateWorkspace(projectId, workspaceId, {
+      runtimeConfig: { workspaceRuntime },
+    });
+    if (!updatedWorkspace) throw unprocessable("Invalid workspace runtime config");
   }
 
   async function reconcileApprovedBuiltInAgent(companyId: string, payload: Record<string, unknown>) {
@@ -128,6 +150,10 @@ export function approvalService(db: Db) {
         decidedByUserId,
         decisionNote,
       );
+
+      if (applied && updated.type === "workspace_runtime_config") {
+        await applyWorkspaceRuntimeConfigApproval(updated.companyId, updated.payload as Record<string, unknown>);
+      }
 
       let hireApprovedAgentId: string | null = null;
       const now = new Date();

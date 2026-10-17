@@ -11,6 +11,26 @@ export const createApprovalSchema = z.object({
 
 export type CreateApproval = z.infer<typeof createApprovalSchema>;
 
+const workspaceRuntimeServiceProposalSchema = z
+  .object({
+    name: z.string().trim().min(1),
+    command: z.string().trim().min(1),
+  })
+  .passthrough();
+
+export const workspaceRuntimeConfigApprovalPayloadSchema = z
+  .object({
+    projectId: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    workspaceRuntime: z
+      .object({ services: z.array(workspaceRuntimeServiceProposalSchema).min(1) })
+      .passthrough(),
+    summary: z.string().optional().nullable(),
+  })
+  .passthrough();
+
+export type WorkspaceRuntimeConfigApprovalPayload = z.infer<typeof workspaceRuntimeConfigApprovalPayloadSchema>;
+
 export const resolveApprovalSchema = z.object({
   decisionNote: multilineTextSchema.optional().nullable(),
 });
