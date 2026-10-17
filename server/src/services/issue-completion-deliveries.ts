@@ -15,6 +15,7 @@ import type {
 import { logger } from "../middleware/logger.js";
 import { buildHeartbeatRunIssueComment } from "./heartbeat-run-summary.js";
 import { SlackApiError, postSlackMessage } from "./slack.js";
+import { buildIssueLink } from "./slack-message-builder.js";
 
 const DELIVERY_LEASE_MS = 2 * 60 * 1_000;
 const DELIVERY_MAX_ATTEMPTS = 8;
@@ -167,6 +168,24 @@ async function buildSlackCompletionPayload(
     .then((rows) => rows[0] ?? null);
 
   if (!issue || issue.status !== "done" || !issue.completionDestination) return null;
+
+  // Issues that started from a Slack thread already have the agent's answer in
+  // that thread, so the completion notice there is a single line.
+  if (issue.completionDestination.kind === "slack" && issue.completionDestination.threadTs) {
+    const issueLabel = issue.identifier ?? "Issue";
+    const doneText = `:white_check_mark: Done · <${buildIssueLink(issue)}|${escapeSlackMrkdwn(issueLabel)}>`;
+    return {
+      companyId: issue.companyId,
+      completedAt: issue.completedAt,
+      destination: issue.completionDestination,
+      payload: {
+        provider: "slack",
+        text: `${issueLabel} done`,
+        blocks: [{ type: "section", text: { type: "mrkdwn", text: doneText } }],
+        completedAt: issue.completedAt?.toISOString() ?? null,
+      },
+    };
+  }
 
   const latestFinishedRun = await db
     .select({
