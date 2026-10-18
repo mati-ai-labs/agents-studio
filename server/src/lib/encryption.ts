@@ -7,7 +7,7 @@
  * are encrypted with this module so they are never stored as plaintext.
  */
 
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "node:crypto";
 import { resolveDefaultSecretsKeyFilePath } from "../home-paths.js";
 import { existsSync, readFileSync, statSync, chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -61,6 +61,14 @@ function loadMasterKey(): Buffer {
   writeFileSync(keyPath, generated.toString("base64"), { encoding: "utf8", mode: 0o600 });
   try { chmodSync(keyPath, 0o600); } catch { /* best effort */ }
   return generated;
+}
+
+/**
+ * A 32-byte key for one purpose (e.g. signing preview cookies), derived from the
+ * master key so no extra secret has to be configured.
+ */
+export function deriveKey(purpose: string): Buffer {
+  return createHmac("sha256", loadMasterKey()).update(`agentstudio:${purpose}`).digest();
 }
 
 /** Encrypt a string value. Returns base64-encoded JSON (iv + tag + ciphertext). */

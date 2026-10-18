@@ -2,6 +2,7 @@ import { Readable } from "node:stream";
 import type { IncomingHttpHeaders } from "node:http";
 import type { Request, Response } from "express";
 import type { PreviewLeaseWithRuntimeService } from "./previews.js";
+import { stripPreviewSessionCookie } from "./preview-auth.js";
 
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
@@ -88,14 +89,23 @@ export function buildPreviewUpstreamHeaders(input: {
   port: number;
   slug: string;
   forwardedFor?: string | null;
+  /**
+   * `path` (default): served under `/preview/<slug>` on the Agent Studio host.
+   * `host`: served at the root of `<slug>.<preview domain>`. That origin never
+   * carries Agent Studio credentials, so the app's own Authorization header is
+   * forwarded and no path prefix is advertised.
+   */
+  mode?: "path" | "host";
 }): Headers {
+  const hostMode = input.mode === "host";
   const headers = new Headers();
   for (const [key, value] of input.source.entries()) {
     const normalized = key.toLowerCase();
     if (HOP_BY_HOP_HEADERS.has(normalized)) continue;
-    if (normalized === "host" || normalized === "content-length" || normalized === "authorization") continue;
+    if (normalized === "host" || normalized === "content-length") continue;
+    if (normalized === "authorization" && !hostMode) continue;
     if (normalized === "cookie") {
-      const cookie = stripPaperclipCookies(value);
+      const cookie = hostMode ? stripPreviewSessionCookie(stripPaperclipCookies(value)) : stripPaperclipCookies(value);
       if (cookie) headers.set("cookie", cookie);
       continue;
     }
@@ -109,7 +119,7 @@ export function buildPreviewUpstreamHeaders(input: {
   if (forwardedHost) headers.set("x-forwarded-host", forwardedHost.split(",")[0]!.trim());
   headers.set("x-forwarded-proto", forwardedProto.split(",")[0]!.trim());
   if (input.forwardedFor) headers.set("x-forwarded-for", input.forwardedFor);
-  headers.set("x-forwarded-prefix", previewPathPrefix(input.slug));
+  if (!hostMode) headers.set("x-forwarded-prefix", previewPathPrefix(input.slug));
   headers.set("x-paperclip-preview", input.slug);
   // Node fetch transparently decompresses upstream responses. Requesting identity keeps
   // response headers and bodies consistent when HTML is rewritten below.
@@ -699,5 +709,83 @@ export async function proxyPreviewHttp(
     return;
   }
 
+  Readable.fromWeb(response.body as any).pipe(res);
+}
+
+/** Upstream redirects to its own loopback origin become root-relative on the preview host. */
+export function rewritePreviewHostLocation(value: string, targetOrigin: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value, targetOrigin);
+  } catch {
+    return value;
+  }
+  if (parsed.origin !== targetOrigin) return value;
+  return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+}
+
+/**
+ * Proxy a request on `<slug>.<preview domain>` to the runtime service. The app
+ * runs at `/`, so bodies, paths and cookies pass through unchanged.
+ */
+export async function proxyPreviewHostHttp(
+  req: Request,
+  res: Response,
+  preview: PreviewLeaseWithRuntimeService,
+) {
+  const port = preview.runtimeService.port;
+  if (
+    preview.runtimeService.provider !== "local_process" ||
+    !port ||
+    port < 1 ||
+    port > 65_535 ||
+    preview.runtimeService.status !== "running"
+  ) {
+    res.status(503).type("text/plain").send("This preview's app is not running. Ask the agent to start it again.");
+    return;
+  }
+
+  const targetOrigin = `http://127.0.0.1:${port}`;
+  const headers = buildPreviewUpstreamHeaders({
+    source: headersFromIncomingHttpHeaders(req.headers),
+    port,
+    slug: preview.lease.slug,
+    forwardedFor: req.socket.remoteAddress,
+    mode: "host",
+  });
+  const body = requestBody(req);
+  const init: RequestInit & { duplex?: "half" } = { method: req.method, headers, redirect: "manual" };
+  if (body !== undefined) {
+    init.body = body as BodyInit;
+    init.duplex = "half";
+  }
+
+  let response: globalThis.Response;
+  try {
+    response = await fetch(`${targetOrigin}${req.originalUrl.startsWith("/") ? req.originalUrl : `/${req.originalUrl}`}`, init);
+  } catch (error) {
+    res.status(502).type("text/plain").send(
+      `Preview app is unavailable: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return;
+  }
+
+  res.status(response.status);
+  for (const [key, value] of response.headers.entries()) {
+    const normalized = key.toLowerCase();
+    if (HOP_BY_HOP_HEADERS.has(normalized) || normalized === "set-cookie" || normalized === "location") continue;
+    // fetch() already decoded the body.
+    if (normalized === "content-length" || normalized === "content-encoding") continue;
+    res.setHeader(key, value);
+  }
+  const location = response.headers.get("location");
+  if (location) res.setHeader("location", rewritePreviewHostLocation(location, targetOrigin));
+  const setCookies = getSetCookies(response.headers).map((cookie) => cookie.replace(/;\s*Domain=[^;]*/gi, ""));
+  if (setCookies.length > 0) res.setHeader("set-cookie", setCookies);
+
+  if (!response.body || req.method.toUpperCase() === "HEAD" || response.status === 204 || response.status === 304) {
+    res.end();
+    return;
+  }
   Readable.fromWeb(response.body as any).pipe(res);
 }

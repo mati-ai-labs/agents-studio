@@ -15,6 +15,8 @@ import {
   buildPreviewUpstreamUrl,
   parsePreviewRequestTarget,
 } from "../services/preview-proxy.js";
+import { matchPreviewHost } from "../services/preview-hosts.js";
+import { PREVIEW_SESSION_COOKIE, readCookie, verifyPreviewToken } from "../services/preview-auth.js";
 import {
   authorizeUpgrade,
   headersFromIncomingMessage,
@@ -73,19 +75,25 @@ function rejectPreviewUpgrade(socket: Duplex, status: number, message: string) {
   rejectUpgrade(socket, `${status} ${statusText}`, message);
 }
 
+const MAX_TIMER_MS = 2_147_483_647;
+
 function bridgeWebSockets(client: WsSocket, upstream: WsSocket, expiresAt: Date) {
   const pending: Array<{ data: unknown; binary: boolean }> = [];
   let closed = false;
-  const expiryTimer = setTimeout(() => {
-    if (client.readyState === WebSocket.OPEN) client.close(1000, "Preview expired");
-    if (upstream.readyState === WebSocket.OPEN) upstream.close(1000, "Preview expired");
-  }, Math.max(0, expiresAt.getTime() - Date.now()));
-  expiryTimer.unref?.();
+  const delay = Math.max(0, expiresAt.getTime() - Date.now());
+  // setTimeout fires immediately for delays above ~24.8 days; long leases need no timer.
+  const expiryTimer = delay <= MAX_TIMER_MS
+    ? setTimeout(() => {
+      if (client.readyState === WebSocket.OPEN) client.close(1000, "Preview expired");
+      if (upstream.readyState === WebSocket.OPEN) upstream.close(1000, "Preview expired");
+    }, delay)
+    : null;
+  expiryTimer?.unref?.();
 
   const cleanup = () => {
     if (closed) return;
     closed = true;
-    clearTimeout(expiryTimer);
+    if (expiryTimer) clearTimeout(expiryTimer);
   };
 
   client.on("message", (data: unknown, isBinary: boolean) => {
@@ -143,9 +151,14 @@ export function setupPreviewWebSocketServer(
     }
 
     const requestUrl = new URL(req.url, "http://paperclip-preview.local");
+    const rawHost = req.headers["x-forwarded-host"] ?? req.headers.host;
+    const hostSlug = matchPreviewHost(Array.isArray(rawHost) ? rawHost[0] : rawHost);
     const isPreviewPath = requestUrl.pathname === "/preview" || requestUrl.pathname.startsWith("/preview/");
-    if (!isPreviewPath) return;
-    const target = parsePreviewRequestTarget(req.url);
+    if (!hostSlug && !isPreviewPath) return;
+    // On `<slug>.<preview domain>` the app runs at the root; no path prefix.
+    const target = hostSlug
+      ? { slug: hostSlug, targetPath: requestUrl.pathname, search: requestUrl.search }
+      : parsePreviewRequestTarget(req.url);
     if (!target) {
       rejectPreviewUpgrade(socket, 400, "invalid preview path");
       return;
@@ -180,8 +193,10 @@ export function setupPreviewWebSocketServer(
       }
 
       const url = new URL(rawUrl, "http://paperclip-preview.local");
-      const context = await authorizeUpgrade(db, req, preview.lease.companyId, url, opts);
-      if (!context) {
+      const context = hostSlug
+        ? verifyPreviewToken(readCookie(req.headers.cookie, PREVIEW_SESSION_COOKIE), "session", hostSlug)
+        : await authorizeUpgrade(db, req, preview.lease.companyId, url, opts);
+      if (!context || (hostSlug && (context as { c?: string }).c !== preview.lease.companyId)) {
         rejectPreviewUpgrade(socket, 403, "forbidden");
         return;
       }
@@ -207,6 +222,7 @@ export function setupPreviewWebSocketServer(
         port,
         slug: target.slug,
         forwardedFor: req.socket.remoteAddress,
+        mode: hostSlug ? "host" : "path",
       });
 
       wss.handleUpgrade(req, socket, head, (client) => {

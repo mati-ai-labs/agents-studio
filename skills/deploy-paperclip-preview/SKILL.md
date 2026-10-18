@@ -36,9 +36,8 @@ appropriate static deployment skill instead.
   Paperclip. Do not hard-code a port.
 - Bind to localhost or `0.0.0.0` as required by the framework; the service
   must be reachable from `http://127.0.0.1:${port}` on the host.
-- Keep browser asset, API, and WebSocket URLs relative whenever possible.
-  If the framework supports a base path, honor the forwarded prefix
-  `/preview/<slug>`.
+- No base path or app changes are needed: the app is served at the root of
+  its own preview subdomain, exactly as it runs on `http://127.0.0.1:${port}/`.
 
 If the project has separate frontend and backend processes, expose one web
 service as the preview entrypoint and route its API/WebSocket requests to the
@@ -104,15 +103,17 @@ Paperclip must own the runtime-service record and port.
 ### 3. Wait for readiness and use the generated URL
 
 Wait for the HTTP readiness check to pass, then use the preview URL returned
-by Paperclip, normally:
+by Paperclip (the runtime service's `url`, or `url` from the lease API below):
 
 ```text
-https://<paperclip-host>/preview/<company-code>-<service>-<random>/
+https://<company-code>-<service>-<random>.<preview-domain>/
 ```
 
-Never invent the slug or substitute the localhost URL for the reviewer-facing
-link. The preview is company-authenticated; Paperclip does not forward its
-credentials to the local application.
+The link is stable: it stays the same across restarts of the same service, so
+post it once and keep using it. Reviewers sign in with their Agent Studio
+account the first time they open it. Never invent the slug or substitute the
+localhost URL for the reviewer-facing link. The app's own cookies and
+`Authorization` headers pass through untouched.
 
 If the service was already started without `paperclip_preview`, create a lease
 only through the authenticated Paperclip API when the required identifiers are
@@ -135,22 +136,22 @@ runtime service.
 Verify all of the following that apply:
 
 - the runtime service is `running` and its readiness check passes;
-- the generated `/preview/<slug>/` URL responds successfully;
-- HTML references assets with preview-safe relative or forwarded-prefix URLs;
+- the app responds through Paperclip. You can't sign in to the reviewer link,
+  so check the lease's `pathUrl` with your key instead:
+  `curl -fsS -H "Authorization: Bearer $PAPERCLIP_API_KEY" "<pathUrl>/"`;
 - frontend API calls reach the intended workspace backend;
 - WebSocket or hot-reload behavior works when the application requires it;
 - the returned link is the actual Paperclip URL, not a localhost or tunnel URL.
 
-Report the preview URL, runtime service ID, command, selected port, checks
-performed, and expiry time. Do not claim deployment success without a working
+Report the preview URL, runtime service ID, command, selected port, and checks
+performed. Do not claim deployment success without a working
 preview URL or an explicit, evidenced blocker.
 
 ## Lease and lifecycle rules
 
-- A preview lease lasts 30 minutes.
-- An expired lease returns `410 Gone` and does not stop the local process.
-- When a lease expires, create a new lease or restart through Paperclip; do
-  not keep using the expired URL.
+- One stable link per service. It lapses only after 30 days without a visit
+  (`410`); restarting the service through Paperclip brings the same link back.
+- Revoking a lease (`DELETE /api/previews/<id>`) retires its link for good.
 - Explicitly stopping or closing the workspace stops the local service.
 - Reuse an active project-workspace service instead of starting duplicates.
 
@@ -167,9 +168,11 @@ preview URL or an explicit, evidenced blocker.
   authenticated lease API fallback.
 - **`EADDRINUSE`:** remove the hard-coded port and let Paperclip allocate one;
   then stop or reuse the existing Paperclip-managed service.
-- **Blank page or missing assets:** change root-relative asset/API URLs to
-  relative URLs or configure the framework to honor `X-Forwarded-Prefix`.
+- **Blank page or missing assets:** check the app works at
+  `http://127.0.0.1:${port}/` on the host first; the preview serves the same paths.
 - **API or WebSocket failures:** keep them on the same exposed web entrypoint,
   use relative paths, and verify the workspace backend is running.
-- **`410 Gone`:** the lease expired. Generate a new lease; do not alter the
-  expired slug.
+- **`410 Gone`:** the link lapsed after 30 idle days. Restart the service
+  through Paperclip (or call the lease API); the link comes back unchanged.
+- **`503` "app is not running":** the service stopped. Start it again through
+  Paperclip; the link stays the same.
