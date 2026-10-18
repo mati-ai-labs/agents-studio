@@ -3,11 +3,18 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   companies,
   createDb,
+  instanceSettings,
   previewLeases,
   workspaceRuntimeServices,
 } from "@paperclipai/db";
 import { eq } from "drizzle-orm";
-import { PREVIEW_LEASE_TTL_SECONDS, previewLeaseService } from "../services/previews.js";
+import {
+  PREVIEW_LEASE_TTL_SECONDS,
+  PREVIEWS_DISABLED_CODE,
+  createPreviewSlug,
+  previewLeaseService,
+} from "../services/previews.js";
+import { instancePreviewsService } from "../services/instance-previews.js";
 import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
@@ -35,7 +42,16 @@ describeEmbeddedPostgres("preview lease service", () => {
     await db.delete(previewLeases);
     await db.delete(workspaceRuntimeServices);
     await db.delete(companies);
+    await db.delete(instanceSettings);
   });
+
+  async function enablePreviews(companyIds: string[]) {
+    await instancePreviewsService(db).update({
+      domain: "preview.example.com",
+      dnsZone: "example.com",
+      enabledCompanyIds: companyIds,
+    });
+  }
 
   afterAll(async () => {
     await tempDb?.cleanup();
@@ -66,13 +82,14 @@ describeEmbeddedPostgres("preview lease service", () => {
       startedAt: now,
     });
 
+    await enablePreviews([companyId]);
     const service = previewLeaseService(db);
     const first = await service.createForRuntimeService({
       companyId,
       runtimeServiceId,
       baseUrl: "https://paperclip.test",
     });
-    expect(first.url).toMatch(/^https:\/\/paperclip\.test\/preview\/web-/);
+    expect(first.url).toMatch(/^https:\/\/paperclip\.test\/preview\/pre-[a-z0-9]{1,6}-web-[0-9a-f]{18}$/);
     expect(first.expiresAt.getTime() - first.createdAt.getTime()).toBe(PREVIEW_LEASE_TTL_SECONDS * 1000);
 
     const reused = await service.createForRuntimeService({
@@ -96,5 +113,45 @@ describeEmbeddedPostgres("preview lease service", () => {
     });
     expect(renewed.id).not.toBe(first.id);
     expect(renewed.slug).not.toBe(first.slug);
+  });
+
+  it("refuses to create a lease when previews are off for the company", async () => {
+    const companyId = randomUUID();
+    const runtimeServiceId = randomUUID();
+    const now = new Date();
+    await db.insert(companies).values({ id: companyId, name: "Off Company", issuePrefix: `OFF-${companyId.slice(0, 8)}` });
+    await db.insert(workspaceRuntimeServices).values({
+      id: runtimeServiceId,
+      companyId,
+      scopeType: "project_workspace",
+      scopeId: "workspace-1",
+      serviceName: "web",
+      status: "running",
+      lifecycle: "shared",
+      command: "pnpm dev",
+      cwd: "/tmp/preview-company",
+      port: 4173,
+      provider: "local_process",
+      lastUsedAt: now,
+      startedAt: now,
+    });
+    await enablePreviews([randomUUID()]);
+
+    const service = previewLeaseService(db);
+    await expect(
+      service.createForRuntimeService({ companyId, runtimeServiceId, baseUrl: "https://paperclip.test" }),
+    ).rejects.toMatchObject({ status: 403, details: { code: PREVIEWS_DISABLED_CODE } });
+    await expect(service.assertCompanyEnabled(companyId)).rejects.toMatchObject({ status: 403 });
+    expect(await db.select().from(previewLeases)).toHaveLength(0);
+  });
+});
+
+describe("createPreviewSlug", () => {
+  it("prefixes the company code and fits in one DNS label", () => {
+    expect(createPreviewSlug("LCH", "web")).toMatch(/^lch-web-[0-9a-f]{18}$/);
+    const long = createPreviewSlug("VERYLONGCOMPANYCODE", "My Super Long Frontend Service Name!!");
+    expect(long.length).toBeLessThanOrEqual(63);
+    expect(long).toMatch(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/);
+    expect(createPreviewSlug(null, "")).toMatch(/^co-web-[0-9a-f]{18}$/);
   });
 });

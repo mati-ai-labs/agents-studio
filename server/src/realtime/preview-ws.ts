@@ -5,7 +5,11 @@ import type { Db } from "@paperclipai/db";
 import type { DeploymentMode } from "@paperclipai/shared";
 import type { BetterAuthSessionResult } from "../auth/better-auth.js";
 import { logger } from "../middleware/logger.js";
-import { previewLeaseService } from "../services/previews.js";
+import {
+  PREVIEWS_DISABLED_MESSAGE,
+  isPreviewsDisabledError,
+  previewLeaseService,
+} from "../services/previews.js";
 import {
   buildPreviewUpstreamHeaders,
   buildPreviewUpstreamUrl,
@@ -179,6 +183,17 @@ export function setupPreviewWebSocketServer(
       const context = await authorizeUpgrade(db, req, preview.lease.companyId, url, opts);
       if (!context) {
         rejectPreviewUpgrade(socket, 403, "forbidden");
+        return;
+      }
+      try {
+        await previews.assertCompanyEnabled(preview.lease.companyId);
+      } catch (err) {
+        if (isPreviewsDisabledError(err)) {
+          rejectPreviewUpgrade(socket, 403, PREVIEWS_DISABLED_MESSAGE);
+        } else {
+          logger.error({ err }, "preview websocket settings check failed");
+          rejectPreviewUpgrade(socket, 502, "preview settings check failed");
+        }
         return;
       }
 

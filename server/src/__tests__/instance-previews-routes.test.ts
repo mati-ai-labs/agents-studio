@@ -129,7 +129,7 @@ describe("instance previews routes", () => {
 
   it("tells a company member whether previews are enabled for their company", async () => {
     const { app } = await createApp(memberActor);
-    const res = await request(app).get("/api/companies/11111111-1111-4111-8111-111111111111/previews");
+    const res = await request(app).get("/api/companies/11111111-1111-4111-8111-111111111111/preview-settings");
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ enabled: true, domain: "preview.example.com" });
   });

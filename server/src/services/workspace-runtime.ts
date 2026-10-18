@@ -36,7 +36,7 @@ import type { WorkspaceOperationRecorder } from "./workspace-operations.js";
 import { executionWorkspaceService, readExecutionWorkspaceConfig } from "./execution-workspaces.js";
 import { logActivity } from "./activity-log.js";
 import { readProjectWorkspaceRuntimeConfig } from "./project-workspace-runtime-config.js";
-import { previewLeaseService } from "./previews.js";
+import { isPreviewsDisabledError, previewLeaseService } from "./previews.js";
 
 export function resolveShell(): string {
   const fallback = process.platform === "win32" ? "sh" : "/bin/sh";
@@ -3739,10 +3739,17 @@ async function attachPaperclipPreviewLease(input: {
   await persistRuntimeServiceRecord(input.db, input.record);
 
   if (!input.db || input.record.status !== "running") return input.record;
-  const lease = await previewLeaseService(input.db).createForRuntimeService({
-    companyId: input.record.companyId,
-    runtimeServiceId: input.record.id,
-  });
+  let lease;
+  try {
+    lease = await previewLeaseService(input.db).createForRuntimeService({
+      companyId: input.record.companyId,
+      runtimeServiceId: input.record.id,
+    });
+  } catch (err) {
+    // Keep the service running; the agent gets the clear 403 from the lease API.
+    if (!isPreviewsDisabledError(err)) throw err;
+    return input.record;
+  }
   input.record.url = lease.url;
   input.record.stopPolicy = {
     ...input.record.stopPolicy,

@@ -87,7 +87,8 @@ export function instancePreviewsRoutes(db: Db, opts: InstancePreviewsRouteOption
     res.json(result);
   });
 
-  router.get("/companies/:companyId/previews", async (req, res) => {
+  // Not `/companies/:companyId/previews`: that path lists preview leases (routes/previews.ts).
+  router.get("/companies/:companyId/preview-settings", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
     const settings = await svc.get();

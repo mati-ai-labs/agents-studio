@@ -1,9 +1,10 @@
 import { randomBytes } from "node:crypto";
 import type { Db } from "@paperclipai/db";
-import { previewLeases, workspaceRuntimeServices } from "@paperclipai/db";
+import { companies, previewLeases, workspaceRuntimeServices } from "@paperclipai/db";
 import { and, desc, eq, lte } from "drizzle-orm";
 import type { PreviewLease } from "@paperclipai/shared";
-import { badRequest, forbidden, notFound } from "../errors.js";
+import { HttpError, badRequest, forbidden, notFound } from "../errors.js";
+import { instancePreviewsService } from "./instance-previews.js";
 
 export const PREVIEW_LEASE_TTL_SECONDS = 30 * 60;
 
@@ -41,18 +42,39 @@ export function buildPreviewUrl(slug: string, baseUrl?: string | null): string {
   return `${resolvePreviewBaseUrl(baseUrl)}/preview/${encodeURIComponent(slug)}`;
 }
 
-function sanitizeSlugPart(value: string | null | undefined): string {
-  const normalized = (value ?? "website")
+export const PREVIEWS_DISABLED_CODE = "previews_disabled";
+export const PREVIEWS_DISABLED_MESSAGE =
+  "Previews are not enabled for this company. An instance admin can turn them on in Instance settings → Previews.";
+
+export function previewsDisabledError() {
+  return forbidden(PREVIEWS_DISABLED_MESSAGE, { code: PREVIEWS_DISABLED_CODE });
+}
+
+export function isPreviewsDisabledError(error: unknown): boolean {
+  return (
+    error instanceof HttpError
+    && (error.details as { code?: unknown } | undefined)?.code === PREVIEWS_DISABLED_CODE
+  );
+}
+
+function sanitizeSlugPart(value: string | null | undefined, fallback: string, maxLength: number): string {
+  const normalized = (value ?? "")
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40);
-  return normalized || "website";
+    .slice(0, maxLength)
+    .replace(/^-+|-+$/g, "");
+  return normalized || fallback;
 }
 
-function createPreviewSlug(serviceName: string): string {
-  return `${sanitizeSlugPart(serviceName)}-${randomBytes(9).toString("hex")}`;
+/**
+ * `<company-code>-<service>-<random>`, e.g. `lch-web-3f9a…`. Capped at 54
+ * characters so the slug also works as a single DNS label (max 63).
+ */
+export function createPreviewSlug(companyCode: string | null | undefined, serviceName: string): string {
+  const company = sanitizeSlugPart(companyCode, "co", 10);
+  const service = sanitizeSlugPart(serviceName, "web", 24);
+  return `${company}-${service}-${randomBytes(9).toString("hex")}`;
 }
 
 function toPreviewLease(row: PreviewLeaseRow, baseUrl?: string | null): PreviewLease {
@@ -106,7 +128,14 @@ async function expireLeaseIfDue(db: Db, row: PreviewLeaseRow, now: Date): Promis
 }
 
 export function previewLeaseService(db: Db) {
+  const instancePreviews = instancePreviewsService(db);
+
   return {
+    /** Throws 403 `previews_disabled` unless the company is switched on in Instance settings → Previews. */
+    assertCompanyEnabled: async (companyId: string) => {
+      if (!(await instancePreviews.isCompanyEnabled(companyId))) throw previewsDisabledError();
+    },
+
     listForCompany: async (companyId: string, baseUrl?: string | null) => {
       const now = new Date();
       const expiredRows = await db
@@ -181,7 +210,13 @@ export function previewLeaseService(db: Db) {
       if (runtimeService.companyId !== input.companyId) {
         throw forbidden("Runtime service belongs to another company");
       }
+      if (!(await instancePreviews.isCompanyEnabled(input.companyId))) throw previewsDisabledError();
       assertLoopbackRuntimeService(runtimeService);
+      const companyCode = await db
+        .select({ issuePrefix: companies.issuePrefix })
+        .from(companies)
+        .where(eq(companies.id, input.companyId))
+        .then((rows) => rows[0]?.issuePrefix ?? null);
 
       const now = new Date();
       const existing = await db
@@ -215,7 +250,7 @@ export function previewLeaseService(db: Db) {
             .values({
               companyId: input.companyId,
               runtimeServiceId: input.runtimeServiceId,
-              slug: createPreviewSlug(runtimeService.serviceName),
+              slug: createPreviewSlug(companyCode, runtimeService.serviceName),
               status: "active",
               expiresAt: new Date(now.getTime() + PREVIEW_LEASE_TTL_SECONDS * 1000),
               createdAt: now,
