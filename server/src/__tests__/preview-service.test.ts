@@ -57,7 +57,7 @@ describeEmbeddedPostgres("preview lease service", () => {
     await tempDb?.cleanup();
   });
 
-  it("creates a 30-minute lease, reuses it, and creates a new slug after expiry", async () => {
+  it("keeps one stable link per app service", async () => {
     const companyId = randomUUID();
     const runtimeServiceId = randomUUID();
     const now = new Date();
@@ -66,8 +66,7 @@ describeEmbeddedPostgres("preview lease service", () => {
       name: "Preview Company",
       issuePrefix: `PRE-${companyId.slice(0, 8)}`,
     });
-    await db.insert(workspaceRuntimeServices).values({
-      id: runtimeServiceId,
+    const runtimeRow = {
       companyId,
       scopeType: "project_workspace",
       scopeId: "workspace-1",
@@ -80,7 +79,8 @@ describeEmbeddedPostgres("preview lease service", () => {
       provider: "local_process",
       lastUsedAt: now,
       startedAt: now,
-    });
+    };
+    await db.insert(workspaceRuntimeServices).values({ id: runtimeServiceId, ...runtimeRow });
 
     await enablePreviews([companyId]);
     const service = previewLeaseService(db);
@@ -89,30 +89,43 @@ describeEmbeddedPostgres("preview lease service", () => {
       runtimeServiceId,
       baseUrl: "https://paperclip.test",
     });
-    expect(first.url).toMatch(/^https:\/\/paperclip\.test\/preview\/pre-[a-z0-9]{1,6}-web-[0-9a-f]{18}$/);
+    // A preview domain is configured, so reviewers get the subdomain link.
+    expect(first.url).toMatch(/^https:\/\/pre-[a-z0-9]{1,6}-web-[0-9a-f]{18}\.preview\.example\.com\/$/);
+    expect(first.pathUrl).toBe(`https://paperclip.test/preview/${first.slug}`);
     expect(first.expiresAt.getTime() - first.createdAt.getTime()).toBe(PREVIEW_LEASE_TTL_SECONDS * 1000);
 
-    const reused = await service.createForRuntimeService({
-      companyId,
-      runtimeServiceId,
-      baseUrl: "https://paperclip.test",
-    });
+    const reused = await service.createForRuntimeService({ companyId, runtimeServiceId });
     expect(reused.id).toBe(first.id);
 
+    // Idle expiry: the next lease brings the same link back.
     await db
       .update(previewLeases)
       .set({ expiresAt: new Date(Date.now() - 1_000) })
       .where(eq(previewLeases.id, first.id));
-    const expired = await service.getBySlug(first.slug, "https://paperclip.test");
+    const expired = await service.getBySlug(first.slug);
     expect(expired?.lease.status).toBe("expired");
+    const revived = await service.createForRuntimeService({ companyId, runtimeServiceId });
+    expect(revived.slug).toBe(first.slug);
+    expect(revived.status).toBe("active");
 
-    const renewed = await service.createForRuntimeService({
-      companyId,
-      runtimeServiceId,
-      baseUrl: "https://paperclip.test",
-    });
-    expect(renewed.id).not.toBe(first.id);
-    expect(renewed.slug).not.toBe(first.slug);
+    // Restart under a new runtime row (same workspace + service name): same link.
+    await db.update(workspaceRuntimeServices).set({ status: "stopped" }).where(eq(workspaceRuntimeServices.id, runtimeServiceId));
+    const restartedId = randomUUID();
+    await db.insert(workspaceRuntimeServices).values({ id: restartedId, ...runtimeRow });
+    const restarted = await service.createForRuntimeService({ companyId, runtimeServiceId: restartedId });
+    expect(restarted.slug).toBe(first.slug);
+    expect(restarted.runtimeServiceId).toBe(restartedId);
+
+    // A different service in the same workspace gets its own link.
+    const apiId = randomUUID();
+    await db.insert(workspaceRuntimeServices).values({ id: apiId, ...runtimeRow, serviceName: "api" });
+    const api = await service.createForRuntimeService({ companyId, runtimeServiceId: apiId });
+    expect(api.slug).not.toBe(first.slug);
+
+    // Revoking retires the link for good.
+    await service.revoke(restarted.id, companyId);
+    const fresh = await service.createForRuntimeService({ companyId, runtimeServiceId: restartedId });
+    expect(fresh.slug).not.toBe(first.slug);
   });
 
   it("refuses to create a lease when previews are off for the company", async () => {
