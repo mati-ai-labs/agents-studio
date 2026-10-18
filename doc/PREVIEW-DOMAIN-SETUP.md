@@ -57,13 +57,47 @@ Code: `server/src/routes/preview-dns.ts`, `server/src/routes/instance-previews.t
 | Static public IP | AWS: Elastic IP. Otherwise the A record breaks on stop/start |
 | nginx + certbot installed, renewal timer active | `systemctl list-timers \| grep certbot` |
 | nginx `proxy_read_timeout` ≥ 150s on the Agent Studio location | The **Test DNS** button can take up to 120 s |
-| Hostinger API token that can edit the zone | hPanel → Profile → API. Pick the longest expiry; note the date |
+| Hostinger API token for a zone you control | `hpanel.hostinger.com/api` → **Generate new token** (longest expiry; note the date). A token only works for domains **owned by the account that created it** — see "Challenge zone" below |
+
+## Challenge zone (direct vs delegated)
+
+Let's Encrypt gives a **new random value on every issue/renewal** (~60 days)
+that must be published as a TXT record at `_acme-challenge.<preview domain>`.
+Agent Studio writes it automatically through the DNS API, so the token must be
+able to edit the zone that record lives in: the *challenge zone*.
+
+- **Direct**: the preview domain is inside the token's zone (preview
+  `preview.example.com`, zone `example.com`). TXT records go to
+  `_acme-challenge.preview.example.com`. No extra record.
+- **Delegated**: the preview domain's DNS belongs to an account the token
+  can't edit (another Hostinger account, a client's IT, …). Use any Hostinger
+  domain the token's account owns as the zone, and add **one static CNAME,
+  once**, where the preview domain is managed:
+
+  ```
+  _acme-challenge.<preview domain>  CNAME  _acme-challenge.<preview-domain-with-dashes>.<challenge zone>
+  ```
+
+  The Previews page shows the exact record. Let's Encrypt follows the CNAME,
+  so the changing TXT value lives in the challenge zone and the preview
+  domain's DNS is never written by Agent Studio.
+
+Reference install: preview `preview.matilabs.com` (matilabs.com is owned by a
+different Hostinger account), challenge zone `getkinly.com`, CNAME
+`_acme-challenge.preview.matilabs.com → _acme-challenge.preview-matilabs-com.getkinly.com`.
+
+Prefer delegated for client installs: the client adds two static records
+(wildcard A + CNAME) and never hands over API access to their main domain.
 
 ## 2. DNS record (Hostinger hPanel)
 
 | Type | Name | Points to | TTL |
 |---|---|---|---|
 | A | `*.preview` | `<server ip>` | lowest |
+| CNAME (delegated only) | `_acme-challenge.preview` | value shown on the Previews page | lowest |
+
+Both are static and added once by hand in the preview domain's DNS (hPanel
+admin access is enough; no API token from that account is needed).
 
 ```sh
 dig +short A test.<preview domain> @ns1.dns-parking.com   # → <server ip>
@@ -93,7 +127,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:3100/api/inter
 
 ## 4. Instance Settings → Previews (UI)
 
-1. **Preview domain** `preview.matilabs.com`, **DNS zone** `matilabs.com` → Save domain.
+1. **Preview domain** `preview.matilabs.com`, **DNS zone the token can edit** (`matilabs.com` direct, or e.g. `getkinly.com` delegated) → Save domain. If delegated, add the CNAME the page shows.
 2. **Hostinger API token** → Save token (stored encrypted; never shown again).
 3. **Test** → must say "Works — … was published and removed". A failure shows
    Hostinger's exact error (e.g. `HTTP 401 Unauthenticated` = bad/expired token).
@@ -114,7 +148,9 @@ _TBD — filled in from the reference install._
 | Hook gets `404` | `PAPERCLIP_PREVIEW_DNS_HOOK_SECRET` missing from the running process. Check `ecosystem.config.cjs`, then `pm2 reload … --update-env`. |
 | Hook gets `403` | Secret file ≠ env value, the call went through nginx, or the domain isn't the configured preview domain. The hook must call `127.0.0.1:3100` directly. |
 | Hook gets `422 Previews DNS is not configured` | Domain, zone or token not saved in Instance Settings → Previews. |
-| `HTTP 401 Unauthenticated` (Test DNS or Last certificate challenge) | Hostinger token expired or revoked. Create a new one in hPanel → Profile → API and save it on the Previews page. Seen on the reference install on 2026-10-18 with an old connector token. |
+| `HTTP 401 Unauthenticated` (Test DNS or Last certificate challenge) | Hostinger token expired or revoked. Create a new one at `hpanel.hostinger.com/api` and save it on the Previews page. Seen on the reference install on 2026-10-18 with an old connector token. |
+| `HTTP 403 … [DNS:4002] Customer does not own <zone> domain` | The token's Hostinger account doesn't own that zone (e.g. it's in another account you only have admin access to). Use a zone owned by the token's account plus the delegated CNAME. Seen on the reference install on 2026-10-18. |
+| Test says `DNS writes work, but the CNAME is missing` | Add the CNAME shown on the page in the preview domain's DNS; re-run Test after it propagates. |
 | `did not appear on authoritative nameservers` | Hostinger accepted the write but didn't publish in time. Retry; check the zone in hPanel. |
 | Certificate shows "Not issued yet" | nginx isn't serving a `*.<preview domain>` certificate yet — finish sections 5–6. |
 | Test DNS button times out in the browser | nginx `proxy_read_timeout` below ~150 s. |

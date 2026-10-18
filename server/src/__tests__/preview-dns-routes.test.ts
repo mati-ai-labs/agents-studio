@@ -2,7 +2,8 @@ import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../services/instance-previews.js", () => ({
+vi.mock("../services/instance-previews.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../services/instance-previews.js")>()),
   instancePreviewsService: () => ({}),
 }));
 
@@ -165,5 +166,46 @@ describe("runPreviewDnsTest", () => {
     expect(result.ok).toBe(false);
     expect(result.error).toContain("HTTP 401");
     expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("delegated challenge zone (CNAME)", () => {
+  const delegated = { domain: "preview.example.com", zone: "challenges.net", provider: "hostinger" as const, token: "t" };
+
+  it("writes the ACME TXT record into the challenge zone", async () => {
+    const fetchImpl = okFetch();
+    const { app, waitForTxt } = await createApp(fetchImpl, { readCredentials: async () => delegated });
+
+    const res = await request(app)
+      .post("/api/internal/preview-dns/present")
+      .set("X-Preview-DNS-Secret", "hook-secret")
+      .send({ domain: "preview.example.com", validation: "abc123" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.record).toBe("_acme-challenge.preview-example-com.challenges.net");
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe("https://developers.hostinger.com/api/dns/v1/zones/challenges.net");
+    expect(JSON.parse(init.body).zone[0].name).toBe("_acme-challenge.preview-example-com");
+    expect(waitForTxt).toHaveBeenCalledWith("challenges.net", "_acme-challenge.preview-example-com.challenges.net", "abc123");
+  });
+
+  it("test passes only when the CNAME points at the challenge record", async () => {
+    const { runPreviewDnsTest } = await import("../routes/preview-dns.js");
+    const ok = await runPreviewDnsTest(delegated, {
+      fetchImpl: okFetch(),
+      waitForTxt: vi.fn().mockResolvedValue(true),
+      resolveCname: async () => "_acme-challenge.preview-example-com.challenges.net",
+    });
+    expect(ok.ok).toBe(true);
+
+    const missing = await runPreviewDnsTest(delegated, {
+      fetchImpl: okFetch(),
+      waitForTxt: vi.fn().mockResolvedValue(true),
+      resolveCname: async () => null,
+    });
+    expect(missing.ok).toBe(false);
+    expect(missing.error).toContain(
+      "Add CNAME _acme-challenge.preview.example.com → _acme-challenge.preview-example-com.challenges.net",
+    );
   });
 });
