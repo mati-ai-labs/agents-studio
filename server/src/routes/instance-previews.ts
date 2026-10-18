@@ -10,6 +10,7 @@ import {
   type PreviewCertificateStatus,
 } from "../services/instance-previews.js";
 import { runPreviewDnsTest } from "./preview-dns.js";
+import { setCachedPreviewDomain } from "../services/preview-hosts.js";
 import { assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 
 const patchInstancePreviewsSchema = z
@@ -52,6 +53,7 @@ export function instancePreviewsRoutes(db: Db, opts: InstancePreviewsRouteOption
     assertInstanceAdmin(req);
     const before = await svc.get();
     const updated = await svc.update(req.body);
+    setCachedPreviewDomain(updated.domain);
     const actor = getActorInfo(req);
     const beforeEnabled = new Set(before.enabledCompanyIds);
     const afterEnabled = new Set(updated.enabledCompanyIds);

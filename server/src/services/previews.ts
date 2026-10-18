@@ -1,12 +1,20 @@
 import { randomBytes } from "node:crypto";
 import type { Db } from "@paperclipai/db";
 import { companies, previewLeases, workspaceRuntimeServices } from "@paperclipai/db";
-import { and, desc, eq, lte } from "drizzle-orm";
+import { and, desc, eq, isNull, lte, ne, or } from "drizzle-orm";
 import type { PreviewLease } from "@paperclipai/shared";
 import { HttpError, badRequest, forbidden, notFound } from "../errors.js";
 import { instancePreviewsService } from "./instance-previews.js";
+import { buildPreviewHostUrl } from "./preview-hosts.js";
 
-export const PREVIEW_LEASE_TTL_SECONDS = 30 * 60;
+/**
+ * Leases are stable: one link per app service. A lease lapses only after 30
+ * days without a visit, and even then the next lease for the same service gets
+ * the same slug back. Revoking a lease is the only way to retire its link.
+ */
+export const PREVIEW_LEASE_TTL_SECONDS = 30 * 24 * 60 * 60;
+/** Don't write `last_accessed_at`/`expires_at` more than once a minute per lease. */
+const ACCESS_TOUCH_INTERVAL_MS = 60_000;
 
 type PreviewLeaseRow = typeof previewLeases.$inferSelect;
 type RuntimeServiceRow = typeof workspaceRuntimeServices.$inferSelect;
@@ -77,14 +85,16 @@ export function createPreviewSlug(companyCode: string | null | undefined, servic
   return `${company}-${service}-${randomBytes(9).toString("hex")}`;
 }
 
-function toPreviewLease(row: PreviewLeaseRow, baseUrl?: string | null): PreviewLease {
+/** `https://<slug>.<domain>/` when a preview domain is configured, else the `/preview/<slug>` URL. */
+function toPreviewLease(row: PreviewLeaseRow, baseUrl?: string | null, domain?: string | null): PreviewLease {
   return {
     id: row.id,
     companyId: row.companyId,
     runtimeServiceId: row.runtimeServiceId,
     slug: row.slug,
     status: row.status as PreviewLease["status"],
-    url: buildPreviewUrl(row.slug, baseUrl),
+    url: domain ? buildPreviewHostUrl(row.slug, domain) : buildPreviewUrl(row.slug, baseUrl),
+    pathUrl: buildPreviewUrl(row.slug, baseUrl),
     expiresAt: row.expiresAt,
     lastAccessedAt: row.lastAccessedAt,
     expiredAt: row.expiredAt,
@@ -129,6 +139,7 @@ async function expireLeaseIfDue(db: Db, row: PreviewLeaseRow, now: Date): Promis
 
 export function previewLeaseService(db: Db) {
   const instancePreviews = instancePreviewsService(db);
+  const previewDomain = async () => (await instancePreviews.get()).domain;
 
   return {
     /** Throws 403 `previews_disabled` unless the company is switched on in Instance settings → Previews. */
@@ -156,7 +167,8 @@ export function previewLeaseService(db: Db) {
         .from(previewLeases)
         .where(eq(previewLeases.companyId, companyId))
         .orderBy(desc(previewLeases.createdAt));
-      return rows.map((row) => toPreviewLease(row, baseUrl));
+      const domain = await previewDomain();
+      return rows.map((row) => toPreviewLease(row, baseUrl, domain));
     },
 
     getById: async (id: string, baseUrl?: string | null) => {
@@ -166,7 +178,7 @@ export function previewLeaseService(db: Db) {
         .where(eq(previewLeases.id, id))
         .then((rows) => rows[0] ?? null);
       if (!row) return null;
-      return toPreviewLease(await expireLeaseIfDue(db, row, new Date()), baseUrl);
+      return toPreviewLease(await expireLeaseIfDue(db, row, new Date()), baseUrl, await previewDomain());
     },
 
     getBySlug: async (slug: string, baseUrl?: string | null): Promise<PreviewLeaseWithRuntimeService | null> => {
@@ -182,11 +194,18 @@ export function previewLeaseService(db: Db) {
       if (leaseRow.id !== row.lease.id || leaseRow.status !== row.lease.status) {
         row.lease = leaseRow;
       }
-      if (row.lease.status === "active") {
+      const now = new Date();
+      const lastTouch = row.lease.lastAccessedAt?.getTime() ?? 0;
+      if (row.lease.status === "active" && now.getTime() - lastTouch >= ACCESS_TOUCH_INTERVAL_MS) {
+        // Each visit pushes the idle expiry out again.
         void db
           .update(previewLeases)
-          .set({ lastAccessedAt: new Date(), updatedAt: new Date() })
-          .where(eq(previewLeases.id, row.lease.id))
+          .set({
+            lastAccessedAt: now,
+            expiresAt: new Date(now.getTime() + PREVIEW_LEASE_TTL_SECONDS * 1000),
+            updatedAt: now,
+          })
+          .where(and(eq(previewLeases.id, row.lease.id), eq(previewLeases.status, "active")))
           .catch(() => undefined);
       }
 
@@ -219,6 +238,7 @@ export function previewLeaseService(db: Db) {
         .then((rows) => rows[0]?.issuePrefix ?? null);
 
       const now = new Date();
+      const domain = await previewDomain();
       const existing = await db
         .select()
         .from(previewLeases)
@@ -234,7 +254,56 @@ export function previewLeaseService(db: Db) {
       if (existing) {
         const activeExisting = await expireLeaseIfDue(db, existing, now);
         if (activeExisting.status === "active") {
-          const lease = toPreviewLease(activeExisting, input.baseUrl);
+          const lease = toPreviewLease(activeExisting, input.baseUrl, domain);
+          await db
+            .update(workspaceRuntimeServices)
+            .set({ url: lease.url, updatedAt: now })
+            .where(eq(workspaceRuntimeServices.id, input.runtimeServiceId));
+          return lease;
+        }
+      }
+
+      // Same app service as before (same workspace + service name, possibly a new
+      // runtime row after a restart): bring its old link back instead of minting one.
+      const previous = await db
+        .select({ lease: previewLeases })
+        .from(previewLeases)
+        .innerJoin(workspaceRuntimeServices, eq(workspaceRuntimeServices.id, previewLeases.runtimeServiceId))
+        .where(
+          and(
+            eq(previewLeases.companyId, input.companyId),
+            ne(previewLeases.status, "revoked"),
+            eq(workspaceRuntimeServices.scopeType, runtimeService.scopeType),
+            runtimeService.scopeId === null
+              ? isNull(workspaceRuntimeServices.scopeId)
+              : eq(workspaceRuntimeServices.scopeId, runtimeService.scopeId),
+            eq(workspaceRuntimeServices.serviceName, runtimeService.serviceName),
+            // Never take a link that another running copy is still serving.
+            or(
+              eq(previewLeases.status, "expired"),
+              ne(workspaceRuntimeServices.status, "running"),
+              eq(workspaceRuntimeServices.id, input.runtimeServiceId),
+            ),
+          ),
+        )
+        .orderBy(desc(previewLeases.updatedAt))
+        .limit(1)
+        .then((rows) => rows[0]?.lease ?? null);
+      if (previous) {
+        const revived = await db
+          .update(previewLeases)
+          .set({
+            runtimeServiceId: input.runtimeServiceId,
+            status: "active",
+            expiresAt: new Date(now.getTime() + PREVIEW_LEASE_TTL_SECONDS * 1000),
+            expiredAt: null,
+            updatedAt: now,
+          })
+          .where(and(eq(previewLeases.id, previous.id), ne(previewLeases.status, "revoked")))
+          .returning()
+          .then((rows) => rows[0] ?? null);
+        if (revived) {
+          const lease = toPreviewLease(revived, input.baseUrl, domain);
           await db
             .update(workspaceRuntimeServices)
             .set({ url: lease.url, updatedAt: now })
@@ -259,7 +328,7 @@ export function previewLeaseService(db: Db) {
             .returning()
             .then((rows) => rows[0]);
           if (!row) throw new Error("Preview lease was not created");
-          const lease = toPreviewLease(row, input.baseUrl);
+          const lease = toPreviewLease(row, input.baseUrl, domain);
           await db
             .update(workspaceRuntimeServices)
             .set({ url: lease.url, updatedAt: now })
@@ -299,7 +368,7 @@ export function previewLeaseService(db: Db) {
           .set({ url: null, updatedAt: now })
           .where(eq(workspaceRuntimeServices.id, row.runtimeServiceId));
       }
-      return row ? toPreviewLease(row, baseUrl) : null;
+      return row ? toPreviewLease(row, baseUrl, await previewDomain()) : null;
     },
 
     expireDue: async (now = new Date()) => {

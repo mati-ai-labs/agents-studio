@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isPreviewHostUpgrade } from "../services/preview-hosts.js";
 import type { IncomingMessage, Server as HttpServer } from "node:http";
 import { createRequire } from "node:module";
 import type { Duplex } from "node:stream";
@@ -286,6 +287,8 @@ export function setupLiveEventsWebSocketServer(
     }
 
     const url = new URL(req.url, "http://localhost");
+    // Preview hosts (`<slug>.<preview domain>`) belong to preview-ws.
+    if (isPreviewHostUpgrade(req)) return;
     if (url.pathname === "/preview" || url.pathname.startsWith("/preview/")) {
       return;
     }

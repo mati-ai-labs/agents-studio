@@ -69,7 +69,7 @@ import { slackEventsRoute } from "./routes/slack-events.js";
 import { slackChannelRoutes } from "./routes/slack-channel-routes.js";
 import { slackSlashCommandsRoute } from "./routes/slack-slash-commands.js";
 import { chatRoutes } from "./routes/chat.js";
-import { previewApiRoutes, previewProxyRoutes } from "./routes/previews.js";
+import { previewApiRoutes, previewAuthRoutes, previewHostMiddleware, previewProxyRoutes } from "./routes/previews.js";
 import { readBrandedStaticIndexHtml } from "./static-index-html.js";
 import { applyUiBranding } from "./ui-branding.js";
 import { logger } from "./middleware/logger.js";
@@ -208,6 +208,9 @@ export async function createApp(
     limit: DEFAULT_JSON_BODY_LIMIT,
     verify: captureRawBody,
   }));
+  // `<slug>.<preview domain>` requests are the previewed app's, not Agent Studio's:
+  // handle them before compression, the hostname guard and Agent Studio auth.
+  app.use(previewHostMiddleware(db));
   app.use("/api", apiCompression());
   app.use(httpLogger);
   const privateHostnameGateEnabled = shouldEnablePrivateHostnameGuard({
@@ -418,6 +421,7 @@ export async function createApp(
   api.use("/agents", connectorsRouter);
   api.use(chatRoutes(db));
   api.use(previewApiRoutes(db));
+  api.use(previewAuthRoutes(db));
   api.use(
     accessRoutes(db, {
       deploymentMode: opts.deploymentMode,

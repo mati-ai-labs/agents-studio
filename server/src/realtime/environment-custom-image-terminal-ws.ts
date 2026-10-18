@@ -1,4 +1,5 @@
 import type { IncomingMessage, Server as HttpServer } from "node:http";
+import { isPreviewHostUpgrade } from "../services/preview-hosts.js";
 import { createRequire } from "node:module";
 import type { Duplex } from "node:stream";
 import type { Db } from "@paperclipai/db";
@@ -722,6 +723,7 @@ export function setupEnvironmentCustomImageTerminalWebSocketServer(
   server.on("upgrade", (req, socket, head) => {
     const reqWithContext = req as IncomingMessageWithTerminalContext;
     if (!req.url) return;
+    if (isPreviewHostUpgrade(req)) return;
 
     const url = new URL(req.url, "http://localhost");
     const path = parseTerminalPath(url.pathname);
