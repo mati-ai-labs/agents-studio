@@ -54,7 +54,6 @@ import { OrgChart } from "./pages/OrgChart";
 import { NewAgent } from "./pages/NewAgent";
 import { AuthPage } from "./pages/Auth";
 import { LoginPage } from "./pages/Login";
-import { PreviewAuthResumePage } from "./pages/PreviewAuthResume";
 import { BoardClaimPage } from "./pages/BoardClaim";
 import { CliAuthPage } from "./pages/CliAuth";
 import { InviteLandingPage } from "./pages/InviteLanding";
@@ -279,7 +278,6 @@ export function App() {
       <Routes>
         <Route path="auth" element={<AuthPage />} />
         <Route path="login" element={<LoginPage />} />
-        <Route path="preview-auth" element={<PreviewAuthResumePage />} />
         <Route path="board-claim/:token" element={<BoardClaimPage />} />
         <Route path="cli-auth/:id" element={<CliAuthPage />} />
         <Route path="invite/:token" element={<InviteLandingPage />} />
