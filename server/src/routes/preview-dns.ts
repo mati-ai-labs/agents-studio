@@ -1,8 +1,13 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import { promises as dnsPromises } from "node:dns";
 import { Router, type Request } from "express";
 import type { Db } from "@paperclipai/db";
 import { badRequest, forbidden, notFound, unprocessable } from "../errors.js";
-import { instancePreviewsService, type PreviewDnsCredentials } from "../services/instance-previews.js";
+import {
+  instancePreviewsService,
+  resolveChallengeTarget,
+  type PreviewDnsCredentials,
+} from "../services/instance-previews.js";
 import {
   addHostingerTxtRecord,
   deleteHostingerTxtRecords,
@@ -52,36 +57,52 @@ function isDirectLoopbackRequest(req: Request): boolean {
   return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
 }
 
-/** `<label>.<domain>` expressed relative to the zone, e.g. `_acme-challenge.preview`. */
-export function recordNameInZone(label: string, domain: string, zone: string): string {
-  const fqdn = `${label}.${domain}`;
-  if (fqdn === zone || !fqdn.endsWith(`.${zone}`)) {
-    throw unprocessable(`Domain ${domain} is not inside DNS zone ${zone}`);
-  }
-  return fqdn.slice(0, -(zone.length + 1));
+/** Resolve the CNAME at `name` via public DNS; null when there is none. */
+async function lookupCname(name: string): Promise<string | null> {
+  const records = await dnsPromises.resolveCname(name).catch(() => [] as string[]);
+  return records[0]?.toLowerCase().replace(/\.$/, "") ?? null;
 }
 
-/** Present a TXT record, wait until authoritative NS serve it, then remove it. */
+/**
+ * Present a TXT record, wait until authoritative NS serve it, then remove it.
+ * For a delegated challenge zone, also check the operator's CNAME.
+ */
 export async function runPreviewDnsTest(
   creds: PreviewDnsCredentials,
-  opts: { waitForTxt?: typeof waitForAuthoritativeTxt; fetchImpl?: typeof fetch } = {},
+  opts: {
+    waitForTxt?: typeof waitForAuthoritativeTxt;
+    fetchImpl?: typeof fetch;
+    resolveCname?: (name: string) => Promise<string | null>;
+  } = {},
 ): Promise<{ ok: boolean; record: string; error: string | null }> {
   const waitForTxt = opts.waitForTxt ?? waitForAuthoritativeTxt;
-  const label = "_agentstudio-dns-test";
-  const name = recordNameInZone(label, creds.domain, creds.zone);
-  const record = `${name}.${creds.zone}`;
+  const resolveCname = opts.resolveCname ?? lookupCname;
+  const target = resolveChallengeTarget(creds.domain, creds.zone, "_agentstudio-dns-test");
   const value = `agentstudio-test-${randomBytes(8).toString("hex")}`;
   const client = { token: creds.token, fetchImpl: opts.fetchImpl };
   try {
-    await addHostingerTxtRecord(client, creds.zone, name, value);
-    const visible = await waitForTxt(creds.zone, `${label}.${creds.domain}`, value, { timeoutMs: 120_000 });
-    if (!visible) return { ok: false, record, error: "Record was accepted but did not appear on the authoritative nameservers within 120s" };
-    return { ok: true, record, error: null };
+    await addHostingerTxtRecord(client, creds.zone, target.recordName, value);
+    const visible = await waitForTxt(creds.zone, target.fqdn, value, { timeoutMs: 120_000 });
+    if (!visible) {
+      return { ok: false, record: target.fqdn, error: "Record was accepted but did not appear on the authoritative nameservers within 120s" };
+    }
   } catch (err) {
-    return { ok: false, record, error: err instanceof Error ? err.message : String(err) };
+    return { ok: false, record: target.fqdn, error: err instanceof Error ? err.message : String(err) };
   } finally {
-    await deleteHostingerTxtRecords(client, creds.zone, name).catch(() => undefined);
+    await deleteHostingerTxtRecords(client, creds.zone, target.recordName).catch(() => undefined);
   }
+  const challenge = resolveChallengeTarget(creds.domain, creds.zone);
+  if (challenge.delegated) {
+    const actual = await resolveCname(challenge.cnameName);
+    if (actual !== challenge.fqdn) {
+      return {
+        ok: false,
+        record: target.fqdn,
+        error: `DNS writes work, but the CNAME is ${actual ? `pointing to ${actual}` : "missing"}. Add CNAME ${challenge.cnameName} → ${challenge.fqdn}`,
+      };
+    }
+  }
+  return { ok: true, record: target.fqdn, error: null };
 }
 
 export function previewDnsRoutes(db: Db, opts: PreviewDnsRouteOptions = {}) {
@@ -112,23 +133,24 @@ export function previewDnsRoutes(db: Db, opts: PreviewDnsRouteOptions = {}) {
     const validation = typeof req.body?.validation === "string" ? req.body.validation.trim() : "";
     if (action === "present" && !validation) throw badRequest("validation is required");
 
-    const name = recordNameInZone("_acme-challenge", domain, creds.zone);
+    const target = resolveChallengeTarget(domain, creds.zone);
+    const name = target.recordName;
     const client = { token: creds.token, fetchImpl: opts.fetchImpl };
     if (action === "present") {
       try {
         await addHostingerTxtRecord(client, creds.zone, name, validation);
-        const visible = await waitForTxt(creds.zone, `_acme-challenge.${domain}`, validation);
-        if (!visible) throw unprocessable(`TXT record ${name}.${creds.zone} did not appear on authoritative nameservers`);
+        const visible = await waitForTxt(creds.zone, target.fqdn, validation);
+        if (!visible) throw unprocessable(`TXT record ${target.fqdn} did not appear on authoritative nameservers`);
       } catch (err) {
         await recordChallenge({ ok: false, at: new Date().toISOString(), error: err instanceof Error ? err.message : String(err) });
         throw err;
       }
       await recordChallenge({ ok: true, at: new Date().toISOString(), error: null });
-      res.json({ ok: true, record: `${name}.${creds.zone}` });
+      res.json({ ok: true, record: target.fqdn });
       return;
     }
     await deleteHostingerTxtRecords(client, creds.zone, name);
-    res.json({ ok: true, record: `${name}.${creds.zone}` });
+    res.json({ ok: true, record: target.fqdn });
   });
 
   return router;

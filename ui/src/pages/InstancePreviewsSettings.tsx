@@ -135,7 +135,9 @@ export function InstancePreviewsSettings() {
           <h2 className="text-sm font-semibold">Domain and DNS</h2>
           <p className="text-sm text-muted-foreground">
             The preview domain needs a wildcard A record (<code>*.{data.domain ?? "preview.example.com"}</code>) pointing
-            at this server. The DNS API token is used only to answer certificate challenges and is stored encrypted.
+            at this server. The DNS API token is used only to answer certificate challenges and is stored encrypted. The
+            token's zone can be the preview domain's own zone, or any other Hostinger domain you control — then add the
+            one CNAME shown below in the preview domain's DNS.
           </p>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
@@ -144,8 +146,8 @@ export function InstancePreviewsSettings() {
             <Input value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="preview.example.com" />
           </label>
           <label className="space-y-1.5 text-sm">
-            <span className="font-medium">DNS zone (Hostinger)</span>
-            <Input value={dnsZone} onChange={(e) => setDnsZone(e.target.value)} placeholder="example.com" />
+            <span className="font-medium">DNS zone the token can edit (Hostinger)</span>
+            <Input value={dnsZone} onChange={(e) => setDnsZone(e.target.value)} placeholder="example.com or another domain in the token's account" />
           </label>
         </div>
         <div className="flex justify-end">
@@ -165,7 +167,7 @@ export function InstancePreviewsSettings() {
               autoComplete="off"
               value={dnsToken}
               onChange={(e) => setDnsToken(e.target.value)}
-              placeholder={data.dnsTokenConfigured ? "Saved — enter a new token to replace it" : "hPanel → Profile → API"}
+              placeholder={data.dnsTokenConfigured ? "Saved — enter a new token to replace it" : "hpanel.hostinger.com/api → Generate new token"}
             />
             <Button
               size="sm"
@@ -176,6 +178,18 @@ export function InstancePreviewsSettings() {
             </Button>
           </div>
         </label>
+        {data.challenge?.delegated && (
+          <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-3 text-sm space-y-1">
+            <div className="font-medium">One-time CNAME in {data.domain}'s DNS</div>
+            <div className="text-muted-foreground">
+              {data.domain} is not inside {data.dnsZone}, so certificate challenges are delegated. Add this record once
+              where {data.domain} is managed:
+            </div>
+            <div className="font-mono text-xs break-all">
+              CNAME {data.challenge.cnameName} → {data.challenge.cnameTarget}
+            </div>
+          </div>
+        )}
         <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-background px-3 py-3">
           <div className="text-sm">
             <div className="font-medium">Test DNS connection</div>

@@ -6,7 +6,14 @@ turn previews on per company. Written for our cloud install and for on-prem
 client installs.
 
 Reference install: `agentstudio.matilabs.com`, preview domain
-`preview.matilabs.com` (AWS EC2, Ubuntu, nginx, certbot, pm2).
+`agent-preview.site` (AWS EC2, Ubuntu, nginx, certbot, pm2). Set up
+2026-10-18; wildcard cert valid until 2027-01-16 and auto-renewing.
+
+**Recommendation:** use a dedicated domain for previews (we bought
+`agent-preview.site` on Hostinger in the same account as the API token).
+Preview apps run code agents wrote; on a separate registrable domain they
+can't read or set cookies for the Agent Studio domain. A new domain took
+~13 minutes to resolve publicly.
 
 ## Who does what
 
@@ -57,16 +64,51 @@ Code: `server/src/routes/preview-dns.ts`, `server/src/routes/instance-previews.t
 | Static public IP | AWS: Elastic IP. Otherwise the A record breaks on stop/start |
 | nginx + certbot installed, renewal timer active | `systemctl list-timers \| grep certbot` |
 | nginx `proxy_read_timeout` ≥ 150s on the Agent Studio location | The **Test DNS** button can take up to 120 s |
-| Hostinger API token that can edit the zone | hPanel → Profile → API. Pick the longest expiry; note the date |
+| Hostinger API token for a zone you control | `hpanel.hostinger.com/api` → **Generate new token** (longest expiry; note the date). A token only works for domains **owned by the account that created it** — see "Challenge zone" below |
+
+## Challenge zone (direct vs delegated)
+
+Let's Encrypt gives a **new random value on every issue/renewal** (~60 days)
+that must be published as a TXT record at `_acme-challenge.<preview domain>`.
+Agent Studio writes it automatically through the DNS API, so the token must be
+able to edit the zone that record lives in: the *challenge zone*.
+
+- **Direct**: the preview domain is inside the token's zone (preview
+  `preview.example.com`, zone `example.com`). TXT records go to
+  `_acme-challenge.preview.example.com`. No extra record.
+- **Delegated**: the preview domain's DNS belongs to an account the token
+  can't edit (another Hostinger account, a client's IT, …). Use any Hostinger
+  domain the token's account owns as the zone, and add **one static CNAME,
+  once**, where the preview domain is managed:
+
+  ```
+  _acme-challenge.<preview domain>  CNAME  _acme-challenge.<preview-domain-with-dashes>.<challenge zone>
+  ```
+
+  The Previews page shows the exact record. Let's Encrypt follows the CNAME,
+  so the changing TXT value lives in the challenge zone and the preview
+  domain's DNS is never written by Agent Studio.
+
+Example: preview `preview.matilabs.com` where matilabs.com is owned by a
+different Hostinger account, challenge zone `getkinly.com`, CNAME
+`_acme-challenge.preview.matilabs.com → _acme-challenge.preview-matilabs-com.getkinly.com`.
+(The reference install ended up direct on its own domain instead.)
+
+Prefer delegated for client installs: the client adds two static records
+(wildcard A + CNAME) and never hands over API access to their main domain.
 
 ## 2. DNS record (Hostinger hPanel)
 
 | Type | Name | Points to | TTL |
 |---|---|---|---|
-| A | `*.preview` | `<server ip>` | lowest |
+| A | `*` (dedicated domain) or `*.preview` (subdomain) | `<server ip>` | lowest |
+| CNAME (delegated only) | `_acme-challenge.<preview label>` | value shown on the Previews page | lowest |
+
+Both are static and added once by hand in the preview domain's DNS (hPanel
+admin access is enough; no API token from that account is needed).
 
 ```sh
-dig +short A test.<preview domain> @ns1.dns-parking.com   # → <server ip>
+dig +short A test.<preview domain> @8.8.8.8   # → <server ip> (public resolution, not just Hostinger NS)
 ```
 
 ## 3. Hook secret (host)
@@ -93,19 +135,112 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:3100/api/inter
 
 ## 4. Instance Settings → Previews (UI)
 
-1. **Preview domain** `preview.matilabs.com`, **DNS zone** `matilabs.com` → Save domain.
+1. **Preview domain** and **DNS zone the token can edit** → Save domain (reference: both `agent-preview.site`). If delegated, add the CNAME the page shows.
 2. **Hostinger API token** → Save token (stored encrypted; never shown again).
 3. **Test** → must say "Works — … was published and removed". A failure shows
    Hostinger's exact error (e.g. `HTTP 401 Unauthenticated` = bad/expired token).
 4. Turn on **Companies** that should be able to share previews.
 
-## 5. Issue the wildcard certificate (host)
+## 5. Install the hook and issue the wildcard certificate (host)
 
-_TBD — filled in from the reference install._
+Install a standalone copy of the hook so deploys or repo resets can't break
+renewals:
+
+```sh
+sudo install -m 755 -o root -g root \
+  /home/ubuntu/agents-studio/scripts/preview-dns-certbot-hook.sh \
+  /usr/local/bin/paperclip-preview-dns-hook
+```
+
+Smoke-test it against the real DNS API (expect `{"ok":true,...}` twice, and
+the value visible on Hostinger's nameserver in between):
+
+```sh
+sudo CERTBOT_DOMAIN=<preview domain> CERTBOT_VALIDATION=hooktest \
+  /usr/local/bin/paperclip-preview-dns-hook present
+dig +short TXT _acme-challenge.<preview domain> @<hostinger ns>   # "hooktest"
+sudo CERTBOT_DOMAIN=<preview domain> /usr/local/bin/paperclip-preview-dns-hook cleanup
+```
+
+Hostinger's anycast nameservers can serve a deleted record for ~1 minute;
+that's normal.
+
+Issue (an existing certbot account on the host is reused):
+
+```sh
+sudo certbot certonly --non-interactive --manual --preferred-challenges dns \
+  --manual-auth-hook    "/usr/local/bin/paperclip-preview-dns-hook present" \
+  --manual-cleanup-hook "/usr/local/bin/paperclip-preview-dns-hook cleanup" \
+  --deploy-hook "systemctl reload nginx" \
+  --cert-name <preview domain> -d "*.<preview domain>"
+```
+
+Prove unattended renewal, and check the hooks were saved:
+
+```sh
+sudo certbot renew --cert-name <preview domain> --dry-run   # "all simulated renewals succeeded"
+sudo grep -E "manual_.*hook|renew_hook" /etc/letsencrypt/renewal/<preview domain>.conf
+```
+
+`certbot.timer` renews ~30 days before expiry. Every attempt shows on the
+Previews page under **Last certificate challenge**.
 
 ## 6. nginx server block (host)
 
-_TBD — filled in from the reference install._
+Back up first (`sudo tar czf ~/nginx-backup-$(date -u +%Y%m%d%H%M%S).tgz -C /etc nginx`),
+then create `/etc/nginx/sites-available/agent-preview` and symlink it into
+`sites-enabled`:
+
+```nginx
+server {
+  listen 443 ssl;
+  listen [::]:443 ssl;
+  server_name *.<preview domain>;
+
+  ssl_certificate /etc/letsencrypt/live/<preview domain>/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/<preview domain>/privkey.pem;
+  include /etc/letsencrypt/options-ssl-nginx.conf;
+  ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+  client_max_body_size 50m;
+
+  location / {
+    proxy_pass http://127.0.0.1:3100;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+  }
+}
+
+server {
+  listen 80;
+  listen [::]:80;
+  server_name *.<preview domain>;
+  return 301 https://$host$request_uri;
+}
+```
+
+```sh
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Verify from outside:
+
+```sh
+echo | openssl s_client -connect probe.<preview domain>:443 -servername probe.<preview domain> 2>/dev/null \
+  | openssl x509 -noout -subject -enddate          # CN=*.<preview domain>
+curl -s -o /dev/null -w '%{http_code} %{ssl_verify_result}\n' https://probe.<preview domain>/   # ssl_verify 0
+```
+
+The Previews page **Certificate** card should now say "Valid until …".
+(Until subdomain routing ships, Agent Studio answers preview hosts with 403
+from its hostname guard; TLS and nginx are still correct.)
 
 ## Troubleshooting
 
@@ -114,7 +249,9 @@ _TBD — filled in from the reference install._
 | Hook gets `404` | `PAPERCLIP_PREVIEW_DNS_HOOK_SECRET` missing from the running process. Check `ecosystem.config.cjs`, then `pm2 reload … --update-env`. |
 | Hook gets `403` | Secret file ≠ env value, the call went through nginx, or the domain isn't the configured preview domain. The hook must call `127.0.0.1:3100` directly. |
 | Hook gets `422 Previews DNS is not configured` | Domain, zone or token not saved in Instance Settings → Previews. |
-| `HTTP 401 Unauthenticated` (Test DNS or Last certificate challenge) | Hostinger token expired or revoked. Create a new one in hPanel → Profile → API and save it on the Previews page. Seen on the reference install on 2026-10-18 with an old connector token. |
+| `HTTP 401 Unauthenticated` (Test DNS or Last certificate challenge) | Hostinger token expired or revoked. Create a new one at `hpanel.hostinger.com/api` and save it on the Previews page. Seen on the reference install on 2026-10-18 with an old connector token. |
+| `HTTP 403 … [DNS:4002] Customer does not own <zone> domain` | The token's Hostinger account doesn't own that zone (e.g. it's in another account you only have admin access to). Use a zone owned by the token's account plus the delegated CNAME. Seen on the reference install on 2026-10-18. |
+| Test says `DNS writes work, but the CNAME is missing` | Add the CNAME shown on the page in the preview domain's DNS; re-run Test after it propagates. |
 | `did not appear on authoritative nameservers` | Hostinger accepted the write but didn't publish in time. Retry; check the zone in hPanel. |
 | Certificate shows "Not issued yet" | nginx isn't serving a `*.<preview domain>` certificate yet — finish sections 5–6. |
 | Test DNS button times out in the browser | nginx `proxy_read_timeout` below ~150 s. |

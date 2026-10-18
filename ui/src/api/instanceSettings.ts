@@ -21,6 +21,7 @@ export interface InstancePreviewSettingsView {
   enabledCompanyIds: string[];
   lastDnsTest: PreviewEventRecord | null;
   lastChallenge: PreviewEventRecord | null;
+  challenge: { delegated: boolean; cnameName: string; cnameTarget: string } | null;
   certificate: {
     status: "valid" | "not_issued" | "expired" | "unreachable";
     expiresAt: string | null;

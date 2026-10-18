@@ -34,6 +34,8 @@ export interface InstancePreviewSettings {
   enabledCompanyIds: string[];
   lastDnsTest: PreviewEventRecord | null;
   lastChallenge: PreviewEventRecord | null;
+  /** Where challenge TXT records go, and the CNAME to add when delegated. */
+  challenge: { delegated: boolean; cnameName: string; cnameTarget: string } | null;
 }
 
 export interface PatchInstancePreviewSettings {
@@ -71,8 +73,11 @@ function readStored(raw: unknown): StoredInstancePreviews {
 }
 
 function toView(stored: StoredInstancePreviews): InstancePreviewSettings {
+  const domain = normalizeHostname(stored.domain);
+  const zone = normalizeHostname(stored.dnsZone);
+  const target = domain && zone ? resolveChallengeTarget(domain, zone) : null;
   return {
-    domain: normalizeHostname(stored.domain),
+    domain,
     dnsProvider: stored.dnsProvider ?? "hostinger",
     dnsZone: normalizeHostname(stored.dnsZone),
     dnsTokenConfigured: typeof stored.dnsTokenEncrypted === "string" && stored.dnsTokenEncrypted.length > 0,
@@ -81,15 +86,42 @@ function toView(stored: StoredInstancePreviews): InstancePreviewSettings {
       : [],
     lastDnsTest: stored.lastDnsTest ?? null,
     lastChallenge: stored.lastChallenge ?? null,
+    challenge: target ? { delegated: target.delegated, cnameName: target.cnameName, cnameTarget: target.fqdn } : null,
   };
 }
 
-function validateDomainInZone(domain: string | null, zone: string | null) {
+function validateHostnames(domain: string | null, zone: string | null) {
   if (domain && !HOSTNAME_PATTERN.test(domain)) throw unprocessable(`Invalid preview domain: ${domain}`);
   if (zone && !HOSTNAME_PATTERN.test(zone)) throw unprocessable(`Invalid DNS zone: ${zone}`);
-  if (domain && zone && domain !== zone && !domain.endsWith(`.${zone}`)) {
-    throw unprocessable(`Preview domain ${domain} must be inside DNS zone ${zone}`);
+}
+
+export interface PreviewChallengeTarget {
+  /** Record name relative to the DNS zone the token can edit. */
+  recordName: string;
+  /** Fully qualified name the TXT record is written to. */
+  fqdn: string;
+  /**
+   * True when the preview domain is outside the token's zone. The operator
+   * then adds one CNAME `_acme-challenge.<domain>` → `fqdn` in the preview
+   * domain's own DNS, and Let's Encrypt follows it.
+   */
+  delegated: boolean;
+  cnameName: string;
+}
+
+/**
+ * Where the TXT record for `<label>.<domain>` lives. Inside the zone: written
+ * directly. Outside it: written to `<label>.<domain-with-dashes>.<zone>` and
+ * reached through a one-time CNAME (ACME challenge delegation).
+ */
+export function resolveChallengeTarget(domain: string, zone: string, label = "_acme-challenge"): PreviewChallengeTarget {
+  const cnameName = `_acme-challenge.${domain}`;
+  if (domain === zone || domain.endsWith(`.${zone}`)) {
+    const fqdn = `${label}.${domain}`;
+    return { recordName: fqdn.slice(0, -(zone.length + 1)), fqdn, delegated: false, cnameName };
   }
+  const recordName = `${label}.${domain.replace(/\./g, "-")}`;
+  return { recordName, fqdn: `${recordName}.${zone}`, delegated: true, cnameName };
 }
 
 /**
@@ -170,7 +202,7 @@ export function instancePreviewsService(db: Db) {
         const next: StoredInstancePreviews = { ...current, dnsProvider: "hostinger" };
         if (patch.domain !== undefined) next.domain = normalizeHostname(patch.domain);
         if (patch.dnsZone !== undefined) next.dnsZone = normalizeHostname(patch.dnsZone);
-        validateDomainInZone(normalizeHostname(next.domain), normalizeHostname(next.dnsZone));
+        validateHostnames(normalizeHostname(next.domain), normalizeHostname(next.dnsZone));
         if (patch.dnsToken !== undefined) {
           const token = patch.dnsToken?.trim() ?? "";
           next.dnsTokenEncrypted = token ? encryptValue(token) : null;
