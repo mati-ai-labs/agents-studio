@@ -129,6 +129,7 @@ export function previewProxyRoutes(db: Db) {
     }
 
     assertCompanyAccess(req, preview.lease.companyId);
+    await previews.assertCompanyEnabled(preview.lease.companyId);
     // Keep relative links in the application rooted inside the lease. Without
     // the trailing slash, a URL such as `./public/logo.png` resolves to
     // `/preview/public/logo.png` instead of `/preview/{slug}/public/logo.png`.
