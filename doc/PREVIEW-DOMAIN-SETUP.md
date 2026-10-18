@@ -21,7 +21,8 @@ can't read or set cookies for the Agent Studio domain. A new domain took
 |---|---|---|
 | Server operator (once per install) | Host shell + DNS provider | Wildcard A record, hook secret, certbot, nginx block (sections 2–5 below) |
 | Instance admin | **Instance Settings → Previews** | Preview domain, DNS zone, Hostinger API token, Test DNS, per-company toggles |
-| Agents | API | Expose a preview; get a clear error if previews are off for their company |
+| Agents | API | Start the app service; get back a stable `https://<company>-<service>-<random>.<preview domain>/` link, or a clear `previews_disabled` error |
+| Reviewers | Browser | Open the link and sign in with their Agent Studio account (once per preview, 8 hours) |
 
 Nothing about previews lives in company connectors or agent prompts. The DNS
 token belongs to the instance, so no single company can break previews for
@@ -239,8 +240,36 @@ curl -s -o /dev/null -w '%{http_code} %{ssl_verify_result}\n' https://probe.<pre
 ```
 
 The Previews page **Certificate** card should now say "Valid until …".
-(Until subdomain routing ships, Agent Studio answers preview hosts with 403
-from its hostname guard; TLS and nginx are still correct.)
+An unknown preview host (like `probe.`) answers `404 Preview not found` from
+Agent Studio; that confirms nginx → Agent Studio routing works.
+
+The `Upgrade`/`Connection` headers are required: apps' live reload and
+WebSockets go through this block.
+
+## 7. How preview links work
+
+- **One stable link per app service:** `<company code>-<service>-<random>`, e.g.
+  `https://lch-web-3f9a….agent-preview.site/`. Restarting the service keeps the
+  link. A link lapses after 30 days without a visit and comes back unchanged
+  when the agent starts the service again. Revoking a lease retires it.
+- **Sign-in:** the first visit redirects to Agent Studio
+  (`/api/preview-auth/start`). Agent Studio checks the user belongs to the
+  company, then sends them back with a 60-second, single-use token. The preview
+  host swaps it for an 8-hour cookie (`agentstudio_preview`) valid for that one
+  preview only. Users who aren't signed in go through the normal login first.
+  Users outside the company see "Preview not found".
+- **Switching a company off** in Instance Settings → Previews blocks its links
+  immediately (403), including for people already signed in.
+- **What reaches the app:** every path and query unchanged, plus the app's own
+  cookies and `Authorization` header. Agent Studio's cookies and the
+  `agentstudio_preview` cookie are stripped. No HTML/JS rewriting.
+- **Old path links** (`<Agent Studio>/preview/<slug>/`) keep working with an
+  Agent Studio login or agent API key. Agents use them (`pathUrl` in the lease)
+  to check their app, because they can't do the browser sign-in.
+- **Server config needed:** `PAPERCLIP_PUBLIC_URL` (the Agent Studio URL users
+  sign in at) must be set; previews redirect there to sign in. It is already set
+  on standard installs. Cookies are signed with a key derived from the
+  instance's secrets master key, so nothing else to configure.
 
 ## Troubleshooting
 
@@ -255,5 +284,10 @@ from its hostname guard; TLS and nginx are still correct.)
 | `did not appear on authoritative nameservers` | Hostinger accepted the write but didn't publish in time. Retry; check the zone in hPanel. |
 | Certificate shows "Not issued yet" | nginx isn't serving a `*.<preview domain>` certificate yet — finish sections 5–6. |
 | Test DNS button times out in the browser | nginx `proxy_read_timeout` below ~150 s. |
+| Preview page says "Preview sign-in not configured" | Set `PAPERCLIP_PUBLIC_URL` in `ecosystem.config.cjs`, then `pm2 reload … --update-env`. |
+| Preview host returns `403 Hostname … is not allowed` | Agent Studio doesn't know the preview domain yet: save it on the Previews page (applies within 30 s), or the server runs an older build. |
+| Sign-in loops back to the login page | The user's Agent Studio session isn't being set; check normal login works at `PAPERCLIP_PUBLIC_URL`. |
+| `503` "app is not running" | The runtime service stopped. Start it again from the project workspace; the link doesn't change. |
+| Live reload / WebSocket fails | The nginx block is missing the `Upgrade`/`Connection` headers. |
 
 Server logs: `pm2 logs paperclip`, search `preview-dns`.
