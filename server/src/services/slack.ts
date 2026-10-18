@@ -1,4 +1,6 @@
 import type { Db } from "@paperclipai/db";
+import { companyConnectors, slackChannelRoutes } from "@paperclipai/db";
+import { and, eq } from "drizzle-orm";
 import { connectorRegistryService } from "./connector-registry.js";
 
 const SLACK_API_BASE_URL = "https://slack.com/api";
@@ -408,6 +410,23 @@ async function getFreshSlackAccessToken(
   return refreshed.accessToken;
 }
 
+/**
+ * Which company's Slack connection posts for `companyId` in `channelId`.
+ * A channel can be mapped (Instance settings → Slack) to a company that has no
+ * Slack connection of its own; it then posts through the mapping's connection.
+ */
+export async function resolveSlackTokenCompanyId(db: Db, companyId: string, channelId: string): Promise<string> {
+  const own = await connectorRegistryService(db).getByType(companyId, "slack", null);
+  if (own?.status === "connected") return companyId;
+  const viaRoute = await db
+    .select({ connectorCompanyId: companyConnectors.companyId })
+    .from(slackChannelRoutes)
+    .innerJoin(companyConnectors, eq(companyConnectors.id, slackChannelRoutes.connectorId))
+    .where(and(eq(slackChannelRoutes.companyId, companyId), eq(slackChannelRoutes.channelId, channelId)))
+    .then((rows) => rows[0]?.connectorCompanyId ?? null);
+  return viaRoute ?? companyId;
+}
+
 export async function listSlackChannels(db: Db, companyId: string): Promise<SlackChannel[]> {
   const accessToken = await getFreshSlackAccessToken(db, companyId);
   const channels: SlackChannel[] = [];
@@ -454,7 +473,7 @@ export async function postSlackMessage(
   companyId: string,
   input: SlackPostMessageInput,
 ): Promise<SlackPostMessageResult> {
-  const accessToken = await getFreshSlackAccessToken(db, companyId);
+  const accessToken = await getFreshSlackAccessToken(db, await resolveSlackTokenCompanyId(db, companyId, input.channelId));
   const response = await slackFetchJson<SlackPostMessageResponse>(`${SLACK_API_BASE_URL}/chat.postMessage`, {
     method: "POST",
     headers: {
