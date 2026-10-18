@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
 import { slackEventDeliveries } from "@paperclipai/db";
+import { and, eq, ne } from "drizzle-orm";
 import { verifySlackSignature } from "../services/slack-signature.js";
 import { logger } from "../middleware/logger.js";
 
@@ -46,7 +47,7 @@ export function slackEventsRoute(db: Db, kick?: Kick): Router {
     const text = typeof event.text === "string" ? event.text.trim() : "";
     const ignored = !eventType || !eventId || !workspaceId || !channelId || !messageTs || !eventUserId || !text || event.subtype || event.bot_id || (eventType === "message.channels" && !threadTs);
     try {
-      await db.insert(slackEventDeliveries).values({
+      const inserted = await db.insert(slackEventDeliveries).values({
         eventId: eventId || `ignored:${Date.now()}:${Math.random()}`,
         workspaceId: workspaceId || "unknown",
         apiAppId: typeof body.api_app_id === "string" ? body.api_app_id : null,
@@ -67,7 +68,41 @@ export function slackEventsRoute(db: Db, kick?: Kick): Router {
           eventTs: typeof event.event_ts === "string" ? event.event_ts : null,
         },
         ...(ignored ? { status: "ignored" as const, processedAt: new Date(), lastError: "unsupported Slack event" } : {}),
-      }).onConflictDoNothing();
+      }).onConflictDoNothing().returning({ id: slackEventDeliveries.id });
+      // One @mention arrives as both `app_mention` and `message.channels`, in
+      // any order, and they share a row (same message). If the plain message
+      // won the race and was stored as ignored, let the mention take it over.
+      if (inserted.length === 0 && !ignored && channelId && messageTs) {
+        await db.update(slackEventDeliveries).set({
+          eventId,
+          eventType: eventType ?? "ignored",
+          apiAppId: typeof body.api_app_id === "string" ? body.api_app_id : null,
+          threadTs,
+          eventUserId: eventUserId || null,
+          payload: {
+            eventType: eventType ?? "ignored",
+            eventId,
+            workspaceId,
+            userId: eventUserId,
+            text,
+            channelId,
+            ts: messageTs,
+            threadTs,
+            eventTs: typeof event.event_ts === "string" ? event.event_ts : null,
+          },
+          status: "pending",
+          processedAt: null,
+          lastError: null,
+          nextAttemptAt: new Date(),
+          updatedAt: new Date(),
+        }).where(and(
+          eq(slackEventDeliveries.workspaceId, workspaceId),
+          eq(slackEventDeliveries.channelId, channelId),
+          eq(slackEventDeliveries.messageTs, messageTs),
+          eq(slackEventDeliveries.status, "ignored"),
+          ne(slackEventDeliveries.eventId, eventId),
+        ));
+      }
     } catch (error) {
       logger.error({ err: error }, "Failed to persist Slack event delivery");
       res.status(503).json({ error: "Slack event persistence unavailable" });
