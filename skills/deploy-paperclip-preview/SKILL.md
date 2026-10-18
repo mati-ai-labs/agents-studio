@@ -107,7 +107,7 @@ Wait for the HTTP readiness check to pass, then use the preview URL returned
 by Paperclip, normally:
 
 ```text
-https://<paperclip-host>/preview/<generated-slug>/
+https://<paperclip-host>/preview/<company-code>-<service>-<random>/
 ```
 
 Never invent the slug or substitute the localhost URL for the reviewer-facing
@@ -156,7 +156,13 @@ preview URL or an explicit, evidenced blocker.
 
 ## Troubleshooting
 
-- **No preview URL:** confirm the service uses `expose.type: "paperclip_preview"`,
+- **`403` with `"code": "previews_disabled"`:** previews are switched off for
+  this company. Do not retry, change the service, or look for another way to
+  publish. Post one comment saying an instance admin must turn previews on in
+  **Instance settings → Previews**, set the issue to `blocked`, and exit.
+- **No preview URL:** if the service is running but has no URL, call the
+  lease API above; it returns the reason (for example `previews_disabled`).
+  Otherwise confirm the service uses `expose.type: "paperclip_preview"`,
   is running, and passed readiness. If it was started manually, use the
   authenticated lease API fallback.
 - **`EADDRINUSE`:** remove the hard-coded port and let Paperclip allocate one;
