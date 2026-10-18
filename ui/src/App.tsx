@@ -43,6 +43,7 @@ import { InstanceAccess } from "./pages/InstanceAccess";
 import { InstanceSettings } from "./pages/InstanceSettings";
 import { InstanceExperimentalSettings } from "./pages/InstanceExperimentalSettings";
 import { InstancePreviewsSettings } from "./pages/InstancePreviewsSettings";
+import { InstanceSlackSettings } from "./pages/InstanceSlackSettings";
 import { ProfileSettings } from "./pages/ProfileSettings";
 import { PluginManager } from "./pages/PluginManager";
 import { PluginSettings } from "./pages/PluginSettings";
@@ -295,6 +296,7 @@ export function App() {
             <Route path="heartbeats" element={<RestrictedOperatorGate><InstanceSettings /></RestrictedOperatorGate>} />
             <Route path="experimental" element={<RestrictedOperatorGate><InstanceExperimentalSettings /></RestrictedOperatorGate>} />
             <Route path="previews" element={<RestrictedOperatorGate><InstancePreviewsSettings /></RestrictedOperatorGate>} />
+            <Route path="slack" element={<RestrictedOperatorGate><InstanceSlackSettings /></RestrictedOperatorGate>} />
             <Route path="plugins" element={<RestrictedOperatorGate><PluginManager /></RestrictedOperatorGate>} />
             <Route path="plugins/:pluginId" element={<RestrictedOperatorGate><PluginSettings /></RestrictedOperatorGate>} />
             <Route path="adapters" element={<RestrictedOperatorGate><AdapterManager /></RestrictedOperatorGate>} />
