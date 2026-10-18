@@ -1345,6 +1345,13 @@
       "when": 1786300000000,
       "tag": "0194_slack_integration",
       "breakpoints": true
+    },
+    {
+      "idx": 195,
+      "version": "7",
+      "when": 1786400000000,
+      "tag": "0195_instance_previews",
+      "breakpoints": true
     }
   ]
 }
