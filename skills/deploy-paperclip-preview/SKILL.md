@@ -39,10 +39,22 @@ appropriate static deployment skill instead.
 - No base path or app changes are needed: the app is served at the root of
   its own preview subdomain, exactly as it runs on `http://127.0.0.1:${port}/`.
 
+- For larger single-page apps, prefer serving a production build (build, then
+  a static preview server such as `vite preview`) over the dev server. A dev
+  server sends hundreds of separate module requests; on a slow or flaky
+  connection one of them fails and the page stays blank. Restart the service
+  to rebuild after code changes. Use the dev server only when reviewers need
+  hot reload.
+
 If the project has separate frontend and backend processes, expose one web
 service as the preview entrypoint and route its API/WebSocket requests to the
 workspace backend through relative paths. Do not publish the backend
 separately unless the user explicitly requests that architecture.
+
+If the backend checks CORS, add `https://*.<preview-domain>` to its allowed
+origins in workspace-local config (never committed). A proxy in front of the
+backend forwards the browser's `Origin` header, so without it every API call
+fails, often as a `500` rather than a visible CORS error.
 
 ### 2. Configure the Paperclip runtime service
 
@@ -139,7 +151,13 @@ Verify all of the following that apply:
 - the app responds through Paperclip. You can't sign in to the reviewer link,
   so check the lease's `pathUrl` with your key instead:
   `curl -fsS -H "Authorization: Bearer $PAPERCLIP_API_KEY" "<pathUrl>/"`;
-- frontend API calls reach the intended workspace backend;
+- frontend API calls reach the intended workspace backend. Test one real API
+  route (for example a login with a dummy account) through the web service's
+  port with the header `Origin: https://<slug>.<preview-domain>`; expect the
+  app's normal error (such as `401`), not a `500`. A page that renders is not
+  proof that the app works;
+- every service in the workspace is still running. Restarting one service or
+  saving the runtime config can stop another, so check each one;
 - WebSocket or hot-reload behavior works when the application requires it;
 - the returned link is the actual Paperclip URL, not a localhost or tunnel URL.
 
@@ -170,8 +188,13 @@ preview URL or an explicit, evidenced blocker.
   then stop or reuse the existing Paperclip-managed service.
 - **Blank page or missing assets:** check the app works at
   `http://127.0.0.1:${port}/` on the host first; the preview serves the same paths.
+  If it works locally but is blank for reviewers, and it runs on a dev server,
+  switch the service to a production build (see step 1).
 - **API or WebSocket failures:** keep them on the same exposed web entrypoint,
   use relative paths, and verify the workspace backend is running.
+- **API calls return `500` only from the browser:** the backend's CORS check is
+  rejecting the preview origin. Repeat the call with the `Origin` header to
+  confirm, then allow `https://*.<preview-domain>` (see step 1).
 - **`410 Gone`:** the link lapsed after 30 idle days. Restart the service
   through Paperclip (or call the lease API); the link comes back unchanged.
 - **`503` "app is not running":** the service stopped. Start it again through
