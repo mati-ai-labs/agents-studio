@@ -468,6 +468,64 @@ export async function listSlackChannels(db: Db, companyId: string): Promise<Slac
   return channels;
 }
 
+export interface SlackMember {
+  id: string;
+  /** Slack handle (legacy `name`). */
+  handle: string | null;
+  realName: string | null;
+  displayName: string | null;
+  title: string | null;
+  timezone: string | null;
+}
+
+type SlackUsersListResponse = {
+  ok?: boolean;
+  error?: string;
+  response_metadata?: { next_cursor?: string };
+  members?: Array<{
+    id?: string;
+    name?: string;
+    deleted?: boolean;
+    is_bot?: boolean;
+    is_app_user?: boolean;
+    tz?: string;
+    real_name?: string;
+    profile?: { real_name?: string; display_name?: string; title?: string };
+  }>;
+};
+
+/** Active human members of the company's Slack workspace (bots, apps and deactivated users excluded). */
+export async function listSlackMembers(db: Db, companyId: string): Promise<SlackMember[]> {
+  const accessToken = await getFreshSlackAccessToken(db, companyId);
+  const members: SlackMember[] = [];
+  let cursor: string | null = null;
+
+  do {
+    const params = new URLSearchParams({ limit: "200", ...(cursor ? { cursor } : {}) });
+    const response = await slackFetchJson<SlackUsersListResponse>(
+      `${SLACK_API_BASE_URL}/users.list?${params.toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+
+    for (const member of response.members ?? []) {
+      const id = readTrimmedString(member.id);
+      if (!id || id === "USLACKBOT" || member.deleted === true || member.is_bot === true || member.is_app_user === true) continue;
+      members.push({
+        id,
+        handle: readTrimmedString(member.name),
+        realName: readTrimmedString(member.profile?.real_name) ?? readTrimmedString(member.real_name),
+        displayName: readTrimmedString(member.profile?.display_name),
+        title: readTrimmedString(member.profile?.title),
+        timezone: readTrimmedString(member.tz),
+      });
+    }
+
+    cursor = readTrimmedString(response.response_metadata?.next_cursor);
+  } while (cursor);
+
+  return members;
+}
+
 export async function postSlackMessage(
   db: Db,
   companyId: string,

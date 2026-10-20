@@ -68,6 +68,7 @@ import { connectorsRoutes } from "./routes/connectors.js";
 import { slackEventsRoute } from "./routes/slack-events.js";
 import { slackChannelRoutes } from "./routes/slack-channel-routes.js";
 import { instanceSlackRoutes } from "./routes/instance-slack.js";
+import { slackAgentRoutes } from "./routes/slack-agent.js";
 import { slackSlashCommandsRoute } from "./routes/slack-slash-commands.js";
 import { chatRoutes } from "./routes/chat.js";
 import { previewApiRoutes, previewAuthRoutes, previewHostMiddleware, previewProxyRoutes } from "./routes/previews.js";
@@ -302,6 +303,7 @@ export async function createApp(
   api.use(instanceSettingsRoutes(db));
   api.use(instancePreviewsRoutes(db));
   api.use(instanceSlackRoutes(db));
+  api.use(slackAgentRoutes(db));
   if (opts.databaseBackupService) {
     api.use(instanceDatabaseBackupRoutes(opts.databaseBackupService));
   }
