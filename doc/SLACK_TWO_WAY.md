@@ -149,3 +149,19 @@ Slack redelivers events with the same `X-Slack-Request-Timestamp` window if the 
 - **Operator side (Aditya / Slack dashboard owner):** provisioning the Slack app, installing it, setting up the tunnel for dev, copying `SLACK_SIGNING_SECRET` and `SLACK_APP_ID` into `.paperclip/.env`, populating the channel routes via the API or the eventual UI.
 
 No credentials are committed. `.paperclip/.env` is gitignored.
+
+## Agent Slack tool
+
+Agents can post in the company's Slack and tag the people who need to act. The bot token stays on the server.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/companies/:companyId/slack/members` | Active human members (`id`, `realName`, `displayName`, `title`, `timezone`). Cached 10 min; `?refresh=1` bypasses. |
+| `GET /api/companies/:companyId/slack/channels` | Non-archived channels with `canPost` (public channels always; private only when the bot is a member). |
+| `POST /api/companies/:companyId/slack/messages` | `{channel, text, mentionUserIds?, threadTs?, issueId?}`. Mentions must be workspace members. Adds the agent name and issue link, and logs `slack.message_posted` on the issue. |
+
+Guardrails: board or agent auth, company-scoped; max 10 mentions and 3,000 characters per message; 20 messages per agent per hour (429 with `Retry-After`). Channels only, no DMs.
+
+Needs outside the code: the Slack connection must carry `chat:write`, `chat:write.public`, `users:read` and `channels:read` (already in the OAuth scopes). Private channels need the bot invited. DMs would need `im:write` plus a reinstall.
+
+Agents learn how to use it from the `skills/slack-messaging` skill; attach it to agents (company skill) and add an "Owners" section per company so agents know whom to tag.
