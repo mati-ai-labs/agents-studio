@@ -68,6 +68,13 @@ export function InstanceAccess() {
       await queryClient.invalidateQueries({ queryKey: queryKeys.access.adminUsers(search) });
       pushToast({ title: "Company access updated", tone: "success" });
     },
+    onError: (error) => {
+      pushToast({
+        title: "Failed to update company access",
+        body: error instanceof Error ? error.message : undefined,
+        tone: "error",
+      });
+    },
   });
 
   const setAdminMutation = useMutation({

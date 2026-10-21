@@ -207,7 +207,7 @@ describeEmbeddedPostgres("access service", () => {
     expect(historicalIssue.assigneeUserId).toBe(member.principalId);
   });
 
-  it("rejects instance-level company access removal for self and protected users", async () => {
+  it("guards instance-level company access removal for self, last owners, and instance admins", async () => {
     const { company, owner } = await createCompanyWithOwner(db);
     const access = accessService(db);
 
@@ -229,7 +229,33 @@ describeEmbeddedPostgres("access service", () => {
 
     await expect(
       access.setUserCompanyAccess(admin.principalId, [], { actorUserId: owner.principalId }),
-    ).rejects.toThrow("Owners and admins cannot be removed from company access");
+    ).resolves.toEqual([
+      expect.objectContaining({ companyId: company.id, status: "archived" }),
+    ]);
+
+    const coOwner = await db
+      .insert(companyMemberships)
+      .values({
+        companyId: company.id,
+        principalType: "user",
+        principalId: `co-owner-${randomUUID()}`,
+        status: "active",
+        membershipRole: "owner",
+      })
+      .returning()
+      .then((rows) => rows[0]!);
+
+    // Removing an owner works while another active owner remains...
+    await expect(
+      access.setUserCompanyAccess(coOwner.principalId, [], { actorUserId: `instance-admin-${randomUUID()}` }),
+    ).resolves.toEqual([
+      expect.objectContaining({ companyId: company.id, status: "archived" }),
+    ]);
+
+    // ...but the last active owner is still protected.
+    await expect(
+      access.setUserCompanyAccess(owner.principalId, [], { actorUserId: `instance-admin-${randomUUID()}` }),
+    ).rejects.toThrow("Cannot remove the last active owner");
 
     const operator = await db
       .insert(companyMemberships)
