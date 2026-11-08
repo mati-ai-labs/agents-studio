@@ -20,6 +20,7 @@ describe("adapter model listing", () => {
   beforeEach(() => {
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_AUTH_TOKEN;
     delete process.env.ANTHROPIC_BASE_URL;
     delete process.env.ANTHROPIC_BEDROCK_BASE_URL;
     delete process.env.CLAUDE_CODE_USE_BEDROCK;
@@ -111,6 +112,45 @@ describe("adapter model listing", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(initial.some((model) => model.id === "claude-sonnet-4-20250514")).toBe(true);
     expect(refreshed.some((model) => model.id === "claude-opus-4-8-20260529")).toBe(true);
+  });
+
+  it("discovers gateway models with ANTHROPIC_AUTH_TOKEN and lists only the gateway's models", async () => {
+    process.env.ANTHROPIC_AUTH_TOKEN = "gateway-token";
+    process.env.ANTHROPIC_BASE_URL = "https://api.minimax.io/anthropic/";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: "MiniMax-M3.1-Flash", display_name: "MiniMax-M3.1-Flash" },
+          { id: "MiniMax-M3", display_name: "MiniMax-M3" },
+        ],
+      }),
+    } as Response);
+
+    const models = await listAdapterModels("claude_local");
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.minimax.io/anthropic/v1/models");
+    const headers = init.headers as Record<string, string>;
+    expect(headers.authorization).toBe("Bearer gateway-token");
+    expect(headers["x-api-key"]).toBeUndefined();
+    expect(models.map((model) => model.id)).toEqual(["MiniMax-M3.1-Flash", "MiniMax-M3"]);
+  });
+
+  it("prefers ANTHROPIC_API_KEY over ANTHROPIC_AUTH_TOKEN for discovery", async () => {
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
+    process.env.ANTHROPIC_AUTH_TOKEN = "gateway-token";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: "claude-opus-4-8-20260529", display_name: "Claude Opus 4.8" }] }),
+    } as Response);
+
+    await listAdapterModels("claude_local");
+
+    const headers = (fetchSpy.mock.calls[0] as [string, RequestInit])[1].headers as Record<string, string>;
+    expect(headers["x-api-key"]).toBe("sk-ant-test");
+    expect(headers.authorization).toBeUndefined();
   });
 
   it("falls back to static claude models when Anthropic model discovery fails", async () => {
