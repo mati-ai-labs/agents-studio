@@ -51,24 +51,37 @@ function mergedWithFallback(models: AdapterModel[]): AdapterModel[] {
   ]);
 }
 
-function resolveAnthropicApiKey(): string | null {
-  const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
-  return apiKey && apiKey.length > 0 ? apiKey : null;
+interface AnthropicCredential {
+  value: string;
+  /** `x-api-key` for ANTHROPIC_API_KEY, bearer for ANTHROPIC_AUTH_TOKEN (gateway/proxy auth). */
+  kind: "api_key" | "bearer";
 }
+
+function resolveAnthropicCredential(): AnthropicCredential | null {
+  const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
+  if (apiKey) return { value: apiKey, kind: "api_key" };
+  const authToken = process.env.ANTHROPIC_AUTH_TOKEN?.trim();
+  if (authToken) return { value: authToken, kind: "bearer" };
+  return null;
+}
+
+const DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com";
 
 function resolveAnthropicBaseUrl(): string {
   const baseUrl = process.env.ANTHROPIC_BASE_URL?.trim();
-  return baseUrl && baseUrl.length > 0 ? baseUrl.replace(/\/+$/, "") : "https://api.anthropic.com";
+  return baseUrl && baseUrl.length > 0 ? baseUrl.replace(/\/+$/, "") : DEFAULT_ANTHROPIC_BASE_URL;
 }
 
-async function fetchAnthropicModels(apiKey: string, baseUrl: string): Promise<AdapterModel[]> {
+async function fetchAnthropicModels(credential: AnthropicCredential, baseUrl: string): Promise<AdapterModel[]> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), ANTHROPIC_MODELS_TIMEOUT_MS);
   try {
     const response = await fetch(`${baseUrl}${ANTHROPIC_MODELS_ENDPOINT}`, {
       headers: {
         "anthropic-version": ANTHROPIC_API_VERSION,
-        "x-api-key": apiKey,
+        ...(credential.kind === "api_key"
+          ? { "x-api-key": credential.value }
+          : { authorization: `Bearer ${credential.value}` }),
       },
       signal: controller.signal,
     });
@@ -105,12 +118,12 @@ async function loadClaudeModels(options?: { forceRefresh?: boolean }): Promise<A
   if (isBedrockEnv()) return dedupeModels(BEDROCK_MODELS);
 
   const fallback = dedupeModels(DIRECT_MODELS);
-  const apiKey = resolveAnthropicApiKey();
-  if (!apiKey) return fallback;
+  const credential = resolveAnthropicCredential();
+  if (!credential) return fallback;
 
   const now = Date.now();
   const baseUrl = resolveAnthropicBaseUrl();
-  const keyFingerprint = fingerprint(apiKey);
+  const keyFingerprint = `${credential.kind}:${fingerprint(credential.value)}`;
   if (
     options?.forceRefresh !== true &&
     cached &&
@@ -121,9 +134,12 @@ async function loadClaudeModels(options?: { forceRefresh?: boolean }): Promise<A
     return cached.models;
   }
 
-  const fetched = await fetchAnthropicModels(apiKey, baseUrl);
+  const fetched = await fetchAnthropicModels(credential, baseUrl);
   if (fetched.length > 0) {
-    const merged = mergedWithFallback(fetched);
+    // A custom ANTHROPIC_BASE_URL (e.g. an Anthropic-compatible gateway such as
+    // MiniMax) only serves its own models, so don't mix in Claude model IDs it
+    // would reject.
+    const merged = baseUrl === DEFAULT_ANTHROPIC_BASE_URL ? mergedWithFallback(fetched) : fetched;
     cached = {
       keyFingerprint,
       baseUrl,
