@@ -21,6 +21,85 @@ const RECONNECT_SUPPRESS_MS = 2000;
 const SOCKET_CONNECTING = 0;
 const SOCKET_OPEN = 1;
 const TERMINAL_RUN_STATUSES = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
+// Company-wide lists (issues, runs, agents, dashboard, activity, costs) are
+// large. While agents are busy, every activity/run event used to refetch all
+// of them, so a burst of events meant repeated MB-sized downloads. Batch those
+// list invalidations and flush them at most once per window. Per-issue and
+// per-run queries are still invalidated immediately.
+const COALESCED_LIST_INVALIDATION_MS = 2000;
+const COALESCED_LIST_KEY_ROOTS = new Set([
+  "issues",
+  "heartbeats",
+  "agents",
+  "dashboard",
+  "activity",
+  "costs",
+  "sidebar-badges",
+]);
+
+function shouldCoalesceListInvalidation(queryKey: readonly unknown[], companyId: string): boolean {
+  return (
+    queryKey.length >= 2 &&
+    typeof queryKey[0] === "string" &&
+    COALESCED_LIST_KEY_ROOTS.has(queryKey[0]) &&
+    queryKey[1] === companyId
+  );
+}
+
+type InvalidateArgs = Parameters<QueryClient["invalidateQueries"]>;
+
+function createCoalescingInvalidationClient(
+  queryClient: QueryClient,
+  companyId: string,
+  delayMs: number = COALESCED_LIST_INVALIDATION_MS,
+) {
+  const pending = new Map<string, InvalidateArgs[0]>();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const flush = () => {
+    if (timer !== null) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    const filters = Array.from(pending.values());
+    pending.clear();
+    for (const filter of filters) {
+      void queryClient.invalidateQueries(filter);
+    }
+  };
+
+  const invalidateQueries = (...args: InvalidateArgs) => {
+    const [filters, options] = args;
+    const queryKey = filters?.queryKey;
+    if (
+      options === undefined &&
+      Array.isArray(queryKey) &&
+      Object.keys(filters ?? {}).every((key) => key === "queryKey") &&
+      shouldCoalesceListInvalidation(queryKey, companyId)
+    ) {
+      pending.set(JSON.stringify(queryKey), filters);
+      if (timer === null) timer = setTimeout(flush, delayMs);
+      return Promise.resolve();
+    }
+    return queryClient.invalidateQueries(...args);
+  };
+
+  const client = new Proxy(queryClient, {
+    get(target, prop) {
+      if (prop === "invalidateQueries") return invalidateQueries;
+      const value = Reflect.get(target, prop, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+
+  const dispose = () => {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    pending.clear();
+  };
+
+  return { client, flush, dispose };
+}
 
 type LiveUpdatesSocketLike = {
   readyState: number;
@@ -892,6 +971,7 @@ export const __liveUpdatesTestUtils = {
   buildAgentStatusToast,
   buildRunStatusToast,
   closeSocketQuietly,
+  createCoalescingInvalidationClient,
   hydrateVisibleIssueComment,
   invalidateActivityQueries,
   invalidateVisibleIssueRunQueries,
@@ -942,6 +1022,7 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
     let reconnectAttempt = 0;
     let reconnectTimer: number | null = null;
     let socket: WebSocket | null = null;
+    const coalescing = createCoalescingInvalidationClient(queryClient, liveCompanyId);
 
     const clearReconnect = () => {
       if (reconnectTimer !== null) {
@@ -984,7 +1065,7 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
 
         try {
           const parsed = JSON.parse(raw) as LiveEvent;
-          handleLiveEvent(queryClient, liveCompanyId, pathnameRef.current, parsed, pushToast, gateRef.current, {
+          handleLiveEvent(coalescing.client, liveCompanyId, pathnameRef.current, parsed, pushToast, gateRef.current, {
             userId: currentActorRef.current.userId,
             agentId: currentActorRef.current.agentId,
           });
@@ -1015,6 +1096,8 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
       closed = true;
       window.clearTimeout(connectTimer);
       clearReconnect();
+      coalescing.flush();
+      coalescing.dispose();
       const activeSocket = socket;
       socket = null;
       closeSocketQuietly(activeSocket, "provider_unmount");

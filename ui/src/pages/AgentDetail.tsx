@@ -113,6 +113,10 @@ const runStatusIcons: Record<string, { icon: typeof CheckCircle2; color: string 
 };
 
 const RUN_LOG_PAGE_BYTES = 256_000;
+// Busy agents have 10k+ runs; loading every one made this page download
+// tens of MB and render a row for each. The newest runs cover the 14-day
+// charts; older runs opened by URL are fetched individually in RunsTab.
+const AGENT_RUN_LIST_LIMIT = 500;
 
 const REDACTED_ENV_VALUE = "***REDACTED***";
 const SECRET_ENV_KEY_RE =
@@ -685,7 +689,7 @@ export function AgentDetail() {
 
   const { data: heartbeats } = useQuery({
     queryKey: queryKeys.heartbeats(resolvedCompanyId!, agent?.id ?? undefined),
-    queryFn: () => heartbeatsApi.list(resolvedCompanyId!, agent?.id ?? undefined),
+    queryFn: () => heartbeatsApi.list(resolvedCompanyId!, agent?.id ?? undefined, AGENT_RUN_LIST_LIMIT),
     enabled: !!resolvedCompanyId && !!agent?.id && shouldLoadHeartbeats,
   });
 
@@ -2970,8 +2974,16 @@ function RunsTab({
   adapterConfig: Record<string, unknown>;
 }) {
   const { isMobile } = useSidebar();
+  const selectedRunInList = selectedRunId ? runs.some((r) => r.id === selectedRunId) : true;
+  // The list only holds the newest runs; a deep link to an older run is
+  // loaded on its own so it still opens.
+  const { data: olderSelectedRun } = useQuery({
+    queryKey: queryKeys.runDetail(selectedRunId ?? "__none__"),
+    queryFn: () => heartbeatsApi.get(selectedRunId!),
+    enabled: Boolean(selectedRunId) && !selectedRunInList,
+  });
 
-  if (runs.length === 0) {
+  if (runs.length === 0 && !olderSelectedRun) {
     return <p className="text-sm text-muted-foreground">No runs yet.</p>;
   }
 
@@ -2982,7 +2994,9 @@ function RunsTab({
 
   // On mobile, don't auto-select so the list shows first; on desktop, auto-select latest
   const effectiveRunId = isMobile ? selectedRunId : (selectedRunId ?? sorted[0]?.id ?? null);
-  const selectedRun = sorted.find((r) => r.id === effectiveRunId) ?? null;
+  const selectedRun =
+    sorted.find((r) => r.id === effectiveRunId) ??
+    (olderSelectedRun && olderSelectedRun.id === effectiveRunId ? olderSelectedRun : null);
 
   // Mobile: show either run list OR run detail with back button
   if (isMobile) {
