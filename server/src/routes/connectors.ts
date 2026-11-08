@@ -1,10 +1,7 @@
 export function connectorsRoutes(db: Db): Router {
   return createConnectorsRouter({
     db,
-    getBaseUrl: () =>
-      process.env.PAPERCLIP_API_URL?.trim() ||
-      process.env.PAPERCLIP_RUNTIME_API_URL?.trim() ||
-      `http://127.0.0.1:${process.env.PORT ?? 3100}`,
+    getBaseUrl: getPublicBaseUrl,
   });
 }
 
@@ -37,6 +34,7 @@ import {
   assertCompanyAccess,
 } from "./authz.js";
 import { badRequest } from "../errors.js";
+import { getPublicBaseUrl } from "../lib/public-url.js";
 import { logger } from "../middleware/logger.js";
 import {
   exchangeSlackOAuthCode,
@@ -437,15 +435,6 @@ export interface CreateConnectorsRouterDeps {
   db: Db;
   /** Returns the public-facing base URL for this deployment (used for OAuth redirect URIs). */
   getBaseUrl: () => string;
-}
-
-/** Returns the app's public base URL, used to construct OAuth redirect URIs. */
-function resolveBaseUrl(): string {
-  return (
-    process.env.PAPERCLIP_API_URL?.trim() ||
-    process.env.PAPERCLIP_RUNTIME_API_URL?.trim() ||
-    `http://127.0.0.1:${process.env.PORT ?? 3100}`
-  );
 }
 
 export function createConnectorsRouter(deps: CreateConnectorsRouterDeps): Router {

@@ -2,6 +2,7 @@ import type { Db } from "@paperclipai/db";
 import { companyConnectors, slackChannelRoutes } from "@paperclipai/db";
 import { and, eq } from "drizzle-orm";
 import { connectorRegistryService } from "./connector-registry.js";
+import { getPublicBaseUrl } from "../lib/public-url.js";
 
 const SLACK_API_BASE_URL = "https://slack.com/api";
 const SLACK_EXPIRY_REFRESH_SKEW_MS = 60_000;
@@ -391,9 +392,7 @@ async function getFreshSlackAccessToken(
   const refreshed = await refreshSlackAccessToken({
     clientId: process.env.SLACK_CLIENT_ID ?? "",
     clientSecret: process.env.SLACK_CLIENT_SECRET ?? "",
-    redirectUri: `${process.env.PAPERCLIP_API_URL?.trim()
-      || process.env.PAPERCLIP_RUNTIME_API_URL?.trim()
-      || `http://127.0.0.1:${process.env.PORT ?? 3100}`}/api/connectors/slack/callback`,
+    redirectUri: `${getPublicBaseUrl()}/api/connectors/slack/callback`,
   }, credentials.refreshToken);
 
   await registry.upsert({
