@@ -820,8 +820,9 @@ export function Inbox() {
   });
 
   const { data: heartbeatRuns, isLoading: isRunsLoading } = useQuery({
-    queryKey: [...queryKeys.heartbeats(selectedCompanyId!), "limit", INBOX_HEARTBEAT_RUN_LIMIT],
-    queryFn: () => heartbeatsApi.list(selectedCompanyId!, undefined, INBOX_HEARTBEAT_RUN_LIMIT),
+    queryKey: [...queryKeys.heartbeats(selectedCompanyId!), "limit", INBOX_HEARTBEAT_RUN_LIMIT, "summary"],
+    queryFn: () =>
+      heartbeatsApi.list(selectedCompanyId!, undefined, INBOX_HEARTBEAT_RUN_LIMIT, { summary: true }),
     enabled: !!selectedCompanyId,
   });
 

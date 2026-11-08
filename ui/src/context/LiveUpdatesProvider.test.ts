@@ -703,3 +703,82 @@ describe("LiveUpdatesProvider run lifecycle toasts", () => {
     });
   });
 });
+
+describe("LiveUpdatesProvider coalesced list invalidation", () => {
+  function makeClient() {
+    const invalidations: unknown[] = [];
+    const queryClient = {
+      invalidateQueries: (input: unknown) => {
+        invalidations.push(input);
+        return Promise.resolve();
+      },
+      getQueryData: () => "cached",
+    };
+    return { invalidations, queryClient };
+  }
+
+  it("batches repeated company-wide list invalidations into one flush", () => {
+    vi.useFakeTimers();
+    try {
+      const { invalidations, queryClient } = makeClient();
+      const { client, dispose } = __liveUpdatesTestUtils.createCoalescingInvalidationClient(
+        queryClient as never,
+        "company-1",
+        2000,
+      );
+
+      for (let i = 0; i < 5; i += 1) {
+        void client.invalidateQueries({ queryKey: queryKeys.issues.list("company-1") });
+        void client.invalidateQueries({ queryKey: queryKeys.heartbeats("company-1") });
+      }
+      expect(invalidations).toEqual([]);
+
+      vi.advanceTimersByTime(2000);
+      expect(invalidations).toEqual([
+        { queryKey: queryKeys.issues.list("company-1") },
+        { queryKey: queryKeys.heartbeats("company-1") },
+      ]);
+      dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("invalidates per-issue and per-run queries immediately and passes other calls through", () => {
+    vi.useFakeTimers();
+    try {
+      const { invalidations, queryClient } = makeClient();
+      const { client, dispose } = __liveUpdatesTestUtils.createCoalescingInvalidationClient(
+        queryClient as never,
+        "company-1",
+      );
+
+      void client.invalidateQueries({ queryKey: queryKeys.issues.detail("THE-1") });
+      void client.invalidateQueries({ queryKey: queryKeys.liveRuns("company-1") });
+      void client.invalidateQueries({ queryKey: queryKeys.issues.list("company-2") });
+      void client.invalidateQueries({ queryKey: queryKeys.issues.list("company-1"), refetchType: "none" });
+
+      expect(invalidations).toEqual([
+        { queryKey: queryKeys.issues.detail("THE-1") },
+        { queryKey: queryKeys.liveRuns("company-1") },
+        { queryKey: queryKeys.issues.list("company-2") },
+        { queryKey: queryKeys.issues.list("company-1"), refetchType: "none" },
+      ]);
+      expect((client as unknown as { getQueryData: () => unknown }).getQueryData()).toBe("cached");
+      dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("flushes pending invalidations on demand", () => {
+    const { invalidations, queryClient } = makeClient();
+    const { client, flush } = __liveUpdatesTestUtils.createCoalescingInvalidationClient(
+      queryClient as never,
+      "company-1",
+    );
+    void client.invalidateQueries({ queryKey: queryKeys.dashboard("company-1") });
+    flush();
+    expect(invalidations).toEqual([{ queryKey: queryKeys.dashboard("company-1") }]);
+  });
+});

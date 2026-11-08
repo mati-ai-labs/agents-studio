@@ -190,8 +190,11 @@ export function useInboxBadge(companyId: string | null | undefined) {
   const currentUserId = session?.user.id ?? session?.session.userId ?? null;
 
   const { data: heartbeatRuns = [] } = useQuery({
-    queryKey: [...queryKeys.heartbeats(companyId!), "limit", INBOX_BADGE_HEARTBEAT_RUN_LIMIT],
-    queryFn: () => heartbeatsApi.list(companyId!, undefined, INBOX_BADGE_HEARTBEAT_RUN_LIMIT),
+    // Summary rows carry status/error/context but skip result text and usage,
+    // which is all the badge (and the Inbox, which shares this key) needs.
+    queryKey: [...queryKeys.heartbeats(companyId!), "limit", INBOX_BADGE_HEARTBEAT_RUN_LIMIT, "summary"],
+    queryFn: () =>
+      heartbeatsApi.list(companyId!, undefined, INBOX_BADGE_HEARTBEAT_RUN_LIMIT, { summary: true }),
     enabled: !!companyId,
   });
 
