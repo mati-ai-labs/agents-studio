@@ -1395,6 +1395,85 @@ export {
 } from "./types/smoke-lab.js";
 
 export type {
+  EvalAgentCohort,
+  EvalAgentAction,
+  EvalBundle,
+  EvalBundleComparison,
+  EvalCheckDetail,
+  EvalCheckKind,
+  EvalCheckSpec,
+  EvalCohortComparison,
+  EvalCohortSummary,
+  EvalCoverageReport,
+  EvalObservedComment,
+  EvalObservedToolCall,
+  EvalObservedTrace,
+  EvalPolicyExpectation,
+  EvalPolicyLabel,
+  EvalPolicyMetrics,
+  EvalResultStatus,
+  EvalScenario,
+  EvalScenarioFile,
+  EvalScenarioResult,
+  EvalViolationClass,
+} from "./types/eval.js";
+
+export {
+  EVAL_AGENT_COHORTS,
+  EVAL_CHECK_KINDS,
+  EVAL_POLICY_EXPECTATIONS,
+  EVAL_RESULT_STATUSES,
+} from "./types/eval.js";
+
+export {
+  DEFAULT_NEW_AGENT_THRESHOLD_DAYS,
+  cohortForAgentAge,
+  describeCohortDefinition,
+  summarizeCohorts,
+  type EvalCohortInput,
+} from "./eval/cohorts.js";
+
+export {
+  computePolicyMetrics,
+  policyLabelsFor,
+} from "./eval/policies.js";
+
+export {
+  buildCoverageReport,
+  syntheticViolationClasses,
+  type EvalViolationObservation,
+} from "./eval/coverage.js";
+
+export {
+  detectPii,
+  PII_PATTERNS,
+  PII_VIOLATION_CLASS,
+  type PiiMatch,
+  type PiiPattern,
+} from "./eval/privacy.js";
+
+export {
+  evaluateCheck,
+  scoreChecks,
+} from "./eval/scorers.js";
+
+export {
+  compareBundles,
+  judgeBundleComparison,
+  resolveBundle,
+  type EvalBundleVerdict,
+} from "./eval/bundles.js";
+
+export {
+  generateSyntheticScenario,
+  generateSyntheticScenarios,
+  summariseSyntheticViolations,
+  SYNTHETIC_FAILURE_CLASSES,
+  type SyntheticFailureClass,
+  type SyntheticScenarioOptions,
+} from "./eval/synthetic.js";
+
+export type {
   CloudUpstreamConnectStartResponse,
   CloudUpstreamActivationDecision,
   CloudUpstreamActivationEntityType,

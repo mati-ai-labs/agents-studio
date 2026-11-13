@@ -18,6 +18,7 @@ import {
   issueService,
   heartbeatService,
   accessService,
+  evalService,
   logActivity,
 } from "../services/index.js";
 import { assertBoard, assertCompanyAccess, getAccessibleResource, getActorInfo } from "./authz.js";
@@ -57,6 +58,7 @@ export function costRoutes(
     cancelWorkForScope: heartbeat.cancelBudgetScopeWork,
   };
   const costs = costService(db, budgetHooks);
+  const evals = evalService(db);
   const finance = financeService(db);
   const budgets = budgetService(db, budgetHooks);
   const companies = companyService(db);
@@ -196,6 +198,26 @@ export function costRoutes(
     const range = parseCostDateRange(req.query);
     const rows = await costs.byAgent(companyId, range);
     res.json(rows);
+  });
+
+  /**
+   * The new-vs-established agent metric, next to the per-agent cost breakdown
+   * it is derived from.
+   *
+   * An agent is bucketed by its `created_at`, so a newly-hired agent is
+   * compared against its peers rather than against itself as it ages. The
+   * cohort definition travels with the response.
+   */
+  router.get("/companies/:companyId/costs/agent-cohorts", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    if (!(await assertCompanyCostReadAllowed(req, res, companyId))) return;
+    const thresholdDays = req.query.thresholdDays ? Number(req.query.thresholdDays) : undefined;
+    const comparison = await evals.cohortComparison(companyId, {
+      thresholdDays: Number.isFinite(thresholdDays) ? thresholdDays : undefined,
+      range: parseCostDateRange(req.query),
+    });
+    res.json(comparison);
   });
 
   router.get("/companies/:companyId/costs/by-agent-model", async (req, res) => {
