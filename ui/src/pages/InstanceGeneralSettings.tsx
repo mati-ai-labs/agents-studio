@@ -11,6 +11,8 @@ import {
   MAX_MAX_CONCURRENT_AGENT_RUNS,
   DEFAULT_PROVIDER_QUOTA_RESERVE_PERCENT,
   MAX_PROVIDER_QUOTA_RESERVE_PERCENT,
+  DEFAULT_MIN_FREE_MEMORY_MB,
+  MAX_MIN_FREE_MEMORY_MB,
 } from "@paperclipai/shared";
 import { LogOut, SlidersHorizontal } from "lucide-react";
 import { authApi } from "@/api/auth";
@@ -68,6 +70,11 @@ export function InstanceGeneralSettings() {
   useEffect(() => {
     setReserveDraft(String(savedReserve));
   }, [savedReserve]);
+  const savedMinFreeMemory = generalQuery.data?.minFreeMemoryMb ?? DEFAULT_MIN_FREE_MEMORY_MB;
+  const [minFreeMemoryDraft, setMinFreeMemoryDraft] = useState<string>("");
+  useEffect(() => {
+    setMinFreeMemoryDraft(String(savedMinFreeMemory));
+  }, [savedMinFreeMemory]);
   const healthQuery = useQuery({
     queryKey: queryKeys.health,
     queryFn: () => healthApi.get(),
@@ -117,6 +124,11 @@ export function InstanceGeneralSettings() {
   const reserveValid =
     Number.isInteger(parsedReserve) && parsedReserve >= 0 && parsedReserve <= MAX_PROVIDER_QUOTA_RESERVE_PERCENT;
   const reserveDirty = reserveValid && parsedReserve !== savedReserve;
+  const memory = runSlots?.memory;
+  const parsedMinFreeMemory = Number(minFreeMemoryDraft);
+  const minFreeMemoryValid =
+    Number.isInteger(parsedMinFreeMemory) && parsedMinFreeMemory >= 0 && parsedMinFreeMemory <= MAX_MIN_FREE_MEMORY_MB;
+  const minFreeMemoryDirty = minFreeMemoryValid && parsedMinFreeMemory !== savedMinFreeMemory;
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -270,6 +282,70 @@ export function InstanceGeneralSettings() {
             )}
           </form>
           <ProviderQuotaPanel quota={quota} />
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card p-5">
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <h2 className="text-sm font-semibold">Hold runs when server memory is low</h2>
+            <p className="max-w-2xl text-sm text-muted-foreground">
+              Every agent run starts its own processes on this server. Before starting one, check the server's
+              available memory and keep at least this much free, counting about 600 MB for each run that started in
+              the last 90 seconds. If there isn't room, runs stay queued and start as other runs finish. This keeps the
+              server from running out of memory and killing every run in progress. Set 0 to turn it off.
+            </p>
+          </div>
+          <form
+            className="flex flex-wrap items-center gap-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!minFreeMemoryDirty) return;
+              updateGeneralMutation.mutate({ minFreeMemoryMb: parsedMinFreeMemory });
+            }}
+          >
+            <label className="text-sm text-muted-foreground" htmlFor="min-free-memory">
+              Keep at least
+            </label>
+            <Input
+              id="min-free-memory"
+              type="number"
+              inputMode="numeric"
+              min={0}
+              max={MAX_MIN_FREE_MEMORY_MB}
+              step={128}
+              value={minFreeMemoryDraft}
+              onChange={(event) => setMinFreeMemoryDraft(event.target.value)}
+              aria-invalid={!minFreeMemoryValid}
+              className="w-24 tabular-nums"
+            />
+            <span className="text-sm text-muted-foreground">MB free</span>
+            <Button type="submit" size="sm" disabled={!minFreeMemoryDirty || updateGeneralMutation.isPending}>
+              Save
+            </Button>
+            {!minFreeMemoryValid && (
+              <span className="text-xs text-destructive">
+                Enter a whole number from 0 to {MAX_MIN_FREE_MEMORY_MB}.
+              </span>
+            )}
+          </form>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <StatusBox
+              label="Available now"
+              value={
+                memory?.availableMb != null
+                  ? `${memory.availableMb.toLocaleString()} MB${memory.totalMb ? ` of ${memory.totalMb.toLocaleString()} MB` : ""}`
+                  : memory ? "Unknown (not checked)" : "-"
+              }
+            />
+            <StatusBox
+              label="Status"
+              value={
+                !memory ? "-" : !memory.enabled ? "Off" : memory.availableMb == null ? "Not checked on this server" : memory.holding ? "Holding new runs" : "OK"
+              }
+            />
+            <StatusBox label="Floor" value={memory ? (memory.enabled ? `${memory.minFreeMemoryMb.toLocaleString()} MB` : "Off") : "-"} />
+          </div>
         </div>
       </section>
 

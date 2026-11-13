@@ -26,6 +26,14 @@ export const MAX_MAX_CONCURRENT_AGENT_RUNS = 200;
 export const DEFAULT_PROVIDER_QUOTA_RESERVE_PERCENT = 5;
 export const MAX_PROVIDER_QUOTA_RESERVE_PERCENT = 50;
 
+/**
+ * Memory gate: do not start a new agent run while the host's available memory
+ * (Linux MemAvailable) is below this many MB, so parallel runs cannot push the
+ * box into the kernel OOM killer. 0 turns the gate off.
+ */
+export const DEFAULT_MIN_FREE_MEMORY_MB = 1536;
+export const MAX_MIN_FREE_MEMORY_MB = 65536;
+
 export const DEFAULT_BACKUP_RETENTION: BackupRetentionPolicy = {
   dailyDays: 7,
   weeklyWeeks: 4,
@@ -59,6 +67,8 @@ export interface InstanceGeneralSettings {
   providerQuotaGateEnabled: boolean;
   /** Treat a window as used up once its remaining percent is at or below this. */
   providerQuotaReservePercent: number;
+  /** Hold new runs while host available memory is below this (MB). 0 = off. */
+  minFreeMemoryMb: number;
   /**
    * Execution policy. Absent/`"any"` = unrestricted; `"kubernetes"` forces the
    * Kubernetes sandbox provider and denies local/ssh execution.

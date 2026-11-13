@@ -5,6 +5,7 @@ import {
   DEFAULT_BACKUP_RETENTION,
   DEFAULT_MAX_CONCURRENT_AGENT_RUNS,
   DEFAULT_PROVIDER_QUOTA_RESERVE_PERCENT,
+  DEFAULT_MIN_FREE_MEMORY_MB,
   DEFAULT_ISSUE_GRAPH_LIVENESS_AUTO_RECOVERY_LOOKBACK_HOURS,
   instanceGeneralSettingsSchema,
   type InstanceGeneralSettings,
@@ -192,6 +193,7 @@ function normalizeGeneralSettings(raw: unknown): InstanceGeneralSettings {
       providerQuotaGateEnabled: parsed.data.providerQuotaGateEnabled ?? true,
       providerQuotaReservePercent:
         parsed.data.providerQuotaReservePercent ?? DEFAULT_PROVIDER_QUOTA_RESERVE_PERCENT,
+      minFreeMemoryMb: parsed.data.minFreeMemoryMb ?? DEFAULT_MIN_FREE_MEMORY_MB,
       // Absent => unrestricted; only carry through an explicit policy.
       ...(parsed.data.executionMode ? { executionMode: parsed.data.executionMode } : {}),
     };
@@ -204,6 +206,7 @@ function normalizeGeneralSettings(raw: unknown): InstanceGeneralSettings {
     maxConcurrentAgentRuns: DEFAULT_MAX_CONCURRENT_AGENT_RUNS,
     providerQuotaGateEnabled: true,
     providerQuotaReservePercent: DEFAULT_PROVIDER_QUOTA_RESERVE_PERCENT,
+    minFreeMemoryMb: DEFAULT_MIN_FREE_MEMORY_MB,
   };
 }
 

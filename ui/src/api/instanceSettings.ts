@@ -64,6 +64,15 @@ export interface InstanceRunSlotStatus {
   queued: number;
   available: number;
   providerQuota: ProviderQuotaStatus;
+  memory: MemoryGateStatus;
+}
+
+export interface MemoryGateStatus {
+  enabled: boolean;
+  minFreeMemoryMb: number;
+  availableMb: number | null;
+  totalMb: number | null;
+  holding: boolean;
 }
 
 export const instanceSettingsApi = {
