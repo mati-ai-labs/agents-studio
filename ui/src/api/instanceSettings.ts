@@ -38,6 +38,13 @@ export interface PatchInstancePreviewSettings {
   enabledCompanyIds?: string[];
 }
 
+export interface InstanceRunSlotStatus {
+  maxConcurrentAgentRuns: number;
+  running: number;
+  queued: number;
+  available: number;
+}
+
 export const instanceSettingsApi = {
   getPreviews: () =>
     api.get<InstancePreviewSettingsView>("/instance/settings/previews"),
@@ -45,6 +52,8 @@ export const instanceSettingsApi = {
     api.patch<InstancePreviewSettingsView>("/instance/settings/previews", patch),
   testPreviewsDns: () =>
     api.post<{ ok: boolean; record: string; error: string | null }>("/instance/settings/previews/test-dns", {}),
+  getRunSlots: () =>
+    api.get<InstanceRunSlotStatus>("/instance/run-slots"),
   getGeneral: () =>
     api.get<InstanceGeneralSettings>("/instance/settings/general"),
   updateGeneral: (patch: PatchInstanceGeneralSettings) =>

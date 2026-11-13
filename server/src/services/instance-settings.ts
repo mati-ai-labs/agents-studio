@@ -3,6 +3,7 @@ import { companies, instanceSettings } from "@paperclipai/db";
 import {
   DEFAULT_FEEDBACK_DATA_SHARING_PREFERENCE,
   DEFAULT_BACKUP_RETENTION,
+  DEFAULT_MAX_CONCURRENT_AGENT_RUNS,
   DEFAULT_ISSUE_GRAPH_LIVENESS_AUTO_RECOVERY_LOOKBACK_HOURS,
   instanceGeneralSettingsSchema,
   type InstanceGeneralSettings,
@@ -186,6 +187,7 @@ function normalizeGeneralSettings(raw: unknown): InstanceGeneralSettings {
       feedbackDataSharingPreference:
         parsed.data.feedbackDataSharingPreference ?? DEFAULT_FEEDBACK_DATA_SHARING_PREFERENCE,
       backupRetention: parsed.data.backupRetention ?? DEFAULT_BACKUP_RETENTION,
+      maxConcurrentAgentRuns: parsed.data.maxConcurrentAgentRuns ?? DEFAULT_MAX_CONCURRENT_AGENT_RUNS,
       // Absent => unrestricted; only carry through an explicit policy.
       ...(parsed.data.executionMode ? { executionMode: parsed.data.executionMode } : {}),
     };
@@ -195,6 +197,7 @@ function normalizeGeneralSettings(raw: unknown): InstanceGeneralSettings {
     keyboardShortcuts: false,
     feedbackDataSharingPreference: DEFAULT_FEEDBACK_DATA_SHARING_PREFERENCE,
     backupRetention: DEFAULT_BACKUP_RETENTION,
+    maxConcurrentAgentRuns: DEFAULT_MAX_CONCURRENT_AGENT_RUNS,
   };
 }
 

@@ -6,6 +6,9 @@ import {
   WEEKLY_RETENTION_PRESETS,
   MONTHLY_RETENTION_PRESETS,
   DEFAULT_BACKUP_RETENTION,
+  DEFAULT_MAX_CONCURRENT_AGENT_RUNS,
+  MIN_MAX_CONCURRENT_AGENT_RUNS,
+  MAX_MAX_CONCURRENT_AGENT_RUNS,
 } from "@paperclipai/shared";
 import { LogOut, SlidersHorizontal } from "lucide-react";
 import { authApi } from "@/api/auth";
@@ -13,6 +16,7 @@ import { healthApi } from "@/api/health";
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import { ModeBadge } from "@/components/access/ModeBadge";
 import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
@@ -46,6 +50,16 @@ export function InstanceGeneralSettings() {
     queryKey: queryKeys.instance.generalSettings,
     queryFn: () => instanceSettingsApi.getGeneral(),
   });
+  const runSlotsQuery = useQuery({
+    queryKey: queryKeys.instance.runSlots,
+    queryFn: () => instanceSettingsApi.getRunSlots(),
+    refetchInterval: 10_000,
+  });
+  const savedRunCap = generalQuery.data?.maxConcurrentAgentRuns ?? DEFAULT_MAX_CONCURRENT_AGENT_RUNS;
+  const [runCapDraft, setRunCapDraft] = useState<string>("");
+  useEffect(() => {
+    setRunCapDraft(String(savedRunCap));
+  }, [savedRunCap]);
   const healthQuery = useQuery({
     queryKey: queryKeys.health,
     queryFn: () => healthApi.get(),
@@ -57,6 +71,7 @@ export function InstanceGeneralSettings() {
     onSuccess: async () => {
       setActionError(null);
       await queryClient.invalidateQueries({ queryKey: queryKeys.instance.generalSettings });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.instance.runSlots });
     },
     onError: (error) => {
       setActionError(error instanceof Error ? error.message : "Failed to update general settings.");
@@ -81,6 +96,13 @@ export function InstanceGeneralSettings() {
   const keyboardShortcuts = generalQuery.data?.keyboardShortcuts === true;
   const feedbackDataSharingPreference = generalQuery.data?.feedbackDataSharingPreference ?? "prompt";
   const backupRetention: BackupRetentionPolicy = generalQuery.data?.backupRetention ?? DEFAULT_BACKUP_RETENTION;
+  const parsedRunCap = Number(runCapDraft);
+  const runCapValid =
+    Number.isInteger(parsedRunCap) &&
+    parsedRunCap >= MIN_MAX_CONCURRENT_AGENT_RUNS &&
+    parsedRunCap <= MAX_MAX_CONCURRENT_AGENT_RUNS;
+  const runCapDirty = runCapValid && parsedRunCap !== savedRunCap;
+  const runSlots = runSlotsQuery.data;
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -130,6 +152,53 @@ export function InstanceGeneralSettings() {
               label="Bootstrap invite"
               value={healthQuery.data?.bootstrapInviteActive ? "Active" : "None"}
             />
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card p-5">
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <h2 className="text-sm font-semibold">Max parallel agent runs</h2>
+            <p className="max-w-2xl text-sm text-muted-foreground">
+              The most agent runs that can execute at the same time across all companies and agents. Runs over
+              the limit wait in the queue and start as running ones finish. Each agent's own concurrency setting
+              still applies inside this limit.
+            </p>
+          </div>
+          <form
+            className="flex flex-wrap items-center gap-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!runCapDirty) return;
+              updateGeneralMutation.mutate({ maxConcurrentAgentRuns: parsedRunCap });
+            }}
+          >
+            <Input
+              type="number"
+              inputMode="numeric"
+              min={MIN_MAX_CONCURRENT_AGENT_RUNS}
+              max={MAX_MAX_CONCURRENT_AGENT_RUNS}
+              step={1}
+              value={runCapDraft}
+              onChange={(event) => setRunCapDraft(event.target.value)}
+              aria-label="Max parallel agent runs"
+              aria-invalid={!runCapValid}
+              className="w-24 tabular-nums"
+            />
+            <Button type="submit" size="sm" disabled={!runCapDirty || updateGeneralMutation.isPending}>
+              Save
+            </Button>
+            {!runCapValid && (
+              <span className="text-xs text-destructive">
+                Enter a whole number from {MIN_MAX_CONCURRENT_AGENT_RUNS} to {MAX_MAX_CONCURRENT_AGENT_RUNS}.
+              </span>
+            )}
+          </form>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <StatusBox label="Running now" value={runSlots ? `${runSlots.running} of ${runSlots.maxConcurrentAgentRuns}` : "-"} />
+            <StatusBox label="Free slots" value={runSlots ? String(runSlots.available) : "-"} />
+            <StatusBox label="Waiting in queue" value={runSlots ? String(runSlots.queued) : "-"} />
           </div>
         </div>
       </section>

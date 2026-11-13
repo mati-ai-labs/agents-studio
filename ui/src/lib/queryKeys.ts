@@ -133,6 +133,7 @@ export const queryKeys = {
   },
   instance: {
     generalSettings: ["instance", "general-settings"] as const,
+    runSlots: ["instance", "run-slots"] as const,
     schedulerHeartbeats: ["instance", "scheduler-heartbeats"] as const,
     experimentalSettings: ["instance", "experimental-settings"] as const,
     previewSettings: ["instance", "preview-settings"] as const,

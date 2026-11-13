@@ -72,6 +72,13 @@ export function instanceSettingsRoutes(db: Db) {
     },
   );
 
+  // Live view of the instance-wide run cap: how many runs are executing, how
+  // many are waiting, and how many slots are free right now.
+  router.get("/instance/run-slots", async (req, res) => {
+    assertBoardOrgAccess(req);
+    res.json(await heartbeat.getGlobalRunSlotStatus());
+  });
+
   router.get("/instance/settings/general", async (req, res) => {
     // General settings (e.g. keyboardShortcuts) are readable by any
     // authenticated org member or instance admin. Only PATCH requires instance-admin.
