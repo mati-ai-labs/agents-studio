@@ -1105,6 +1105,13 @@ export function Guardrails() {
 
   const [simulateStage, setSimulateStage] = useState<GuardrailPolicyStage>("input");
   const [simulateSample, setSimulateSample] = useState("");
+  /**
+   * Which part of the studio the sample is pretending to be. A policy that
+   * restricts itself to one field — "comments" or "issue titles" — only fires
+   * on that field, so the simulator has to know where the sample would land
+   * or a field-scoped policy would silently never match.
+   */
+  const [simulateField, setSimulateField] = useState<string>("comment");
   const [simulation, setSimulation] = useState<GuardrailSimulationResult | null>(null);
   const [simulationError, setSimulationError] = useState<string | null>(null);
   /**
@@ -1148,6 +1155,22 @@ export function Guardrails() {
    * has recorded. The policy row carries no counter of its own.
    */
   const firesByPolicy = useMemo(() => summariseFiresByPolicy(violations), [violations]);
+
+  /**
+   * The saved policies the simulator evaluates.
+   *
+   * The endpoint only evaluates the policies it is given, so they have to be
+   * named explicitly. Without this, a draft under test would be evaluated on
+   * its own while every saved policy was silently ignored — the opposite of
+   * what an author is asking the simulator to do.
+   */
+  const simulatePolicyIds = useMemo(
+    () =>
+      policies
+        .filter((policy) => policy.enabled && policy.stage === simulateStage)
+        .map((policy) => policy.id),
+    [policies, simulateStage],
+  );
 
   const filteredPolicies = useMemo(
     () =>
@@ -1255,6 +1278,8 @@ export function Guardrails() {
       guardrailsApi.simulate(selectedCompanyId!, {
         stage: simulateStage,
         subject: simulateSample,
+        subjectFields: { [simulateField]: simulateSample },
+        policyIds: simulatePolicyIds,
         candidatePolicy: simulateCandidate,
       }),
     onSuccess: (result) => {
@@ -1415,6 +1440,21 @@ export function Guardrails() {
                     </SelectContent>
                   </Select>
                 </div>
+                <div className="space-y-2">
+                  <Label htmlFor="guardrail-simulate-field">Sample is written to</Label>
+                  <Select value={simulateField} onValueChange={setSimulateField}>
+                    <SelectTrigger id="guardrail-simulate-field" className="w-44">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {GUARDRAIL_MATCHER_FIELDS.filter((field) => field !== "any").map((field) => (
+                        <SelectItem key={field} value={field}>
+                          {MATCHER_FIELD_LABELS[field] ?? field}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <Button
                   size="sm"
                   onClick={() => simulate.mutate()}
@@ -1436,6 +1476,11 @@ export function Guardrails() {
                   placeholder="Paste the text you want to test against the current policies."
                   className="min-h-40 font-mono text-sm"
                 />
+                <p className="text-xs text-muted-foreground">
+                  Tested as {MATCHER_FIELD_LABELS[simulateField]?.toLowerCase() ?? simulateField},
+                  alongside the {simulatePolicyIds.length} saved{" "}
+                  {simulatePolicyIds.length === 1 ? "policy" : "policies"} for this stage.
+                </p>
               </div>
 
               <div className="rounded-md border border-border bg-muted/30 px-3 py-2.5">

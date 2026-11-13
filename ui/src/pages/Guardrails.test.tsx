@@ -609,6 +609,8 @@ describe("Guardrails", () => {
     expect(simulateMock).toHaveBeenCalledWith("company-1", {
       stage: "input",
       subject: "call 555-12-3456 now",
+      subjectFields: { comment: "call 555-12-3456 now" },
+      policyIds: ["policy-1"],
       candidatePolicy: expect.objectContaining({
         kind: "regex",
         action: "redact",
@@ -779,6 +781,8 @@ describe("Guardrails", () => {
     expect(simulateMock).toHaveBeenCalledWith("company-1", {
       stage: "input",
       subject: "call 555-12-3456 now",
+      subjectFields: { comment: "call 555-12-3456 now" },
+      policyIds: ["policy-1"],
       candidatePolicy: null,
     });
     expect(document.body.textContent).toContain("Block outbound PII");
@@ -882,6 +886,8 @@ describe("Guardrails", () => {
     expect(simulateMock).toHaveBeenCalledWith("company-1", {
       stage: "output",
       subject: "the key is sk-ant-0123456789abcdef",
+      subjectFields: { comment: "the key is sk-ant-0123456789abcdef" },
+      policyIds: [],
       candidatePolicy: null,
     });
     expect(document.body.textContent).toContain("Redact provider tokens");
@@ -893,8 +899,115 @@ describe("Guardrails", () => {
     });
   });
 
-  it("links a violation back to the run that triggered it", async () => {
-    listViolationsMock.mockResolvedValue([
+  it("simulates the sample against the saved policies for the stage", async () => {
+    listPoliciesMock.mockResolvedValue([
+      policyRow({ id: "policy-input", stage: "input" }),
+      policyRow({ id: "policy-output", stage: "output" }),
+      policyRow({ id: "policy-disabled", enabled: false }),
+    ]);
+    simulateMock.mockResolvedValue({
+      action: "allow",
+      decisive: null,
+      matches: [],
+      redactedText: null,
+    });
+
+    const root = await renderPage();
+
+    const simulationTab = Array.from(container.querySelectorAll('[role="tab"]')).find(
+      (tab) => tab.textContent === "Simulation",
+    );
+    await act(async () => {
+      simulationTab?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+    });
+    await flushReact();
+
+    const sampleInput = document.body.querySelector<HTMLTextAreaElement>(
+      "#guardrail-simulate-sample",
+    );
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        "value",
+      )?.set;
+      setter?.call(sampleInput, "call 555-12-3456 now");
+      sampleInput?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flushReact();
+
+    const simulateButton = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent === "Simulate",
+    );
+    await act(async () => {
+      simulateButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flushReact();
+
+    // Only the enabled policies for the simulated stage are evaluated. The
+    // endpoint evaluates nothing but the policies it is handed, so leaving
+    // them out would hide every saved policy from the author.
+    expect(simulateMock).toHaveBeenCalledWith(
+      "company-1",
+      expect.objectContaining({ policyIds: ["policy-input"] }),
+    );
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("tells the simulator which field the sample is written to", async () => {
+    simulateMock.mockResolvedValue({
+      action: "allow",
+      decisive: null,
+      matches: [],
+      redactedText: null,
+    });
+
+    const root = await renderPage();
+
+    const simulationTab = Array.from(container.querySelectorAll('[role="tab"]')).find(
+      (tab) => tab.textContent === "Simulation",
+    );
+    await act(async () => {
+      simulationTab?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+    });
+    await flushReact();
+
+    const sampleInput = document.body.querySelector<HTMLTextAreaElement>(
+      "#guardrail-simulate-sample",
+    );
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        "value",
+      )?.set;
+      setter?.call(sampleInput, "call 555-12-3456 now");
+      sampleInput?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flushReact();
+
+    const simulateButton = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent === "Simulate",
+    );
+    await act(async () => {
+      simulateButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flushReact();
+
+    // A policy restricted to a named field only fires on that field, so the
+    // sample has to carry the field it would land in.
+    expect(simulateMock).toHaveBeenCalledWith(
+      "company-1",
+      expect.objectContaining({ subjectFields: { comment: "call 555-12-3456 now" } }),
+    );
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("links a violation back to the run that triggered it", async () => {    listViolationsMock.mockResolvedValue([
       {
         id: "violation-1",
         companyId: "company-1",
