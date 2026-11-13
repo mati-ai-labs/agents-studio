@@ -13,6 +13,11 @@ export interface BackupRetentionPolicy {
   monthlyMonths: (typeof MONTHLY_RETENTION_PRESETS)[number];
 }
 
+/** Instance-wide cap on agent runs executing at the same time (all companies, all agents). */
+export const DEFAULT_MAX_CONCURRENT_AGENT_RUNS = 10;
+export const MIN_MAX_CONCURRENT_AGENT_RUNS = 1;
+export const MAX_MAX_CONCURRENT_AGENT_RUNS = 200;
+
 export const DEFAULT_BACKUP_RETENTION: BackupRetentionPolicy = {
   dailyDays: 7,
   weeklyWeeks: 4,
@@ -37,6 +42,11 @@ export interface InstanceGeneralSettings {
   keyboardShortcuts: boolean;
   feedbackDataSharingPreference: FeedbackDataSharingPreference;
   backupRetention: BackupRetentionPolicy;
+  /**
+   * Instance-wide cap on agent runs executing at once. Runs beyond the cap
+   * stay queued and start as slots free up.
+   */
+  maxConcurrentAgentRuns: number;
   /**
    * Execution policy. Absent/`"any"` = unrestricted; `"kubernetes"` forces the
    * Kubernetes sandbox provider and denies local/ssh execution.

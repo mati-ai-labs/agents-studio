@@ -303,6 +303,20 @@ export function redactDetectedSuccessfulRunProgressSummaryForBoard(
 
 const MAX_RUN_EVENT_PAYLOAD_OBJECT_KEYS = 100;
 const MAX_RUN_EVENT_PAYLOAD_DEPTH = 6;
+// Shared by every heartbeatService instance in this process. See
+// reserveGlobalRunSlots for how the instance-wide run cap uses it.
+const globalRunSlotState = {
+  lock: Promise.resolve() as Promise<void>,
+  reserved: 0,
+  capBlocked: false,
+};
+
+function withGlobalRunSlotLock<T>(fn: () => Promise<T>): Promise<T> {
+  const result = globalRunSlotState.lock.then(fn);
+  globalRunSlotState.lock = result.then(() => undefined, () => undefined);
+  return result;
+}
+
 const HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT = AGENT_DEFAULT_MAX_CONCURRENT_RUNS;
 const HEARTBEAT_MAX_CONCURRENT_RUNS_MIN = 1;
 const HEARTBEAT_MAX_CONCURRENT_RUNS_MAX = 50;
@@ -10689,6 +10703,81 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     return issuesSvc.listDependencyReadiness(companyId, issueIds);
   }
 
+  // ---- Instance-wide run concurrency cap -------------------------------------
+  // `maxConcurrentAgentRuns` (Instance Settings > General) caps how many runs
+  // execute at once across every company and agent. Slots are reserved under a
+  // short in-process lock that only counts and does arithmetic (never claims),
+  // so re-entrant scheduling from inside claimQueuedRun cannot deadlock. A
+  // reservation is held until the claimed rows are committed as "running", so a
+  // concurrent reserver always sees the slot as either reserved or running.
+  // Lock state is module-level (see globalRunSlotState) because routes build
+  // their own heartbeatService instances. It is per process; prod runs one.
+  async function countRunningRunsGlobal() {
+    const [{ count }] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.status, "running"));
+    return Number(count ?? 0);
+  }
+
+  async function getGlobalRunSlotStatus() {
+    const [general, running, queuedRows] = await Promise.all([
+      instanceSettings.getGeneral(),
+      countRunningRunsGlobal(),
+      db
+        .select({ count: sql<number>`count(*)` })
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.status, "queued")),
+    ]);
+    const cap = general.maxConcurrentAgentRuns;
+    return {
+      maxConcurrentAgentRuns: cap,
+      running,
+      queued: Number(queuedRows[0]?.count ?? 0),
+      available: Math.max(0, cap - running),
+    };
+  }
+
+  async function reserveGlobalRunSlots(wanted: number) {
+    if (wanted <= 0) return 0;
+    return withGlobalRunSlotLock(async () => {
+      const cap = (await instanceSettings.getGeneral()).maxConcurrentAgentRuns;
+      const running = await countRunningRunsGlobal();
+      const granted = Math.max(0, Math.min(wanted, cap - running - globalRunSlotState.reserved));
+      globalRunSlotState.reserved += granted;
+      if (granted < wanted) {
+        if (!globalRunSlotState.capBlocked) {
+          logger.info(
+            { cap, running, reserved: globalRunSlotState.reserved, wanted, granted },
+            "instance run cap reached; leaving runs queued",
+          );
+        }
+        globalRunSlotState.capBlocked = true;
+      }
+      return granted;
+    });
+  }
+
+  function releaseGlobalRunSlots(count: number) {
+    if (count <= 0) return Promise.resolve();
+    return withGlobalRunSlotLock(async () => {
+      globalRunSlotState.reserved = Math.max(0, globalRunSlotState.reserved - count);
+    });
+  }
+
+  // A finished run frees a global slot, but the finishing agent only restarts
+  // its own queue. If the cap held other agents back, sweep every queue now
+  // instead of waiting for the periodic scheduler tick.
+  function kickQueuedRunsIfCapBlocked() {
+    if (!globalRunSlotState.capBlocked) return;
+    globalRunSlotState.capBlocked = false;
+    setImmediate(() => {
+      resumeQueuedRuns().catch((err) => {
+        logger.warn({ err }, "resume queued runs after cap release failed");
+      });
+    });
+  }
+
   async function countRunningRunsForAgent(agentId: string) {
     const [{ count }] = await db
       .select({ count: sql<number>`count(*)` })
@@ -11810,11 +11899,20 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         return left.createdAt.getTime() - right.createdAt.getTime();
       });
 
+      const globalSlots = await reserveGlobalRunSlots(Math.min(availableSlots, prioritizedRuns.length));
+      if (globalSlots <= 0) return [];
+
       const claimedRuns: Array<typeof heartbeatRuns.$inferSelect> = [];
-      for (const queuedRun of prioritizedRuns) {
-        if (claimedRuns.length >= availableSlots) break;
-        const claimed = await claimQueuedRun(queuedRun, companyAgents);
-        if (claimed) claimedRuns.push(claimed);
+      try {
+        for (const queuedRun of prioritizedRuns) {
+          if (claimedRuns.length >= globalSlots) break;
+          const claimed = await claimQueuedRun(queuedRun, companyAgents);
+          if (claimed) claimedRuns.push(claimed);
+        }
+      } finally {
+        // Claimed rows are committed as "running" by now, so the global count
+        // already includes them; drop the reservation.
+        await releaseGlobalRunSlots(globalSlots);
       }
       if (claimedRuns.length === 0) return [];
 
@@ -11829,6 +11927,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         activeRunExecutionPromises.add(execution);
         void execution.finally(() => {
           activeRunExecutionPromises.delete(execution);
+          kickQueuedRunsIfCapBlocked();
         });
       }
       return claimedRuns;
@@ -17269,6 +17368,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     retryScheduledRetryNow,
 
     resumeQueuedRuns,
+    getGlobalRunSlotStatus,
 
     scheduleBoundedRetry: async (
       runId: string,
