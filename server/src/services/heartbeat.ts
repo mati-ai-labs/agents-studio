@@ -220,6 +220,11 @@ import {
   type ProviderQuotaGateDecision,
 } from "./provider-quota-gate.js";
 import {
+  RUN_MEMORY_RAMP_MS,
+  decideMemoryGate,
+  readHostMemory,
+} from "./memory-gate.js";
+import {
   evaluateAgentInvokability,
   evaluateAgentInvokabilityFromDb,
   shouldCancelRunsForNonInvokableAgent,
@@ -317,6 +322,9 @@ const globalRunSlotState = {
   capBlocked: false,
   // Last logged quota-gate resume time, so a hold is logged once, not per sweep.
   quotaHoldLoggedFor: null as string | null,
+  // Start times of recently granted slots; see the memory gate in reserveGlobalRunSlots.
+  recentStartTimes: [] as number[],
+  memoryHoldLogged: false,
 };
 
 // Adapters that run the Claude Code CLI and therefore spend the
@@ -10784,6 +10792,42 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       queued: Number(queuedRows[0]?.count ?? 0),
       available: Math.max(0, cap - running),
       providerQuota: await getProviderQuotaStatus(),
+      memory: await getMemoryGateStatus(),
+    };
+  }
+
+  // Memory gate (Instance Settings > General). Holds new runs while the host's
+  // available memory, minus what just-started runs are about to take, would
+  // fall under the configured floor. Fails open when memory can't be read.
+  async function decideMemoryGateNow(wanted: number) {
+    const minFreeMb = (await instanceSettings.getGeneral()).minFreeMemoryMb;
+    const now = Date.now();
+    globalRunSlotState.recentStartTimes = globalRunSlotState.recentStartTimes.filter(
+      (startedAt) => now - startedAt < RUN_MEMORY_RAMP_MS,
+    );
+    const recentStarts = globalRunSlotState.recentStartTimes.length;
+    if (wanted <= 0 || minFreeMb <= 0) {
+      return { allowed: Math.max(0, wanted), blocked: false, availableMb: null as number | null, minFreeMb, recentStarts };
+    }
+    const { availableMb } = await readHostMemory();
+    const decision = decideMemoryGate({ wanted, availableMb, minFreeMb, recentStarts });
+    return { allowed: decision.allowed, blocked: decision.blocked, availableMb, minFreeMb, recentStarts };
+  }
+
+  async function getMemoryGateStatus() {
+    const minFreeMb = (await instanceSettings.getGeneral()).minFreeMemoryMb;
+    const { availableMb, totalMb } = await readHostMemory();
+    const now = Date.now();
+    const recentStarts = globalRunSlotState.recentStartTimes.filter(
+      (startedAt) => now - startedAt < RUN_MEMORY_RAMP_MS,
+    ).length;
+    const decision = decideMemoryGate({ wanted: 1, availableMb, minFreeMb, recentStarts });
+    return {
+      enabled: minFreeMb > 0,
+      minFreeMemoryMb: minFreeMb,
+      availableMb,
+      totalMb,
+      holding: minFreeMb > 0 && decision.blocked,
     };
   }
 
@@ -10792,10 +10836,34 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     return withGlobalRunSlotLock(async () => {
       const cap = (await instanceSettings.getGeneral()).maxConcurrentAgentRuns;
       const running = await countRunningRunsGlobal();
-      const granted = Math.max(0, Math.min(wanted, cap - running - globalRunSlotState.reserved));
+      const capGranted = Math.max(0, Math.min(wanted, cap - running - globalRunSlotState.reserved));
+      const memory = await decideMemoryGateNow(capGranted);
+      const granted = memory.allowed;
       globalRunSlotState.reserved += granted;
+      if (granted > 0) {
+        const now = Date.now();
+        for (let i = 0; i < granted; i += 1) globalRunSlotState.recentStartTimes.push(now);
+      }
+      if (memory.blocked) {
+        if (!globalRunSlotState.memoryHoldLogged) {
+          globalRunSlotState.memoryHoldLogged = true;
+          logger.warn(
+            {
+              availableMb: memory.availableMb,
+              minFreeMemoryMb: memory.minFreeMb,
+              recentStarts: memory.recentStarts,
+              running,
+              wanted: capGranted,
+              granted,
+            },
+            "host memory low; holding queued runs until memory frees up",
+          );
+        }
+      } else if (capGranted > 0) {
+        globalRunSlotState.memoryHoldLogged = false;
+      }
       if (granted < wanted) {
-        if (!globalRunSlotState.capBlocked) {
+        if (capGranted < wanted && !globalRunSlotState.capBlocked) {
           logger.info(
             { cap, running, reserved: globalRunSlotState.reserved, wanted, granted },
             "instance run cap reached; leaving runs queued",

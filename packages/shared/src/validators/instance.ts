@@ -10,6 +10,8 @@ import {
   MAX_MAX_CONCURRENT_AGENT_RUNS,
   DEFAULT_PROVIDER_QUOTA_RESERVE_PERCENT,
   MAX_PROVIDER_QUOTA_RESERVE_PERCENT,
+  DEFAULT_MIN_FREE_MEMORY_MB,
+  MAX_MIN_FREE_MEMORY_MB,
   DEFAULT_ISSUE_GRAPH_LIVENESS_AUTO_RECOVERY_LOOKBACK_HOURS,
   MAX_ISSUE_GRAPH_LIVENESS_AUTO_RECOVERY_LOOKBACK_HOURS,
   MIN_ISSUE_GRAPH_LIVENESS_AUTO_RECOVERY_LOOKBACK_HOURS,
@@ -49,6 +51,12 @@ export const instanceGeneralSettingsSchema = z.object({
     .min(0)
     .max(MAX_PROVIDER_QUOTA_RESERVE_PERCENT)
     .default(DEFAULT_PROVIDER_QUOTA_RESERVE_PERCENT),
+  minFreeMemoryMb: z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_MIN_FREE_MEMORY_MB)
+    .default(DEFAULT_MIN_FREE_MEMORY_MB),
   // Execution policy. Absent/"any" = unrestricted; "kubernetes" forces the
   // Kubernetes sandbox provider and denies local/ssh execution (cloud_tenant).
   executionMode: z.enum(["kubernetes", "any"]).optional(),

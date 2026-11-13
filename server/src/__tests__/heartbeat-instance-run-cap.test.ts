@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 import { agents, companies, createDb, heartbeatRuns } from "@paperclipai/db";
 import {
@@ -12,6 +12,7 @@ import {
 import { heartbeatService } from "../services/heartbeat.ts";
 import { instanceSettingsService } from "../services/instance-settings.ts";
 import { clearProviderQuotaCache } from "../services/provider-quota-gate.ts";
+import { setHostMemoryReaderForTests } from "../services/memory-gate.ts";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
@@ -33,6 +34,12 @@ describeEmbeddedPostgres("heartbeat instance-wide run cap", () => {
     tempDb = await startEmbeddedPostgresTestDatabase("heartbeat-instance-run-cap-");
     db = createDb(tempDb.connectionString);
   }, 20_000);
+
+  // Plenty of memory by default, so only the cap / quota under test binds,
+  // whatever the machine running the tests has free.
+  beforeEach(() => {
+    setHostMemoryReaderForTests(async () => ({ availableMb: 1_000_000, totalMb: 1_000_000 }));
+  });
 
   afterEach(async () => {
     // Cancelled claude_local executions (last tests) can sit in CLI setup for a
@@ -59,6 +66,7 @@ describeEmbeddedPostgres("heartbeat instance-wide run cap", () => {
   });
 
   afterAll(async () => {
+    setHostMemoryReaderForTests(null);
     await tempDb?.cleanup();
     if (previousAgentJwtSecret === undefined) {
       delete process.env.PAPERCLIP_AGENT_JWT_SECRET;
@@ -287,4 +295,46 @@ describeEmbeddedPostgres("heartbeat instance-wide run cap", () => {
     expect(rows.map((r) => r.status)).not.toContain("queued");
     await cancelStartedClaudeRuns(heartbeat, claudeAgentId);
   }, 45_000);
+
+  it("holds queued runs while host memory is below the floor, and starts them once it frees up", async () => {
+    await instanceSettingsService(db).updateGeneral({ maxConcurrentAgentRuns: 10, minFreeMemoryMb: 1536 });
+    await seed(2, 1, 50);
+    // 100 MB above the floor: not enough room for even one more run.
+    setHostMemoryReaderForTests(async () => ({ availableMb: 1636, totalMb: 7775 }));
+    const heartbeat = heartbeatService(db);
+
+    await heartbeat.resumeQueuedRuns();
+
+    expect(await statusCounts()).toEqual({ queued: 2 });
+    const status = await heartbeat.getGlobalRunSlotStatus();
+    expect(status.memory).toEqual({
+      enabled: true,
+      minFreeMemoryMb: 1536,
+      availableMb: 1636,
+      totalMb: 7775,
+      holding: true,
+    });
+
+    setHostMemoryReaderForTests(async () => ({ availableMb: 1_000_000, totalMb: 1_000_000 }));
+    await heartbeat.resumeQueuedRuns();
+    const deadline = Date.now() + 15_000;
+    let counts = await statusCounts();
+    while (Date.now() < deadline && (counts.queued ?? 0) > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      counts = await statusCounts();
+    }
+    expect(counts.queued ?? 0).toBe(0);
+  }, 30_000);
+
+  it("does not hold runs on memory when the floor is 0", async () => {
+    await instanceSettingsService(db).updateGeneral({ maxConcurrentAgentRuns: 10, minFreeMemoryMb: 0 });
+    await seed(1, 1, 50);
+    setHostMemoryReaderForTests(async () => ({ availableMb: 10, totalMb: 7775 }));
+    const heartbeat = heartbeatService(db);
+
+    await heartbeat.resumeQueuedRuns();
+
+    expect((await statusCounts()).queued ?? 0).toBe(0);
+    expect((await heartbeat.getGlobalRunSlotStatus()).memory).toMatchObject({ enabled: false, holding: false });
+  }, 30_000);
 });
