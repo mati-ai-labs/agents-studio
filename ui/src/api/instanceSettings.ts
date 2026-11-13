@@ -38,11 +38,32 @@ export interface PatchInstancePreviewSettings {
   enabledCompanyIds?: string[];
 }
 
+export interface ProviderQuotaWindowStatus {
+  key: "five_hour" | "weekly";
+  label: string;
+  remainingPercent: number | null;
+  providerExhausted: boolean;
+  resetsAt: string | null;
+}
+
+export interface ProviderQuotaStatus {
+  enabled: boolean;
+  reservePercent: number;
+  provider: "minimax" | "unsupported" | "unconfigured";
+  checkedAt: string;
+  error: string | null;
+  windows: ProviderQuotaWindowStatus[];
+  holding: boolean;
+  resumeAt: string | null;
+  reason: string | null;
+}
+
 export interface InstanceRunSlotStatus {
   maxConcurrentAgentRuns: number;
   running: number;
   queued: number;
   available: number;
+  providerQuota: ProviderQuotaStatus;
 }
 
 export const instanceSettingsApi = {

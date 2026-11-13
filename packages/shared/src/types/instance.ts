@@ -18,6 +18,14 @@ export const DEFAULT_MAX_CONCURRENT_AGENT_RUNS = 10;
 export const MIN_MAX_CONCURRENT_AGENT_RUNS = 1;
 export const MAX_MAX_CONCURRENT_AGENT_RUNS = 200;
 
+/**
+ * Provider quota gate: hold queued runs when the model provider's plan quota
+ * (e.g. MiniMax Token Plan 5-hour / weekly windows) is at or below this
+ * remaining percent, and start them again after the window resets.
+ */
+export const DEFAULT_PROVIDER_QUOTA_RESERVE_PERCENT = 5;
+export const MAX_PROVIDER_QUOTA_RESERVE_PERCENT = 50;
+
 export const DEFAULT_BACKUP_RETENTION: BackupRetentionPolicy = {
   dailyDays: 7,
   weeklyWeeks: 4,
@@ -47,6 +55,10 @@ export interface InstanceGeneralSettings {
    * stay queued and start as slots free up.
    */
   maxConcurrentAgentRuns: number;
+  /** Hold new runs while the provider plan quota is used up (default on). */
+  providerQuotaGateEnabled: boolean;
+  /** Treat a window as used up once its remaining percent is at or below this. */
+  providerQuotaReservePercent: number;
   /**
    * Execution policy. Absent/`"any"` = unrestricted; `"kubernetes"` forces the
    * Kubernetes sandbox provider and denies local/ssh execution.
