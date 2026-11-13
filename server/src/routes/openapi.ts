@@ -2903,6 +2903,18 @@ for (const segment of costSummaryPaths) {
 }
 
 registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/costs/agent-cohorts",
+  tags: ["costs"],
+  summary: "Cost report: the new-versus-established agent cohort comparison",
+  request: {
+    params: z.object({ companyId: z.string() }),
+    query: z.object({ thresholdDays: z.string().optional() }),
+  },
+  responses: { 200: r.ok(), 401: r.unauthorized },
+});
+
+registry.registerPath({
   method: "post",
   path: "/api/companies/{companyId}/cost-events",
   tags: ["costs"],
@@ -4277,6 +4289,103 @@ registry.registerPath({
     body: jsonBody(updateInboxAgentPolicySchema),
   },
   responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 422: r.unprocessable },
+});
+
+// ─── Evals ────────────────────────────────────────────────────────────────────
+
+const evalResultBodySchema = z.object({
+  scenarioId: z.string(),
+  scenarioVersion: z.string().optional(),
+  bundleId: z.string(),
+  bundle: z.record(z.string(), z.unknown()).optional(),
+  status: z.enum(["passed", "failed", "error", "skipped"]).optional(),
+  score: z.number().optional(),
+  checks: z.array(z.record(z.string(), z.unknown())).optional(),
+  costCents: z.number().optional(),
+  inputTokens: z.number().optional(),
+  outputTokens: z.number().optional(),
+  cachedInputTokens: z.number().optional(),
+  heartbeatRunId: z.string().nullable().optional(),
+  observedPolicyFires: z.array(z.record(z.string(), z.unknown())).optional(),
+  policyLabels: z.array(z.record(z.string(), z.unknown())).optional(),
+  error: z.string().nullable().optional(),
+});
+
+const evalCoverageBodySchema = z.object({
+  synthetic: z
+    .array(
+      z.object({
+        class: z.string(),
+        label: z.string().optional(),
+        count: z.number().optional(),
+      }),
+    )
+    .optional(),
+});
+
+const evalResultQuerySchema = z.object({
+  scenarioId: z.string().optional(),
+  bundleId: z.string().optional(),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/evals/results",
+  tags: ["evals"],
+  summary: "List the recorded eval results for a company",
+  request: {
+    params: z.object({ companyId: z.string() }),
+    query: evalResultQuerySchema,
+  },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/companies/{companyId}/evals/results",
+  tags: ["evals"],
+  summary: "Record an eval result",
+  request: {
+    params: z.object({ companyId: z.string() }),
+    body: jsonBody(evalResultBodySchema),
+  },
+  responses: { 201: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/evals/policy-metrics",
+  tags: ["evals"],
+  summary: "Per-policy precision and recall over the labelled eval results",
+  request: {
+    params: z.object({ companyId: z.string() }),
+    query: evalResultQuerySchema,
+  },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/evals/cohorts",
+  tags: ["evals"],
+  summary: "Compare new against established agents on the recorded eval results",
+  request: {
+    params: z.object({ companyId: z.string() }),
+    query: z.object({ thresholdDays: z.string().optional() }),
+  },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/companies/{companyId}/evals/coverage",
+  tags: ["evals"],
+  summary: "Report the synthetic-versus-real violation coverage",
+  request: {
+    params: z.object({ companyId: z.string() }),
+    body: jsonBody(evalCoverageBodySchema),
+  },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden },
 });
 
 // ─── Execution workspaces ─────────────────────────────────────────────────────
