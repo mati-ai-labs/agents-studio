@@ -4,7 +4,85 @@ Eval framework for testing Paperclip agent behaviors across models and prompt ve
 
 See [the evals framework plan](../doc/plans/2026-03-13-agent-evals-framework.md) for full design rationale.
 
-## Quick Start
+There are two harnesses here:
+
+| Harness | Command | Needs model API keys | Purpose |
+|---------|---------|----------------------|---------|
+| Scenario harness (repo-native) | `pnpm evals:run` | No | Runs real Paperclip scenarios against a seeded company and scores them with deterministic checks |
+| Promptfoo bootstrap | `pnpm evals:smoke` | Yes | Narrow prompt-level behavior evals across providers |
+
+## Scenario harness
+
+The scenario harness is the repo-native harness the plan calls for. It seeds a
+company, an agent and an issue into an embedded Postgres, runs the agent
+through the real control plane (tool access policy, comment creation, issue
+lifecycle, cost accounting), and scores the result with deterministic checks.
+A scripted adapter stands in for a model, so **no provider credentials are
+needed** for the deterministic checks.
+
+```bash
+# Run every scenario against every bundle
+pnpm evals:run
+
+# One scenario
+pnpm evals:run -- --scenario synthetic.privacy_filter.pii_in_task
+
+# One bundle, and write the report as JSON
+pnpm evals:run -- --bundle baseline.eval-scripted --json eval-report.json
+```
+
+The run prints the scenario scores, the bundle comparison, the per-policy
+precision/recall, the new-vs-established agent cohort metric and the
+synthetic-vs-real coverage report.
+
+### Scenarios
+
+Scenarios live in `evals/scenarios/` as `*.scenario.json`. A scenario is a
+seeded company + issue + agent, a task, a script of agent actions, and
+declarative checks. See `synthetic-privacy-filter.scenario.json` for a
+worked example.
+
+### Bundles, not models
+
+A bundle is the whole configuration that determines behaviour: adapter, model,
+prompt template, skills and runtime flags. The harness compares bundles, so a
+regression can be attributed to the thing that actually changed.
+
+### Results
+
+Scores are written to the `eval_results` table next to the bundle that
+produced them, so a score is always readable next to the configuration that
+earned it. The API exposes them under `/api/companies/:companyId/evals/`:
+
+| Route | Returns |
+|-------|---------|
+| `GET /evals/results` | Recorded results, newest first |
+| `POST /evals/results` | Record a result (requires eval administration authority) |
+| `GET /evals/policy-metrics` | Per-policy precision and recall |
+| `GET /evals/cohorts` | The new-vs-established agent metric, with its cohort definition |
+| `POST /evals/coverage` | The synthetic-vs-real coverage report |
+
+The cohort metric is also available next to the cost endpoints it is derived
+from, at `GET /api/companies/:companyId/costs/agent-cohorts`.
+
+### Synthetic scenarios and traffic probes
+
+The synthetic suite is the primary regression signal: it exercises failure
+paths (a task carrying PII, a tool blocked by policy) that real traffic only
+produces occasionally. Synthetic scenarios are generated in
+`packages/shared/src/eval/synthetic.ts`; the checked-in ones cover the
+privacy-filter and restricted-action failure paths.
+
+Monitoring compares the distribution of real violations against the synthetic
+baseline. A violation class that appears in real traffic but that the
+synthetic suite never produces is reported as a **coverage gap**, not
+silently ignored.
+
+Scenario runs consume model budget, so run them on a schedule and on policy
+change rather than on every commit. Cost and tokens are tracked through the
+existing `cost_events` path and reported as the efficiency metric.
+
+## Promptfoo bootstrap
 
 ### Prerequisites
 
@@ -90,8 +168,8 @@ Phase 5 memory/control-surface prompt evals should be paired with deterministic 
 
 ### Phases
 
-- **Phase 0 (current):** Promptfoo bootstrap - narrow behavior evals with deterministic assertions
-- **Phase 1:** TypeScript eval harness with seeded scenarios and hard checks
+- **Phase 0:** Promptfoo bootstrap - narrow behavior evals with deterministic assertions
+- **Phase 1 (done):** TypeScript eval harness with seeded scenarios and hard checks
 - **Phase 2:** Pairwise and rubric scoring layer
 - **Phase 3:** Efficiency metrics integration
 - **Phase 4:** Production-case ingestion
