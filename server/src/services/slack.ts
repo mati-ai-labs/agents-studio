@@ -525,6 +525,61 @@ export async function listSlackMembers(db: Db, companyId: string): Promise<Slack
   return members;
 }
 
+type SlackUsersInfoResponse = {
+  ok?: boolean;
+  error?: string;
+  user?: {
+    id?: string;
+    name?: string;
+    real_name?: string;
+    profile?: { real_name?: string; display_name?: string };
+  };
+};
+
+const SLACK_USER_NAME_CACHE_TTL_MS = 60 * 60 * 1000;
+const slackUserNameCache = new Map<string, { name: string; expiresAt: number }>();
+
+/**
+ * Best-effort human name for a Slack user: full (real) name, then display name,
+ * then handle. Returns null when the lookup fails so callers can fall back to the ID.
+ */
+export async function getSlackUserName(
+  db: Db,
+  companyId: string,
+  userId: string,
+  options: { channelId?: string } = {},
+): Promise<string | null> {
+  const cacheKey = `${companyId}:${userId}`;
+  const cached = slackUserNameCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.name;
+  try {
+    const tokenCompanyId = options.channelId
+      ? await resolveSlackTokenCompanyId(db, companyId, options.channelId)
+      : companyId;
+    const accessToken = await getFreshSlackAccessToken(db, tokenCompanyId);
+    const params = new URLSearchParams({ user: userId });
+    const response = await slackFetchJson<SlackUsersInfoResponse>(
+      `${SLACK_API_BASE_URL}/users.info?${params.toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    const user = response.user;
+    const name =
+      readTrimmedString(user?.profile?.real_name)
+      ?? readTrimmedString(user?.real_name)
+      ?? readTrimmedString(user?.profile?.display_name)
+      ?? readTrimmedString(user?.name);
+    if (!name) return null;
+    slackUserNameCache.set(cacheKey, { name, expiresAt: Date.now() + SLACK_USER_NAME_CACHE_TTL_MS });
+    return name;
+  } catch {
+    return null;
+  }
+}
+
+export function resetSlackUserNameCacheForTests() {
+  slackUserNameCache.clear();
+}
+
 export async function postSlackMessage(
   db: Db,
   companyId: string,
