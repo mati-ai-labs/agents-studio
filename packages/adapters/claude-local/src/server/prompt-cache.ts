@@ -1,4 +1,3 @@
-import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash, type Hash } from "node:crypto";
@@ -108,27 +107,108 @@ async function buildClaudePromptBundleKey(input: {
   return hash.digest("hex");
 }
 
-async function ensureReadableFile(targetPath: string, contents: string): Promise<void> {
-  try {
-    await fs.access(targetPath, fsConstants.R_OK);
+async function isReadableRegularFile(targetPath: string): Promise<boolean> {
+  // stat() follows symlinks, so a symlink pointing at a real file counts as
+  // readable. A character device (e.g. a leftover /dev/null stub) is readable
+  // too, but bwrap cannot use it as a bind-mount source, so it must be
+  // replaced with a real file.
+  const stat = await fs.stat(targetPath).catch(() => null);
+  return stat !== null && stat.isFile();
+}
+
+async function ensureReadableFile(
+  targetPath: string,
+  contents: string,
+  options: { force?: boolean } = {},
+): Promise<void> {
+  if (!options.force && (await isReadableRegularFile(targetPath))) {
     return;
-  } catch {
-    // Fall through and materialize the file.
   }
 
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  const existing = await fs.lstat(targetPath).catch(() => null);
+  if (existing?.isDirectory()) {
+    await fs.rm(targetPath, { recursive: true, force: true });
+  }
   const tempPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
   try {
     await fs.writeFile(tempPath, contents, "utf8");
+    await fs.chmod(tempPath, 0o644);
     await fs.rename(tempPath, targetPath);
   } catch (err) {
-    const targetReadable = await fs.access(targetPath, fsConstants.R_OK).then(() => true).catch(() => false);
+    const targetReadable = await isReadableRegularFile(targetPath);
     if (!targetReadable) {
       throw err;
     }
   } finally {
     await fs.rm(tempPath, { force: true }).catch(() => {});
   }
+}
+
+/**
+ * The claude-local sandbox bind-mounts the prompt bundle directory. Claude Code's
+ * sandbox enumerates `.mcp.json` inside it and aborts the whole bwrap invocation
+ * with "Can't get type of source .../.mcp.json" when the file is absent, which
+ * kills every Bash tool call in the run. Materialize it eagerly so a bundle dir
+ * can never be born without it.
+ */
+const EMPTY_MCP_CONFIG_CONTENTS = `${JSON.stringify({ mcpServers: {} }, null, 2)}\n`;
+
+/**
+ * A bundle `.mcp.json` is only usable if Claude Code can parse it. An empty or
+ * otherwise invalid file is reported by Claude Code as
+ * "[Failed to parse] Project config (shared via .mcp.json)", so it is repaired
+ * the same way a missing file is.
+ */
+async function isUsableBundleMcpConfig(targetPath: string): Promise<boolean> {
+  if (!(await isReadableRegularFile(targetPath))) return false;
+  const raw = await fs.readFile(targetPath, "utf8").catch(() => null);
+  if (raw === null) return false;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+    const mcpServers = (parsed as Record<string, unknown>).mcpServers;
+    return mcpServers !== undefined && mcpServers !== null && typeof mcpServers === "object";
+  } catch {
+    return false;
+  }
+}
+
+async function ensureBundleMcpConfig(bundleDir: string): Promise<void> {
+  const mcpConfigPath = path.join(bundleDir, ".mcp.json");
+  if (await isUsableBundleMcpConfig(mcpConfigPath)) {
+    return;
+  }
+  await ensureReadableFile(mcpConfigPath, EMPTY_MCP_CONFIG_CONTENTS, { force: true });
+}
+
+/**
+ * Repairs bundle directories that were created before `.mcp.json` was
+ * materialized, so an existing bundle is never left in the state that aborts
+ * the sandbox.
+ */
+async function repairClaudePromptCacheBundles(
+  cacheRoot: string,
+  onLog: AdapterExecutionContext["onLog"],
+): Promise<string[]> {
+  const repaired: string[] = [];
+  const entries = await fs.readdir(cacheRoot, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const bundleDir = path.join(cacheRoot, entry.name);
+    try {
+      const mcpConfigPath = path.join(bundleDir, ".mcp.json");
+      if (await isUsableBundleMcpConfig(mcpConfigPath)) continue;
+      await ensureBundleMcpConfig(bundleDir);
+      repaired.push(bundleDir);
+    } catch (err) {
+      await onLog(
+        "stderr",
+        `[paperclip] Failed to materialize .mcp.json in "${bundleDir}": ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+    }
+  }
+  return repaired;
 }
 
 export async function prepareClaudePromptBundle(input: {
@@ -142,7 +222,8 @@ export async function prepareClaudePromptBundle(input: {
     skills,
     instructionsContents,
   });
-  const rootDir = path.join(resolveManagedClaudePromptCacheRoot(process.env, companyId), bundleKey);
+  const cacheRoot = resolveManagedClaudePromptCacheRoot(process.env, companyId);
+  const rootDir = path.join(cacheRoot, bundleKey);
   const skillsHome = path.join(rootDir, ".claude", "skills");
   await fs.mkdir(skillsHome, { recursive: true });
 
@@ -163,6 +244,16 @@ export async function prepareClaudePromptBundle(input: {
     : null;
   if (instructionsFilePath && instructionsContents) {
     await ensureReadableFile(instructionsFilePath, instructionsContents);
+  }
+
+  await ensureBundleMcpConfig(rootDir);
+
+  const repairedBundles = await repairClaudePromptCacheBundles(cacheRoot, onLog);
+  if (repairedBundles.length > 0) {
+    await onLog(
+      "stdout",
+      `[paperclip] Materialized .mcp.json in ${repairedBundles.length} existing Claude prompt bundle(s).\n`,
+    );
   }
 
   return {
