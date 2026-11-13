@@ -134,6 +134,8 @@ import {
   sanitizeRuntimeServiceBaseEnv,
 } from "./workspace-runtime.js";
 import { issueService } from "./issues.js";
+import { guardrailService } from "./guardrails.js";
+import type { GuardrailViolationSubjectKind } from "@paperclipai/shared";
 import { createToolGatewayService } from "./tool-gateway.js";
 import { toolAccessService } from "./tool-access.js";
 import { visibleIssueCondition } from "./issue-visibility.js";
@@ -4536,6 +4538,31 @@ export async function buildPaperclipWakePayload(input: {
       ? redactQuarantinedBodyForHigherTrust(continuationSummary)
       : continuationSummary;
 
+  // The wake payload is the first thing an agent reads, so untrusted text that
+  // reaches it is filtered here — before the agent sees a single character.
+  // A `block` decision drops the offending text; a `redact` decision replaces
+  // the matched span.
+  const wakeGuardrails = guardrailService(input.db);
+  async function guardrailWakeText(text: string, subjectKind: GuardrailViolationSubjectKind) {
+    if (!text) return text;
+    const result = await wakeGuardrails.applyTextGuardrails(
+      {
+        companyId: input.companyId,
+        text,
+        fields: { comment: text, document_body: text },
+      },
+      { stage: "input", violation: { subjectKind } },
+    );
+    if (result.decision.action === "block") {
+      logger.warn(
+        { companyId: input.companyId, stage: "input", subjectKind },
+        "guardrail policy blocked wake payload text; the text was withheld",
+      );
+      return "";
+    }
+    return result.text;
+  }
+
   for (const commentId of commentIds) {
     const row = commentsById.get(commentId);
     if (!row) {
@@ -4550,7 +4577,7 @@ export async function buildPaperclipWakePayload(input: {
 
     const deletedAt = row.deletedAt ?? null;
     const safeRow = deletedAt || input.exposeLowTrustRaw ? row : sanitizeQuarantinedCommentForHigherTrust(row);
-    const fullBody = deletedAt ? "" : safeRow.body;
+    const fullBody = deletedAt ? "" : await guardrailWakeText(safeRow.body, "wake_context");
     const allowedBodyChars = Math.min(MAX_INLINE_WAKE_COMMENT_BODY_CHARS, remainingBodyChars);
     if (allowedBodyChars <= 0) {
       truncated = true;
@@ -4676,6 +4703,12 @@ export async function buildPaperclipWakePayload(input: {
       .then((rows) => rows[0] ?? null)
     : null;
 
+  const guardedContinuationBody = safeContinuationSummary
+    ? await guardrailWakeText(safeContinuationSummary.body, "wake_context").then((guarded) =>
+        guarded.length > 4_000 ? guarded.slice(0, 4_000) : guarded,
+      )
+    : null;
+
   return {
     reason: readNonEmptyString(input.contextSnapshot.wakeReason),
     taskSource,
@@ -4683,7 +4716,7 @@ export async function buildPaperclipWakePayload(input: {
       taskSource === "ceo_chat" || chatSessionId || chatMessage
         ? {
             sessionId: chatSessionId,
-            message: chatMessage,
+            message: chatMessage ? await guardrailWakeText(chatMessage, "wake_context") : chatMessage,
             messageTruncated: chatMessageTruncated,
           }
         : null,
@@ -4749,10 +4782,7 @@ export async function buildPaperclipWakePayload(input: {
       ? {
           key: safeContinuationSummary.key,
           title: safeContinuationSummary.title,
-          body:
-            safeContinuationSummary.body.length > 4_000
-              ? safeContinuationSummary.body.slice(0, 4_000)
-              : safeContinuationSummary.body,
+          body: guardedContinuationBody,
           bodyTruncated: safeContinuationSummary.body.length > 4_000,
           sourceTrust: safeContinuationSummary.sourceTrust ?? null,
           updatedAt: safeContinuationSummary.updatedAt.toISOString(),

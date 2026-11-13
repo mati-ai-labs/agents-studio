@@ -56,6 +56,7 @@ import { secretService } from "./secrets.js";
 import { mcpHttpRequestHeaders, parseMcpHttpResponseBody } from "./mcp-http.js";
 import { assertPublicRemoteHttpEndpoint, parseRemoteHttpEndpoint } from "./remote-http-endpoint-guard.js";
 import { toolAccessPolicyService } from "./tool-access-policy.js";
+import { guardrailService } from "./guardrails.js";
 import { issueThreadInteractionService } from "./issue-thread-interactions.js";
 import {
   createToolRuntimeSupervisor,
@@ -766,6 +767,7 @@ export function createToolGatewayService(
   const pluginToolDispatcher = options.pluginToolDispatcher;
   const interactions = issueThreadInteractionService(db);
   const policyService = toolAccessPolicyService(db);
+  const guardrails = guardrailService(db);
   const secrets = secretService(db);
   const protocolLimits = mcpGatewayProtocolLimits(options.mcpGatewayProtocolLimits);
   let nextProtocolRateLimitPruneAt = 0;
@@ -5731,6 +5733,105 @@ export function createToolGatewayService(
         },
       });
 
+      // Guardrail `action` policies run after the tool-access policy has
+      // allowed the call and before the tool actually executes, so a
+      // restricted action is stopped before it has any effect.
+      const guardrailAction = await guardrails.enforceToolAction({
+        companyId: session.companyId,
+        toolName: tool.name,
+        connectorType: tool.providerType === "paperclip_plugin" ? null : tool.providerType,
+        parameters: effectiveParameters,
+        agentId: session.agentId,
+        runId: session.runId,
+        projectId: session.projectId,
+        park: async (parked) => {
+          const [approval] = await db
+            .insert(approvals)
+            .values({
+              companyId: session.companyId,
+              type: "guardrail_action",
+              requestedByAgentId: session.agentId,
+              status: "pending",
+              payload: {
+                title: `Approve guarded tool action: ${parked.toolName}`,
+                summary: `${parked.toolName} is restricted by guardrail policy "${parked.policyName}".`,
+                recommendedAction: "Approve only if the tool action is intended and safe.",
+                risks: ["The tool may perform externally visible side effects."],
+                source: "guardrails",
+                invocationId,
+                tool: parked.toolName,
+                policyId: parked.policyId,
+                policyName: parked.policyName,
+                stage: parked.stage,
+                arguments: parked.parameters,
+              },
+            })
+            .returning();
+          parked.approvalId = approval?.id ?? null;
+          if (session.issueId && approval) {
+            await db
+              .insert(issueApprovals)
+              .values({
+                companyId: session.companyId,
+                issueId: session.issueId,
+                approvalId: approval.id,
+                linkedByAgentId: session.agentId,
+              })
+              .onConflictDoNothing();
+          }
+        },
+      });
+
+      if (guardrailAction.outcome === "block") {
+        await db
+          .update(toolInvocations)
+          .set({
+            status: "denied",
+            errorCode: "guardrail_policy_blocked",
+            errorMessage: guardrailAction.decision.decisive?.policyName ?? "blocked by guardrail policy",
+            completedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(toolInvocations.id, invocationId));
+        throw new ToolGatewayHttpError(
+          403,
+          `Tool ${tool.name} was blocked by guardrail policy "${guardrailAction.decision.decisive?.policyName ?? "unknown"}"`,
+          "guardrail_policy_blocked",
+          {
+            invocationId,
+            tool: tool.name,
+            policyId: guardrailAction.decision.decisive?.policyId ?? null,
+          },
+        );
+      }
+
+      if (guardrailAction.outcome === "require_approval") {
+        await db
+          .update(toolInvocations)
+          .set({
+            status: "denied",
+            approvalState: "required",
+            errorCode: "guardrail_approval_required",
+            errorMessage:
+              guardrailAction.decision.decisive?.policyName ??
+              "tool action requires guardrail approval",
+            completedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(toolInvocations.id, invocationId));
+        throw new ToolGatewayHttpError(
+          409,
+          `Tool ${tool.name} requires approval under guardrail policy "${guardrailAction.decision.decisive?.policyName ?? "unknown"}"`,
+          "guardrail_approval_required",
+          {
+            invocationId,
+            tool: tool.name,
+            policyId: guardrailAction.decision.decisive?.policyId ?? null,
+            approvalId: guardrailAction.approvalId,
+          },
+        );
+      }
+
       try {
         const executionTimeoutMs = timeoutMs(input.timeoutMs);
         if (tool.providerType === "paperclip_plugin" && (!session.agentId || !session.runId)) {
@@ -5767,6 +5868,76 @@ export function createToolGatewayService(
           sensitiveMode: "redact",
           promptInjectionMode: "block",
         });
+
+        // Guardrail `input` policies see the tool result before it reaches the
+        // agent. A tool result is the highest-risk input in the studio — it
+        // comes from outside — so it is checked here, at the single point every
+        // gateway tool call passes through.
+        const guardedResult = await guardrails.enforceToolResult({
+          companyId: session.companyId,
+          toolName: tool.name,
+          content:
+            typeof resultValidation.value === "string"
+              ? resultValidation.value
+              : typeof (resultValidation.value as { content?: unknown })?.content === "string"
+                ? (resultValidation.value as { content: string }).content
+                : "",
+          agentId: session.agentId,
+          runId: session.runId,
+          projectId: session.projectId,
+        });
+        if (guardedResult.outcome === "block") {
+          await db
+            .update(toolInvocations)
+            .set({
+              status: "denied",
+              errorCode: "guardrail_result_blocked",
+              errorMessage:
+                guardedResult.decision.decisive?.policyName ?? "tool result blocked by guardrail policy",
+              completedAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(eq(toolInvocations.id, invocationId));
+          throw new ToolGatewayHttpError(
+            403,
+            `The result of ${tool.name} was blocked by guardrail policy "${guardedResult.decision.decisive?.policyName ?? "unknown"}"`,
+            "guardrail_result_blocked",
+            {
+              invocationId,
+              tool: tool.name,
+              policyId: guardedResult.decision.decisive?.policyId ?? null,
+            },
+          );
+        }
+        if (guardedResult.outcome === "require_approval") {
+          await db
+            .update(toolInvocations)
+            .set({
+              status: "denied",
+              approvalState: "required",
+              errorCode: "guardrail_approval_required",
+              errorMessage:
+                guardedResult.decision.decisive?.policyName ??
+                "tool result requires guardrail approval",
+              completedAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(eq(toolInvocations.id, invocationId));
+          throw new ToolGatewayHttpError(
+            409,
+            `The result of ${tool.name} requires approval under guardrail policy "${guardedResult.decision.decisive?.policyName ?? "unknown"}"`,
+            "guardrail_approval_required",
+            {
+              invocationId,
+              tool: tool.name,
+              policyId: guardedResult.decision.decisive?.policyId ?? null,
+            },
+          );
+        }
+        const finalResult =
+          guardedResult.outcome === "redact" && typeof resultValidation.value === "string"
+            ? guardedResult.content
+            : resultValidation.value;
         await db
           .update(toolInvocations)
           .set({
@@ -5820,7 +5991,7 @@ export function createToolGatewayService(
             ...toolAuditMetadata(tool),
             durationMs: Date.now() - startedAt,
             argumentsSummary: effectiveArgumentsSummary,
-            result: summarizeResult(resultValidation.value),
+            result: summarizeResult(finalResult),
             resultSummary: resultValidation.summary,
             headerSummary: connectedMcpExecution?.headerSummary ?? undefined,
             execution: connectedMcpExecution?.execution ?? undefined,
@@ -5831,7 +6002,7 @@ export function createToolGatewayService(
           status: "completed" as const,
           tool: virtualToolName ?? tool.name,
           targetTool: virtualToolName ? tool.name : undefined,
-          result: resultValidation.value,
+          result: finalResult,
         };
       } catch (err) {
         const normalizedError = err instanceof ToolRuntimeSupervisorError
@@ -6050,6 +6221,105 @@ export function createToolGatewayService(
         },
       });
 
+      // Guardrail `action` policies run before the plugin tool executes, so a
+      // restricted action never reaches the plugin.
+      const pluginGuardrailAction = await guardrails.enforceToolAction({
+        companyId: input.runContext.companyId,
+        toolName: tool.name,
+        connectorType: null,
+        parameters: requestedParameters,
+        agentId: input.runContext.agentId,
+        runId: input.runContext.runId,
+        projectId: sessionLike.projectId,
+        park: async (parked) => {
+          const [approval] = await db
+            .insert(approvals)
+            .values({
+              companyId: input.runContext.companyId,
+              type: "guardrail_action",
+              requestedByAgentId: input.runContext.agentId,
+              status: "pending",
+              payload: {
+                title: `Approve guarded tool action: ${parked.toolName}`,
+                summary: `${parked.toolName} is restricted by guardrail policy "${parked.policyName}".`,
+                recommendedAction: "Approve only if the tool action is intended and safe.",
+                risks: ["The tool may perform externally visible side effects."],
+                source: "guardrails",
+                invocationId,
+                tool: parked.toolName,
+                policyId: parked.policyId,
+                policyName: parked.policyName,
+                stage: parked.stage,
+                arguments: parked.parameters,
+              },
+            })
+            .returning();
+          parked.approvalId = approval?.id ?? null;
+          if (context.issueId && approval) {
+            await db
+              .insert(issueApprovals)
+              .values({
+                companyId: input.runContext.companyId,
+                issueId: context.issueId,
+                approvalId: approval.id,
+                linkedByAgentId: input.runContext.agentId,
+              })
+              .onConflictDoNothing();
+          }
+        },
+      });
+
+      if (pluginGuardrailAction.outcome === "block") {
+        await db
+          .update(toolInvocations)
+          .set({
+            status: "denied",
+            errorCode: "guardrail_policy_blocked",
+            errorMessage:
+              pluginGuardrailAction.decision.decisive?.policyName ?? "blocked by guardrail policy",
+            completedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(toolInvocations.id, invocationId));
+        throw new ToolGatewayHttpError(
+          403,
+          `Tool ${tool.name} was blocked by guardrail policy "${pluginGuardrailAction.decision.decisive?.policyName ?? "unknown"}"`,
+          "guardrail_policy_blocked",
+          {
+            invocationId,
+            tool: tool.name,
+            policyId: pluginGuardrailAction.decision.decisive?.policyId ?? null,
+          },
+        );
+      }
+
+      if (pluginGuardrailAction.outcome === "require_approval") {
+        await db
+          .update(toolInvocations)
+          .set({
+            status: "denied",
+            approvalState: "required",
+            errorCode: "guardrail_approval_required",
+            errorMessage:
+              pluginGuardrailAction.decision.decisive?.policyName ??
+              "tool action requires guardrail approval",
+            completedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(toolInvocations.id, invocationId));
+        throw new ToolGatewayHttpError(
+          409,
+          `Tool ${tool.name} requires approval under guardrail policy "${pluginGuardrailAction.decision.decisive?.policyName ?? "unknown"}"`,
+          "guardrail_approval_required",
+          {
+            invocationId,
+            tool: tool.name,
+            policyId: pluginGuardrailAction.decision.decisive?.policyId ?? null,
+            approvalId: pluginGuardrailAction.approvalId,
+          },
+        );
+      }
+
       const startedAt = Date.now();
       try {
         const result = await pluginToolDispatcher.executeTool(input.tool, requestedParameters, input.runContext);
@@ -6059,6 +6329,75 @@ export function createToolGatewayService(
           sensitiveMode: "redact",
           promptInjectionMode: "block",
         });
+
+        // Guardrail `input` policies see the plugin result before it reaches
+        // the agent.
+        const pluginGuardedResult = await guardrails.enforceToolResult({
+          companyId: input.runContext.companyId,
+          toolName: tool.name,
+          content:
+            typeof resultValidation.value === "string"
+              ? resultValidation.value
+              : typeof (resultValidation.value as { content?: unknown })?.content === "string"
+                ? (resultValidation.value as { content: string }).content
+                : "",
+          agentId: input.runContext.agentId,
+          runId: input.runContext.runId,
+          projectId: sessionLike.projectId,
+        });
+        if (pluginGuardedResult.outcome === "block") {
+          await db
+            .update(toolInvocations)
+            .set({
+              status: "denied",
+              errorCode: "guardrail_result_blocked",
+              errorMessage:
+                pluginGuardedResult.decision.decisive?.policyName ??
+                "tool result blocked by guardrail policy",
+              completedAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(eq(toolInvocations.id, invocationId));
+          throw new ToolGatewayHttpError(
+            403,
+            `The result of ${tool.name} was blocked by guardrail policy "${pluginGuardedResult.decision.decisive?.policyName ?? "unknown"}"`,
+            "guardrail_result_blocked",
+            {
+              invocationId,
+              tool: tool.name,
+              policyId: pluginGuardedResult.decision.decisive?.policyId ?? null,
+            },
+          );
+        }
+        if (pluginGuardedResult.outcome === "require_approval") {
+          await db
+            .update(toolInvocations)
+            .set({
+              status: "denied",
+              approvalState: "required",
+              errorCode: "guardrail_approval_required",
+              errorMessage:
+                pluginGuardedResult.decision.decisive?.policyName ??
+                "tool result requires guardrail approval",
+              completedAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(eq(toolInvocations.id, invocationId));
+          throw new ToolGatewayHttpError(
+            409,
+            `The result of ${tool.name} requires approval under guardrail policy "${pluginGuardedResult.decision.decisive?.policyName ?? "unknown"}"`,
+            "guardrail_approval_required",
+            {
+              invocationId,
+              tool: tool.name,
+              policyId: pluginGuardedResult.decision.decisive?.policyId ?? null,
+            },
+          );
+        }
+        const finalPluginResult =
+          pluginGuardedResult.outcome === "redact" && typeof resultValidation.value === "string"
+            ? pluginGuardedResult.content
+            : resultValidation.value;
         await db
           .update(toolInvocations)
           .set({
@@ -6100,7 +6439,7 @@ export function createToolGatewayService(
             resultSummary: resultValidation.summary,
           },
         });
-        return resultValidation.value as typeof result;
+        return finalPluginResult as typeof result;
       } catch (err) {
         const status = err instanceof ToolGatewayHttpError ? err.status : 502;
         const reasonCode =

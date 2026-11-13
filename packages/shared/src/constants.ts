@@ -607,6 +607,7 @@ export const APPROVAL_TYPES = [
   "budget_override_required",
   "request_board_approval",
   "workspace_runtime_config",
+  "guardrail_action",
 ] as const;
 export type ApprovalType = (typeof APPROVAL_TYPES)[number];
 
@@ -1627,3 +1628,58 @@ export const PLUGIN_BRIDGE_ERROR_CODES = [
   "UNKNOWN",
 ] as const;
 export type PluginBridgeErrorCode = (typeof PLUGIN_BRIDGE_ERROR_CODES)[number];
+
+// ---------------------------------------------------------------------------
+// Guardrail policies
+// ---------------------------------------------------------------------------
+
+/**
+ * Scope a guardrail policy applies to. More specific scopes win on a
+ * `(kind, matcher)` conflict: company < agent < project < goal.
+ */
+export const GUARDRAIL_POLICY_SCOPE_TYPES = [
+  "company",
+  "agent",
+  "project",
+  "goal",
+] as const;
+export type GuardrailPolicyScopeType = (typeof GUARDRAIL_POLICY_SCOPE_TYPES)[number];
+
+/** The enforcement stage a guardrail policy applies to. */
+export const GUARDRAIL_POLICY_STAGES = ["input", "output", "action"] as const;
+export type GuardrailPolicyStage = (typeof GUARDRAIL_POLICY_STAGES)[number];
+
+/** The matcher family that decides what a guardrail policy matches on. */
+export const GUARDRAIL_POLICY_KINDS = [
+  "pii",
+  "secret",
+  "restricted_action",
+  "regex",
+  "allowlist",
+] as const;
+export type GuardrailPolicyKind = (typeof GUARDRAIL_POLICY_KINDS)[number];
+
+/** What the studio does when a guardrail policy matches. */
+export const GUARDRAIL_POLICY_ACTIONS = [
+  "allow",
+  "redact",
+  "block",
+  "require_approval",
+] as const;
+export type GuardrailPolicyAction = (typeof GUARDRAIL_POLICY_ACTIONS)[number];
+
+/** How serious a guardrail policy match is. Higher severity wins a tie. */
+export const GUARDRAIL_POLICY_SEVERITIES = ["info", "medium", "high", "critical"] as const;
+export type GuardrailPolicySeverity = (typeof GUARDRAIL_POLICY_SEVERITIES)[number];
+
+/** Subject kinds a guardrail violation can be recorded against. */
+export const GUARDRAIL_VIOLATION_SUBJECT_KINDS = [
+  "wake_context",
+  "tool_result",
+  "issue_comment",
+  "issue_title",
+  "issue_description",
+  "document_body",
+  "tool_action",
+] as const;
+export type GuardrailViolationSubjectKind = (typeof GUARDRAIL_VIOLATION_SUBJECT_KINDS)[number];

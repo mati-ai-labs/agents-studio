@@ -8002,6 +8002,7 @@ export function issueRoutes(
               ...updateFields,
               actorAgentId: actor.agentId ?? null,
               actorUserId: actor.actorType === "user" ? actor.actorId : null,
+              actorRunId: actor.runId ?? null,
             },
             tx,
           );
@@ -8027,6 +8028,7 @@ export function issueRoutes(
           ...updateFields,
           actorAgentId: actor.agentId ?? null,
           actorUserId: actor.actorType === "user" ? actor.actorId : null,
+          actorRunId: actor.runId ?? null,
         });
       }
     } catch (err) {
