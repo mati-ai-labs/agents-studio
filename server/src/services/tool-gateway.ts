@@ -5760,10 +5760,13 @@ export function createToolGatewayService(
                 source: "guardrails",
                 invocationId,
                 tool: parked.toolName,
+                agentId: session.agentId,
+                runId: session.runId,
                 policyId: parked.policyId,
                 policyName: parked.policyName,
                 stage: parked.stage,
                 arguments: parked.parameters,
+                argumentsHash: parked.argumentsHash,
               },
             })
             .returning();
@@ -5832,6 +5835,36 @@ export function createToolGatewayService(
         );
       }
 
+      if (guardrailAction.outcome === "cancelled") {
+        // A human rejected the approval, so the call is cancelled rather than
+        // left waiting. The invocation is recorded as denied so the trail
+        // shows the decision.
+        await db
+          .update(toolInvocations)
+          .set({
+            status: "denied",
+            approvalState: "rejected",
+            errorCode: "guardrail_approval_rejected",
+            errorMessage:
+              guardrailAction.decision.decisive?.policyName ??
+              "tool action approval was rejected",
+            completedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(toolInvocations.id, invocationId));
+        throw new ToolGatewayHttpError(
+          403,
+          `Tool ${tool.name} was not run: a human rejected the approval required by guardrail policy "${guardrailAction.decision.decisive?.policyName ?? "unknown"}"`,
+          "guardrail_approval_rejected",
+          {
+            invocationId,
+            tool: tool.name,
+            policyId: guardrailAction.decision.decisive?.policyId ?? null,
+            approvalId: guardrailAction.approvalId,
+          },
+        );
+      }
+
       try {
         const executionTimeoutMs = timeoutMs(input.timeoutMs);
         if (tool.providerType === "paperclip_plugin" && (!session.agentId || !session.runId)) {
@@ -5885,6 +5918,44 @@ export function createToolGatewayService(
           agentId: session.agentId,
           runId: session.runId,
           projectId: session.projectId,
+          park: async (parked) => {
+            const [approval] = await db
+              .insert(approvals)
+              .values({
+                companyId: session.companyId,
+                type: "guardrail_action",
+                requestedByAgentId: session.agentId,
+                status: "pending",
+                payload: {
+                  title: `Approve guarded tool result: ${parked.toolName}`,
+                  summary: `The result of ${parked.toolName} is restricted by guardrail policy "${parked.policyName}".`,
+                  recommendedAction: "Approve only if the returned content is safe to read.",
+                  risks: ["The result may contain data that the policy is meant to keep out of the agent's context."],
+                  source: "guardrails",
+                  invocationId,
+                  tool: parked.toolName,
+                  agentId: session.agentId,
+                  runId: session.runId,
+                  policyId: parked.policyId,
+                  policyName: parked.policyName,
+                  stage: parked.stage,
+                  argumentsHash: parked.argumentsHash,
+                },
+              })
+              .returning();
+            parked.approvalId = approval?.id ?? null;
+            if (session.issueId && approval) {
+              await db
+                .insert(issueApprovals)
+                .values({
+                  companyId: session.companyId,
+                  issueId: session.issueId,
+                  approvalId: approval.id,
+                  linkedByAgentId: session.agentId,
+                })
+                .onConflictDoNothing();
+            }
+          },
         });
         if (guardedResult.outcome === "block") {
           await db
@@ -5931,6 +6002,34 @@ export function createToolGatewayService(
               invocationId,
               tool: tool.name,
               policyId: guardedResult.decision.decisive?.policyId ?? null,
+              approvalId: guardedResult.approvalId,
+            },
+          );
+        }
+        if (guardedResult.outcome === "cancelled") {
+          // A human rejected the approval, so the result stays withheld.
+          await db
+            .update(toolInvocations)
+            .set({
+              status: "denied",
+              approvalState: "rejected",
+              errorCode: "guardrail_approval_rejected",
+              errorMessage:
+                guardedResult.decision.decisive?.policyName ??
+                "tool result approval was rejected",
+              completedAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(eq(toolInvocations.id, invocationId));
+          throw new ToolGatewayHttpError(
+            403,
+            `The result of ${tool.name} was withheld: a human rejected the approval required by guardrail policy "${guardedResult.decision.decisive?.policyName ?? "unknown"}"`,
+            "guardrail_approval_rejected",
+            {
+              invocationId,
+              tool: tool.name,
+              policyId: guardedResult.decision.decisive?.policyId ?? null,
+              approvalId: guardedResult.approvalId,
             },
           );
         }
@@ -6247,10 +6346,13 @@ export function createToolGatewayService(
                 source: "guardrails",
                 invocationId,
                 tool: parked.toolName,
+                agentId: input.runContext.agentId,
+                runId: input.runContext.runId,
                 policyId: parked.policyId,
                 policyName: parked.policyName,
                 stage: parked.stage,
                 arguments: parked.parameters,
+                argumentsHash: parked.argumentsHash,
               },
             })
             .returning();
@@ -6320,6 +6422,35 @@ export function createToolGatewayService(
         );
       }
 
+      if (pluginGuardrailAction.outcome === "cancelled") {
+        // A human rejected the approval, so the call is cancelled rather than
+        // left waiting.
+        await db
+          .update(toolInvocations)
+          .set({
+            status: "denied",
+            approvalState: "rejected",
+            errorCode: "guardrail_approval_rejected",
+            errorMessage:
+              pluginGuardrailAction.decision.decisive?.policyName ??
+              "tool action approval was rejected",
+            completedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(toolInvocations.id, invocationId));
+        throw new ToolGatewayHttpError(
+          403,
+          `Tool ${tool.name} was not run: a human rejected the approval required by guardrail policy "${pluginGuardrailAction.decision.decisive?.policyName ?? "unknown"}"`,
+          "guardrail_approval_rejected",
+          {
+            invocationId,
+            tool: tool.name,
+            policyId: pluginGuardrailAction.decision.decisive?.policyId ?? null,
+            approvalId: pluginGuardrailAction.approvalId,
+          },
+        );
+      }
+
       const startedAt = Date.now();
       try {
         const result = await pluginToolDispatcher.executeTool(input.tool, requestedParameters, input.runContext);
@@ -6344,6 +6475,44 @@ export function createToolGatewayService(
           agentId: input.runContext.agentId,
           runId: input.runContext.runId,
           projectId: sessionLike.projectId,
+          park: async (parked) => {
+            const [approval] = await db
+              .insert(approvals)
+              .values({
+                companyId: input.runContext.companyId,
+                type: "guardrail_action",
+                requestedByAgentId: input.runContext.agentId,
+                status: "pending",
+                payload: {
+                  title: `Approve guarded tool result: ${parked.toolName}`,
+                  summary: `The result of ${parked.toolName} is restricted by guardrail policy "${parked.policyName}".`,
+                  recommendedAction: "Approve only if the returned content is safe to read.",
+                  risks: ["The result may contain data that the policy is meant to keep out of the agent's context."],
+                  source: "guardrails",
+                  invocationId,
+                  tool: parked.toolName,
+                  agentId: input.runContext.agentId,
+                  runId: input.runContext.runId,
+                  policyId: parked.policyId,
+                  policyName: parked.policyName,
+                  stage: parked.stage,
+                  argumentsHash: parked.argumentsHash,
+                },
+              })
+              .returning();
+            parked.approvalId = approval?.id ?? null;
+            if (context.issueId && approval) {
+              await db
+                .insert(issueApprovals)
+                .values({
+                  companyId: input.runContext.companyId,
+                  issueId: context.issueId,
+                  approvalId: approval.id,
+                  linkedByAgentId: input.runContext.agentId,
+                })
+                .onConflictDoNothing();
+            }
+          },
         });
         if (pluginGuardedResult.outcome === "block") {
           await db
@@ -6391,6 +6560,34 @@ export function createToolGatewayService(
               invocationId,
               tool: tool.name,
               policyId: pluginGuardedResult.decision.decisive?.policyId ?? null,
+              approvalId: pluginGuardedResult.approvalId,
+            },
+          );
+        }
+        if (pluginGuardedResult.outcome === "cancelled") {
+          // A human rejected the approval, so the result stays withheld.
+          await db
+            .update(toolInvocations)
+            .set({
+              status: "denied",
+              approvalState: "rejected",
+              errorCode: "guardrail_approval_rejected",
+              errorMessage:
+                pluginGuardedResult.decision.decisive?.policyName ??
+                "tool result approval was rejected",
+              completedAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(eq(toolInvocations.id, invocationId));
+          throw new ToolGatewayHttpError(
+            403,
+            `The result of ${tool.name} was withheld: a human rejected the approval required by guardrail policy "${pluginGuardedResult.decision.decisive?.policyName ?? "unknown"}"`,
+            "guardrail_approval_rejected",
+            {
+              invocationId,
+              tool: tool.name,
+              policyId: pluginGuardedResult.decision.decisive?.policyId ?? null,
+              approvalId: pluginGuardedResult.approvalId,
             },
           );
         }

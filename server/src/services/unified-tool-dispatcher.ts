@@ -287,6 +287,7 @@ export function createUnifiedToolDispatcher(
             policyName: parked.policyName,
             stage: parked.stage,
             parameters: parked.parameters,
+            argumentsHash: parked.argumentsHash,
           },
         });
         parked.approvalId = approval?.id ?? null;
@@ -315,6 +316,31 @@ export function createUnifiedToolDispatcher(
           action: "block",
         },
       );
+    }
+
+    if (outcome.outcome === "cancelled") {
+      // A human rejected the approval, so the call is cancelled rather than
+      // parked again. The agent is told why, so it can take a different route.
+      const policyName = outcome.decision.decisive?.policyName ?? "unknown";
+      return {
+        source: connectorType ? "connector" : "plugin",
+        toolName: input.namespacedName,
+        ownerId: connectorType ?? "guardrail",
+        result: {
+          content:
+            `Tool ${input.namespacedName} was not run: a human rejected the approval required by ` +
+            `guardrail policy "${policyName}".`,
+          data: {
+            guardrail: {
+              status: "cancelled",
+              policyId: outcome.decision.decisive?.policyId ?? null,
+              policyName,
+              stage: "action",
+              approvalId: outcome.approvalId,
+            },
+          },
+        },
+      };
     }
 
     const policyName = outcome.decision.decisive?.policyName ?? "unknown";
@@ -373,6 +399,7 @@ export function createUnifiedToolDispatcher(
             policyId: parked.policyId,
             policyName: parked.policyName,
             stage: parked.stage,
+            argumentsHash: parked.argumentsHash,
           },
         });
         parked.approvalId = approval?.id ?? null;
@@ -394,6 +421,29 @@ export function createUnifiedToolDispatcher(
       );
     }
 
+    if (outcome.outcome === "cancelled") {
+      // A human rejected the approval, so the result stays withheld. The
+      // agent is told why, so it can route around the tool.
+      const policyName = outcome.decision.decisive?.policyName ?? "unknown";
+      return {
+        ...execution,
+        result: {
+          content:
+            `The result of ${execution.toolName} was withheld: a human rejected the approval required by ` +
+            `guardrail policy "${policyName}".`,
+          data: {
+            guardrail: {
+              status: "cancelled",
+              policyId: outcome.decision.decisive?.policyId ?? null,
+              policyName,
+              stage: "input",
+              approvalId: outcome.approvalId,
+            },
+          },
+        },
+      };
+    }
+
     if (outcome.outcome === "require_approval") {
       const policyName = outcome.decision.decisive?.policyName ?? "unknown";
       return {
@@ -408,7 +458,7 @@ export function createUnifiedToolDispatcher(
               policyId: outcome.decision.decisive?.policyId ?? null,
               policyName,
               stage: "input",
-              approvalId: null,
+              approvalId: outcome.approvalId,
             },
           },
         },

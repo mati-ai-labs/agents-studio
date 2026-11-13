@@ -18,9 +18,9 @@
  * one whose action is applied; the loser is still recorded on the violation
  * row so an operator can see what was overridden.
  */
-import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { agents, guardrailPolicies, guardrailViolations, heartbeatRuns } from "@paperclipai/db";
+import { agents, approvals, guardrailPolicies, guardrailViolations, heartbeatRuns } from "@paperclipai/db";
 import type {
   GuardrailPolicyAction,
   GuardrailPolicyKind,
@@ -31,6 +31,7 @@ import type {
 } from "@paperclipai/shared";
 import { REDACTED_EVENT_VALUE } from "../redaction.js";
 import { FREE_TEXT_PATTERNS } from "./feedback-redaction.js";
+import { hashToolValue } from "./tool-content-guards.js";
 import { logActivity } from "./activity-log.js";
 import { logger } from "../middleware/logger.js";
 
@@ -869,6 +870,120 @@ export function guardrailService(db: Db) {
   }
 
   /**
+   * Finds the `guardrail_action` approval that matches a parked call.
+   *
+   * A parked call carries the tool name and a hash of its arguments. The
+   * approval that a human resolved carries the same two values, so the pair
+   * identifies the parked call unambiguously: approving one call does not
+   * approve a different call of the same tool with different arguments.
+   *
+   * Rejected approvals are returned too, so the caller can cancel the parked
+   * call instead of re-parking it forever. Pending approvals are returned as
+   * well, so a retry of a call that is still waiting does not queue a second
+   * approval for the human to answer.
+   */
+  async function findGuardrailApproval(input: {
+    companyId: string;
+    toolName: string;
+    argumentsHash: string;
+    agentId?: string | null;
+    runId?: string | null;
+    statuses: ReadonlyArray<"pending" | "approved" | "rejected">;
+  }): Promise<{
+    approvalId: string;
+    status: "pending" | "approved" | "rejected";
+    policyId: string | null;
+    consumed: boolean;
+  } | null> {
+    const candidates = await db
+      .select({
+        id: approvals.id,
+        status: approvals.status,
+        payload: approvals.payload,
+      })
+      .from(approvals)
+      .where(
+        and(
+          eq(approvals.companyId, input.companyId),
+          eq(approvals.type, "guardrail_action"),
+          inArray(approvals.status, input.statuses as string[]),
+        ),
+      )
+      .orderBy(desc(approvals.createdAt))
+      .then((rows) => rows);
+
+    const matches: Array<{
+      approvalId: string;
+      status: "pending" | "approved" | "rejected";
+      policyId: string | null;
+      consumed: boolean;
+    }> = [];
+
+    for (const candidate of candidates) {
+      const payload = candidate.payload ?? {};
+      // The two enforcement paths name the tool differently in the payload
+      // (`tool` on the gateway, `toolName` on the dispatcher), so both are
+      // accepted rather than making one path's approvals unresolvable.
+      const parkedTool = typeof payload.tool === "string"
+        ? payload.tool
+        : typeof payload.toolName === "string"
+          ? payload.toolName
+          : null;
+      if (input.toolName && parkedTool !== input.toolName) continue;
+      if (payload.argumentsHash !== input.argumentsHash) continue;
+      if (input.agentId && typeof payload.agentId === "string" && payload.agentId !== input.agentId) {
+        continue;
+      }
+      if (input.runId && typeof payload.runId === "string" && payload.runId !== input.runId) continue;
+      matches.push({
+        approvalId: candidate.id,
+        status: candidate.status as "pending" | "approved" | "rejected",
+        policyId: typeof payload.policyId === "string" ? payload.policyId : null,
+        consumed: typeof payload.consumedAt === "string" && payload.consumedAt.length > 0,
+      });
+    }
+
+    if (matches.length === 0) return null;
+
+    // An approval a human gave but that has not been spent is the one that
+    // releases the call, so it wins over any other row for the same call.
+    const unspentApproval = matches.find(
+      (match) => match.status === "approved" && !match.consumed,
+    );
+    if (unspentApproval) return unspentApproval;
+
+    // Otherwise the most recent row carries the latest human decision.
+    return matches[0]!;
+  }
+
+  /**
+   * Marks an approval as used, so one human decision releases one call.
+   *
+   * The update is conditional on the approval still being unconsumed, so two
+   * racing retries of the same call cannot both be released by a single
+   * approval.
+   */
+  async function consumeGuardrailApproval(approvalId: string): Promise<boolean> {
+    const now = new Date();
+    const consumed = await db
+      .update(approvals)
+      .set({
+        payload: sql`${approvals.payload} || ${JSON.stringify({ consumedAt: now.toISOString() })}::jsonb`,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(approvals.id, approvalId),
+          eq(approvals.status, "approved"),
+          sql`(${approvals.payload} ->> 'consumedAt') is null`,
+        ),
+      )
+      .returning({ id: approvals.id })
+      .then((rows) => rows[0] ?? null);
+    return Boolean(consumed);
+  }
+
+  /**
    * Applies the `input`-stage policies to a piece of free text.
    *
    * This is the entry point for the text-shaped enforcement points (the wake
@@ -939,12 +1054,18 @@ export function guardrailService(db: Db) {
       toolName: string;
       connectorType: string | null;
       parameters: unknown;
+      argumentsHash: string;
     }) => Promise<void> | void;
   }): Promise<
     | {
         outcome: "allow" | "require_approval";
         decision: GuardrailDecision;
         approvalId: string | null;
+      }
+    | {
+        outcome: "cancelled";
+        decision: GuardrailDecision;
+        approvalId: string;
       }
     | {
         outcome: "block";
@@ -988,6 +1109,41 @@ export function guardrailService(db: Db) {
     }
 
     // `require_approval`: the call is parked until a human resolves it.
+    //
+    // A human resolving the approval in the agent's favour is the signal that
+    // this exact call may now proceed. The approval carries the tool name and
+    // a hash of the arguments, so the resumed call is the one that was
+    // reviewed — a different call with the same tool but different arguments
+    // is still parked.
+    const argumentsHash = hashToolValue(input.parameters ?? {});
+    const resolved = await findGuardrailApproval({
+      companyId: input.companyId,
+      toolName: input.toolName,
+      argumentsHash,
+      agentId: input.agentId,
+      runId: input.runId,
+      statuses: ["approved", "rejected", "pending"],
+    });
+
+    if (resolved?.status === "approved" && !resolved.consumed) {
+      // One approval releases one call. The consumption is conditional, so a
+      // second retry of the same call finds the approval already spent.
+      const consumed = await consumeGuardrailApproval(resolved.approvalId);
+      if (consumed) {
+        return { outcome: "allow", decision, approvalId: resolved.approvalId };
+      }
+    }
+
+    if (resolved?.status === "rejected") {
+      return { outcome: "cancelled", decision, approvalId: resolved.approvalId };
+    }
+
+    if (resolved?.status === "pending") {
+      // The call is still waiting for a human. Parking it again would queue a
+      // second approval for the same call, so the existing one is reported.
+      return { outcome: "require_approval", decision, approvalId: resolved.approvalId };
+    }
+
     const policyName = decision.decisive?.policyName ?? "unknown";
     const parked = {
       approvalId: null as string | null,
@@ -997,6 +1153,7 @@ export function guardrailService(db: Db) {
       toolName: input.toolName,
       connectorType: input.connectorType ?? null,
       parameters: input.parameters,
+      argumentsHash,
     };
     await input.park(parked);
     return { outcome: "require_approval", decision, approvalId: parked.approvalId };
@@ -1022,10 +1179,13 @@ export function guardrailService(db: Db) {
       policyName: string;
       stage: GuardrailPolicyStage;
       toolName: string;
+      argumentsHash: string;
     }) => Promise<void> | void;
   }): Promise<
     | { outcome: "allow" | "redact"; content: string; decision: GuardrailDecision }
-    | { outcome: "block" | "require_approval"; content: string; decision: GuardrailDecision }
+    | { outcome: "require_approval"; content: string; decision: GuardrailDecision; approvalId: string | null }
+    | { outcome: "cancelled"; content: string; decision: GuardrailDecision; approvalId: string }
+    | { outcome: "block"; content: string; decision: GuardrailDecision }
   > {
     const decision = await applyGuardrails(
       {
@@ -1053,17 +1213,61 @@ export function guardrailService(db: Db) {
     if (decision.action === "redact") {
       return { outcome: "redact", content: decision.redactedText ?? input.content, decision };
     }
-    if (decision.action === "require_approval" && input.park) {
-      const parked = {
-        approvalId: null as string | null,
-        policyId: decision.decisive?.policyId ?? null,
-        policyName: decision.decisive?.policyName ?? "unknown",
-        stage: "input" as GuardrailPolicyStage,
+    if (decision.action === "require_approval") {
+      // A human resolving the approval in the agent's favour releases this
+      // exact result. The approval carries the tool name and a hash of the
+      // result, so a different result of the same tool is still withheld.
+      const contentHash = hashToolValue(input.content);
+      const resolved = await findGuardrailApproval({
+        companyId: input.companyId,
         toolName: input.toolName,
-      };
-      await input.park(parked);
+        argumentsHash: contentHash,
+        agentId: input.agentId,
+        runId: input.runId,
+        statuses: ["approved", "rejected", "pending"],
+      });
+
+      if (resolved?.status === "approved" && !resolved.consumed) {
+        // One approval releases one result. The consumption is conditional, so
+        // a second read of the same result finds the approval already spent.
+        const consumed = await consumeGuardrailApproval(resolved.approvalId);
+        if (consumed) {
+          return { outcome: "allow", content: input.content, decision };
+        }
+      }
+
+      if (resolved?.status === "rejected") {
+        return { outcome: "cancelled", content: input.content, decision, approvalId: resolved.approvalId };
+      }
+
+      if (resolved?.status === "pending") {
+        return {
+          outcome: "require_approval",
+          content: input.content,
+          decision,
+          approvalId: resolved.approvalId,
+        };
+      }
+
+      if (input.park) {
+        const parked = {
+          approvalId: null as string | null,
+          policyId: decision.decisive?.policyId ?? null,
+          policyName: decision.decisive?.policyName ?? "unknown",
+          stage: "input" as GuardrailPolicyStage,
+          toolName: input.toolName,
+          argumentsHash: contentHash,
+        };
+        await input.park(parked);
+      }
+      // The call is still waiting for a human. A caller with no `park`
+      // callback cannot queue an approval, so the result is withheld rather
+      // than released.
+      return { outcome: "require_approval", content: input.content, decision, approvalId: null };
     }
-    return { outcome: decision.action, content: input.content, decision };
+    // `block` is the only action left here: `allow` and `redact` returned
+    // above, and `require_approval` either released, was rejected, or parked.
+    return { outcome: "block", content: input.content, decision };
   }
 
   return {
@@ -1072,6 +1276,8 @@ export function guardrailService(db: Db) {
     enforceToolAction,
     enforceToolResult,
     recordViolation,
+    findGuardrailApproval,
+    consumeGuardrailApproval,
     resolveEffectivePolicies: (input: Parameters<typeof resolveEffectivePolicies>[1]) =>
       resolveEffectivePolicies(db, input),
     evaluatePolicy,

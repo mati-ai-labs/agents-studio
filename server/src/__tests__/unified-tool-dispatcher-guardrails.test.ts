@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
 import {
   activityLog,
   agents,
@@ -336,5 +337,170 @@ describeEmbeddedPostgres("unified tool dispatcher guardrails", () => {
     const result = await unified.executeTool("some:tool", { value: 1 }, runContext());
     expect(result.source).toBe("plugin");
     expect(pluginCalls).toHaveLength(1);
+  });
+
+  /**
+   * Marks an approval as decided by a human, the way the approvals service
+   * does when a person resolves one.
+   */
+  async function resolveApproval(
+    approvalId: string,
+    status: "approved" | "rejected",
+  ) {
+    await db
+      .update(approvals)
+      .set({ status, decidedByUserId: "user-1", decidedAt: new Date() })
+      .where(eq(approvals.id, approvalId));
+  }
+
+  /**
+   * Seeds a policy that parks every `gmail:send` call for approval.
+   */
+  async function seedRequireApprovalPolicy() {
+    const guardrails = guardrailService(db);
+    await guardrails.createPolicy(companyId, {
+      scopeType: "company",
+      scopeId: null,
+      stage: "action",
+      name: "Ask before sending",
+      kind: "restricted_action",
+      matcher: { kind: "restricted_action", toolNames: ["gmail:send"] },
+      action: "require_approval",
+      severity: "high",
+    });
+    return guardrails;
+  }
+
+  it("runs the parked call once a human approves it", async () => {
+    await seedCompany();
+    const agentId = await seedAgent();
+    await seedRequireApprovalPolicy();
+
+    const { unified, connectorCalls } = await unifiedWith();
+    const context = runContext({ agentId });
+
+    // The first call parks.
+    const parked = await unified.executeTool("gmail:send", { to: "x@example.com" }, context);
+    expect(parked.result.content).toContain("requires approval");
+    expect(connectorCalls).toHaveLength(0);
+
+    const rows = await db.select().from(approvals);
+    expect(rows).toHaveLength(1);
+    await resolveApproval(rows[0]!.id, "approved");
+
+    // The retry runs the tool.
+    const resumed = await unified.executeTool("gmail:send", { to: "x@example.com" }, context);
+    expect(resumed.source).toBe("connector");
+    expect(connectorCalls).toHaveLength(1);
+  });
+
+  it("cancels the parked call when a human rejects it", async () => {
+    await seedCompany();
+    const agentId = await seedAgent();
+    await seedRequireApprovalPolicy();
+
+    const { unified, connectorCalls } = await unifiedWith();
+    const context = runContext({ agentId });
+
+    const parked = await unified.executeTool("gmail:send", { to: "x@example.com" }, context);
+    expect(parked.result.content).toContain("requires approval");
+
+    const rows = await db.select().from(approvals);
+    await resolveApproval(rows[0]!.id, "rejected");
+
+    const cancelled = await unified.executeTool("gmail:send", { to: "x@example.com" }, context);
+    expect(cancelled.result.content).toContain("rejected the approval");
+    expect(connectorCalls).toHaveLength(0);
+    // The rejected call is not parked a second time.
+    expect(await db.select().from(approvals)).toHaveLength(1);
+  });
+
+  it("does not run a call whose approval was for different arguments", async () => {
+    await seedCompany();
+    const agentId = await seedAgent();
+    await seedRequireApprovalPolicy();
+
+    const { unified, connectorCalls } = await unifiedWith();
+    const context = runContext({ agentId });
+
+    await unified.executeTool("gmail:send", { to: "x@example.com" }, context);
+    const rows = await db.select().from(approvals);
+    await resolveApproval(rows[0]!.id, "approved");
+
+    // Different arguments, so the approval does not cover this call.
+    const result = await unified.executeTool("gmail:send", { to: "y@example.com" }, context);
+    expect(result.result.content).toContain("requires approval");
+    expect(connectorCalls).toHaveLength(0);
+  });
+
+  it("does not reuse an approval that was already spent", async () => {
+    await seedCompany();
+    const agentId = await seedAgent();
+    await seedRequireApprovalPolicy();
+
+    const { unified, connectorCalls } = await unifiedWith();
+    const context = runContext({ agentId });
+
+    await unified.executeTool("gmail:send", { to: "x@example.com" }, context);
+    const rows = await db.select().from(approvals);
+    await resolveApproval(rows[0]!.id, "approved");
+
+    // The first retry spends the approval.
+    const first = await unified.executeTool("gmail:send", { to: "x@example.com" }, context);
+    expect(first.source).toBe("connector");
+    expect(connectorCalls).toHaveLength(1);
+
+    // The second retry must park again rather than ride on the same approval.
+    const second = await unified.executeTool("gmail:send", { to: "x@example.com" }, context);
+    expect(second.result.content).toContain("requires approval");
+    expect(connectorCalls).toHaveLength(1);
+  });
+
+  it("does not let another agent ride on an approval", async () => {
+    await seedCompany();
+    const agentId = await seedAgent();
+    await seedRequireApprovalPolicy();
+
+    const { unified, connectorCalls } = await unifiedWith();
+
+    await unified.executeTool("gmail:send", { to: "x@example.com" }, runContext({ agentId }));
+    const rows = await db.select().from(approvals);
+    await resolveApproval(rows[0]!.id, "approved");
+
+    // A different agent must not inherit the first agent's approval.
+    const otherAgentId = randomUUID();
+    await db.insert(agents).values({
+      id: otherAgentId,
+      companyId,
+      name: "Other",
+      role: "worker",
+      status: "idle",
+      adapterType: "process",
+      adapterConfig: {},
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as never);
+
+    const result = await unified.executeTool(
+      "gmail:send",
+      { to: "x@example.com" },
+      runContext({ agentId: otherAgentId }),
+    );
+    expect(result.result.content).toContain("requires approval");
+    expect(connectorCalls).toHaveLength(0);
+  });
+
+  it("does not queue a second approval while the first is still pending", async () => {
+    await seedCompany();
+    const agentId = await seedAgent();
+    await seedRequireApprovalPolicy();
+
+    const { unified } = await unifiedWith();
+    const context = runContext({ agentId });
+
+    await unified.executeTool("gmail:send", { to: "x@example.com" }, context);
+    await unified.executeTool("gmail:send", { to: "x@example.com" }, context);
+
+    expect(await db.select().from(approvals)).toHaveLength(1);
   });
 });

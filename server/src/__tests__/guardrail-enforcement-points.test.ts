@@ -19,6 +19,7 @@ import {
 } from "./helpers/embedded-postgres.js";
 import { documentService } from "../services/documents.js";
 import { issueService } from "../services/issues.js";
+import { buildPaperclipWakePayload } from "../services/heartbeat.js";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
@@ -224,5 +225,89 @@ describeEmbeddedPostgres("guardrail enforcement points", () => {
     const service = issueService(db);
     const comment = await service.addComment(issueId, "ordinary update", { agentId });
     expect(comment?.body).toBe("ordinary update");
+  });
+
+  // -------------------------------------------------------------------------
+  // Input stage: the wake context the agent reads
+  // -------------------------------------------------------------------------
+
+  it("withholds a wake comment that matches an input policy", async () => {
+    await seed();
+    await insertPolicy({
+      name: "wake-policy",
+      stage: "input",
+      matcher: { kind: "regex", patterns: ["classified"] },
+      action: "block",
+    });
+
+    const comment = await db
+      .insert(issueComments)
+      .values({
+        companyId,
+        issueId,
+        authorUserId: "board-user",
+        body: "this is classified material",
+      })
+      .returning();
+
+    const payload = await buildPaperclipWakePayload({
+      db,
+      companyId,
+      contextSnapshot: {
+        issueId,
+        wakeCommentIds: [comment[0]!.id],
+        wakeReason: "issue_commented",
+      },
+    });
+
+    // The blocked text is withheld rather than passed to the agent.
+    expect(payload?.comments).toMatchObject([
+      expect.objectContaining({ id: comment[0]!.id, body: "" }),
+    ]);
+
+    const violations = await db
+      .select()
+      .from(guardrailViolations)
+      .where(eq(guardrailViolations.companyId, companyId));
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toMatchObject({
+      stage: "input",
+      actionTaken: "block",
+      subjectKind: "wake_context",
+    });
+  });
+
+  it("redacts a wake comment in place when the policy says redact", async () => {
+    await seed();
+    await insertPolicy({
+      name: "wake-redact-policy",
+      stage: "input",
+      matcher: { kind: "regex", patterns: ["classified"] },
+      action: "redact",
+    });
+
+    const comment = await db
+      .insert(issueComments)
+      .values({
+        companyId,
+        issueId,
+        authorUserId: "board-user",
+        body: "this is classified material",
+      })
+      .returning();
+
+    const payload = await buildPaperclipWakePayload({
+      db,
+      companyId,
+      contextSnapshot: {
+        issueId,
+        wakeCommentIds: [comment[0]!.id],
+        wakeReason: "issue_commented",
+      },
+    });
+
+    const body = payload?.comments?.[0]?.body ?? "";
+    expect(body).not.toContain("classified");
+    expect(body).toContain("material");
   });
 });
