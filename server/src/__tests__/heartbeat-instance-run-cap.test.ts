@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { mkdtempSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 import { agents, companies, createDb, heartbeatRuns } from "@paperclipai/db";
 import {
@@ -8,6 +11,7 @@ import {
 } from "./helpers/embedded-postgres.js";
 import { heartbeatService } from "../services/heartbeat.ts";
 import { instanceSettingsService } from "../services/instance-settings.ts";
+import { clearProviderQuotaCache } from "../services/provider-quota-gate.ts";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
@@ -31,7 +35,15 @@ describeEmbeddedPostgres("heartbeat instance-wide run cap", () => {
   }, 20_000);
 
   afterEach(async () => {
-    await heartbeatService(db).drainActiveRunExecutions();
+    // Cancelled claude_local executions (last tests) can sit in CLI setup for a
+    // long time after the run row is final; don't block cleanup on them.
+    await Promise.race([
+      heartbeatService(db).drainActiveRunExecutions(),
+      new Promise((resolve) => setTimeout(resolve, 5_000)),
+    ]);
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    clearProviderQuotaCache();
     await db.execute(sql.raw(`
       TRUNCATE TABLE
         "activity_log",
@@ -120,7 +132,7 @@ describeEmbeddedPostgres("heartbeat instance-wide run cap", () => {
 
     expect(await statusCounts()).toEqual({ running: 1, queued: 2 });
     const slots = await heartbeatService(db).getGlobalRunSlotStatus();
-    expect(slots).toEqual({ maxConcurrentAgentRuns: 1, running: 1, queued: 2, available: 0 });
+    expect(slots).toMatchObject({ maxConcurrentAgentRuns: 1, running: 1, queued: 2, available: 0 });
   });
 
   it("never runs more than the cap in parallel, even across concurrent schedulers, and drains the queue", async () => {
@@ -150,5 +162,129 @@ describeEmbeddedPostgres("heartbeat instance-wide run cap", () => {
     expect(counts.running ?? 0).toBe(0);
     // Every run reached a terminal state (the cap only gates start, not outcome).
     expect((counts.succeeded ?? 0) + (counts.failed ?? 0)).toBe(6);
+  }, 45_000);
+
+  // A started claude_local run launches the CLI (slow / environment dependent).
+  // These tests only care whether the scheduler claimed the run, so cancel it.
+  async function cancelStartedClaudeRuns(heartbeat: ReturnType<typeof heartbeatService>, agentId: string) {
+    const rows = await db.select({ id: heartbeatRuns.id, status: heartbeatRuns.status, agentId: heartbeatRuns.agentId })
+      .from(heartbeatRuns);
+    for (const row of rows) {
+      if (row.agentId === agentId && row.status === "running") await heartbeat.cancelRun(row.id, "test cleanup");
+    }
+  }
+
+  function stubMinimax(fivePct: number, status: 1 | 2) {
+    vi.stubEnv("CLAUDE_CONFIG_DIR", mkdtempSync(path.join(os.tmpdir(), "quota-gate-claude-")));
+    vi.stubEnv("ANTHROPIC_BASE_URL", "https://api.minimax.io/anthropic");
+    vi.stubEnv("ANTHROPIC_AUTH_TOKEN", "sk-cp-test");
+    const realFetch = globalThis.fetch;
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (!url.includes("/v1/token_plan/remains")) return realFetch(input, init);
+      calls.push(url);
+      const now = Date.now();
+      return new Response(JSON.stringify({
+        model_remains: [{
+          model_name: "general",
+          end_time: now + 60 * 60_000,
+          current_interval_status: status,
+          current_interval_remaining_percent: fivePct,
+          weekly_end_time: now + 7 * 24 * 60 * 60_000,
+          current_weekly_status: 1,
+          current_weekly_remaining_percent: 100,
+        }],
+        base_resp: { status_code: 0, status_msg: "success" },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    return calls;
+  }
+
+  it("holds Claude Code runs while the MiniMax plan is used up, without holding other adapters", async () => {
+    const calls = stubMinimax(0, 2);
+    const { companyId } = await seed(1, 1, 50); // process adapter agent, 1 queued run
+    const claudeAgentId = randomUUID();
+    await db.insert(agents).values({
+      id: claudeAgentId,
+      companyId,
+      name: "Claude Agent",
+      role: "engineer",
+      status: "idle",
+      adapterType: "claude_local",
+      // Never launch the real Claude CLI in tests; fail fast once started.
+      adapterConfig: { command: "/usr/bin/false" },
+      runtimeConfig: { heartbeat: { maxConcurrentRuns: 10 } },
+      permissions: {},
+    });
+    const claudeRunId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: claudeRunId,
+      companyId,
+      agentId: claudeAgentId,
+      invocationSource: "on_demand",
+      status: "queued",
+      responsibleUserId: "board-user",
+    });
+
+    const heartbeat = heartbeatService(db);
+    await heartbeat.resumeQueuedRuns();
+    await heartbeat.drainActiveRunExecutions();
+
+    const rows = await db.select({ id: heartbeatRuns.id, status: heartbeatRuns.status }).from(heartbeatRuns);
+    expect(rows.find((r) => r.id === claudeRunId)?.status).toBe("queued");
+    expect(rows.filter((r) => r.id !== claudeRunId).map((r) => r.status)).not.toContain("queued");
+    expect(calls.length).toBeGreaterThan(0);
+
+    const status = await heartbeat.getGlobalRunSlotStatus();
+    expect(status.providerQuota).toMatchObject({
+      enabled: true,
+      reservePercent: 5,
+      provider: "minimax",
+      holding: true,
+      error: null,
+      reason: "5-hour window 0% left (exhausted)",
+    });
+
+    // Quota comes back: the held run starts on the next sweep.
+    vi.unstubAllGlobals();
+    clearProviderQuotaCache();
+    stubMinimax(80, 1);
+    await heartbeat.resumeQueuedRuns();
+    const after = await db.select({ id: heartbeatRuns.id, status: heartbeatRuns.status }).from(heartbeatRuns);
+    expect(after.find((r) => r.id === claudeRunId)?.status).not.toBe("queued");
+    await cancelStartedClaudeRuns(heartbeat, claudeAgentId);
+  }, 45_000);
+
+  it("does not hold runs when the gate is turned off", async () => {
+    stubMinimax(0, 2);
+    await instanceSettingsService(db).updateGeneral({ providerQuotaGateEnabled: false });
+    const { companyId } = await seed(0, 0, 50);
+    const claudeAgentId = randomUUID();
+    await db.insert(agents).values({
+      id: claudeAgentId,
+      companyId,
+      name: "Claude Agent",
+      role: "engineer",
+      status: "idle",
+      adapterType: "claude_local",
+      // Never launch the real Claude CLI in tests; fail fast once started.
+      adapterConfig: { command: "/usr/bin/false" },
+      runtimeConfig: { heartbeat: { maxConcurrentRuns: 10 } },
+      permissions: {},
+    });
+    await db.insert(heartbeatRuns).values({
+      id: randomUUID(),
+      companyId,
+      agentId: claudeAgentId,
+      invocationSource: "on_demand",
+      status: "queued",
+      responsibleUserId: "board-user",
+    });
+    const heartbeat = heartbeatService(db);
+    await heartbeat.resumeQueuedRuns();
+    const rows = await db.select({ status: heartbeatRuns.status }).from(heartbeatRuns);
+    expect(rows.map((r) => r.status)).not.toContain("queued");
+    await cancelStartedClaudeRuns(heartbeat, claudeAgentId);
   }, 45_000);
 });

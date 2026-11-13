@@ -214,6 +214,12 @@ import { resolveRequiredSuccessfulRunHandoffOnValidPath } from "./successful-run
 import { taskWatchdogService } from "./task-watchdogs.js";
 import { withAgentStartLock } from "./agent-start-lock.js";
 import {
+  decideProviderQuotaGate,
+  getClaudeProviderQuotaSnapshot,
+  resolveClaudeProviderEnv,
+  type ProviderQuotaGateDecision,
+} from "./provider-quota-gate.js";
+import {
   evaluateAgentInvokability,
   evaluateAgentInvokabilityFromDb,
   shouldCancelRunsForNonInvokableAgent,
@@ -309,7 +315,13 @@ const globalRunSlotState = {
   lock: Promise.resolve() as Promise<void>,
   reserved: 0,
   capBlocked: false,
+  // Last logged quota-gate resume time, so a hold is logged once, not per sweep.
+  quotaHoldLoggedFor: null as string | null,
 };
+
+// Adapters that run the Claude Code CLI and therefore spend the
+// ANTHROPIC_BASE_URL provider's plan quota.
+const PROVIDER_QUOTA_GATED_ADAPTERS = new Set(["claude_local"]);
 
 function withGlobalRunSlotLock<T>(fn: () => Promise<T>): Promise<T> {
   const result = globalRunSlotState.lock.then(fn);
@@ -10720,6 +10732,42 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     return Number(count ?? 0);
   }
 
+  // Provider plan quota gate (Instance Settings > General). For agents whose
+  // CLI spends a metered plan (MiniMax Token Plan today), hold queued runs
+  // while a usage window is at/below the reserve, instead of starting runs
+  // that will fail with 429. Fails open: if the quota check errors, runs start.
+  async function getProviderQuotaGateForAgent(
+    agent: { adapterType: string; adapterConfig: unknown },
+  ): Promise<ProviderQuotaGateDecision | null> {
+    if (!PROVIDER_QUOTA_GATED_ADAPTERS.has(agent.adapterType)) return null;
+    const general = await instanceSettings.getGeneral();
+    if (!general.providerQuotaGateEnabled) return null;
+    const adapterConfig = parseObject(agent.adapterConfig);
+    const providerEnv = resolveClaudeProviderEnv({ agentEnv: adapterConfig.env });
+    const snapshot = await getClaudeProviderQuotaSnapshot(providerEnv);
+    if (snapshot.provider !== "minimax" || snapshot.error) return null;
+    return decideProviderQuotaGate(snapshot, general.providerQuotaReservePercent);
+  }
+
+  async function getProviderQuotaStatus() {
+    const general = await instanceSettings.getGeneral();
+    const snapshot = await getClaudeProviderQuotaSnapshot(resolveClaudeProviderEnv());
+    const decision = snapshot.provider === "minimax" && !snapshot.error
+      ? decideProviderQuotaGate(snapshot, general.providerQuotaReservePercent)
+      : null;
+    return {
+      enabled: general.providerQuotaGateEnabled,
+      reservePercent: general.providerQuotaReservePercent,
+      provider: snapshot.provider,
+      checkedAt: snapshot.checkedAt,
+      error: snapshot.error,
+      windows: snapshot.windows,
+      holding: general.providerQuotaGateEnabled && Boolean(decision?.blocked),
+      resumeAt: decision?.resumeAt ?? null,
+      reason: decision?.reason ?? null,
+    };
+  }
+
   async function getGlobalRunSlotStatus() {
     const [general, running, queuedRows] = await Promise.all([
       instanceSettings.getGeneral(),
@@ -10735,6 +10783,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       running,
       queued: Number(queuedRows[0]?.count ?? 0),
       available: Math.max(0, cap - running),
+      providerQuota: await getProviderQuotaStatus(),
     };
   }
 
@@ -11898,6 +11947,19 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         if (leftPriorityRank !== rightPriorityRank) return leftPriorityRank - rightPriorityRank;
         return left.createdAt.getTime() - right.createdAt.getTime();
       });
+
+      const quotaGate = await getProviderQuotaGateForAgent(agent);
+      if (quotaGate?.blocked) {
+        const holdKey = quotaGate.resumeAt ?? "unknown";
+        if (globalRunSlotState.quotaHoldLoggedFor !== holdKey) {
+          globalRunSlotState.quotaHoldLoggedFor = holdKey;
+          logger.warn(
+            { reason: quotaGate.reason, resumeAt: quotaGate.resumeAt, agentId },
+            "provider plan quota used up; holding queued runs until reset",
+          );
+        }
+        return [];
+      }
 
       const globalSlots = await reserveGlobalRunSlots(Math.min(availableSlots, prioritizedRuns.length));
       if (globalSlots <= 0) return [];

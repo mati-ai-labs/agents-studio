@@ -9,11 +9,13 @@ import {
   DEFAULT_MAX_CONCURRENT_AGENT_RUNS,
   MIN_MAX_CONCURRENT_AGENT_RUNS,
   MAX_MAX_CONCURRENT_AGENT_RUNS,
+  DEFAULT_PROVIDER_QUOTA_RESERVE_PERCENT,
+  MAX_PROVIDER_QUOTA_RESERVE_PERCENT,
 } from "@paperclipai/shared";
 import { LogOut, SlidersHorizontal } from "lucide-react";
 import { authApi } from "@/api/auth";
 import { healthApi } from "@/api/health";
-import { instanceSettingsApi } from "@/api/instanceSettings";
+import { instanceSettingsApi, type InstanceRunSlotStatus } from "@/api/instanceSettings";
 import { ModeBadge } from "@/components/access/ModeBadge";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -60,6 +62,12 @@ export function InstanceGeneralSettings() {
   useEffect(() => {
     setRunCapDraft(String(savedRunCap));
   }, [savedRunCap]);
+  const savedReserve =
+    generalQuery.data?.providerQuotaReservePercent ?? DEFAULT_PROVIDER_QUOTA_RESERVE_PERCENT;
+  const [reserveDraft, setReserveDraft] = useState<string>("");
+  useEffect(() => {
+    setReserveDraft(String(savedReserve));
+  }, [savedReserve]);
   const healthQuery = useQuery({
     queryKey: queryKeys.health,
     queryFn: () => healthApi.get(),
@@ -103,6 +111,12 @@ export function InstanceGeneralSettings() {
     parsedRunCap <= MAX_MAX_CONCURRENT_AGENT_RUNS;
   const runCapDirty = runCapValid && parsedRunCap !== savedRunCap;
   const runSlots = runSlotsQuery.data;
+  const quota = runSlots?.providerQuota;
+  const quotaGateEnabled = generalQuery.data?.providerQuotaGateEnabled !== false;
+  const parsedReserve = Number(reserveDraft);
+  const reserveValid =
+    Number.isInteger(parsedReserve) && parsedReserve >= 0 && parsedReserve <= MAX_PROVIDER_QUOTA_RESERVE_PERCENT;
+  const reserveDirty = reserveValid && parsedReserve !== savedReserve;
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -200,6 +214,62 @@ export function InstanceGeneralSettings() {
             <StatusBox label="Free slots" value={runSlots ? String(runSlots.available) : "-"} />
             <StatusBox label="Waiting in queue" value={runSlots ? String(runSlots.queued) : "-"} />
           </div>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card p-5">
+        <div className="space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1.5">
+              <h2 className="text-sm font-semibold">Hold runs when the model plan quota is used up</h2>
+              <p className="max-w-2xl text-sm text-muted-foreground">
+                Before starting a Claude Code agent run, check the provider plan's remaining quota (MiniMax Token
+                Plan: 5-hour and weekly windows). If a window is at or below the reserve, runs stay queued and start
+                after it resets, instead of failing with "usage limit reached". Codex agents are not affected. If the
+                quota check fails, runs start as normal.
+              </p>
+            </div>
+            <ToggleSwitch
+              checked={quotaGateEnabled}
+              onCheckedChange={() => updateGeneralMutation.mutate({ providerQuotaGateEnabled: !quotaGateEnabled })}
+              disabled={updateGeneralMutation.isPending}
+              aria-label="Toggle holding runs when the plan quota is used up"
+            />
+          </div>
+          <form
+            className="flex flex-wrap items-center gap-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!reserveDirty) return;
+              updateGeneralMutation.mutate({ providerQuotaReservePercent: parsedReserve });
+            }}
+          >
+            <label className="text-sm text-muted-foreground" htmlFor="provider-quota-reserve">
+              Hold when remaining is at or below
+            </label>
+            <Input
+              id="provider-quota-reserve"
+              type="number"
+              inputMode="numeric"
+              min={0}
+              max={MAX_PROVIDER_QUOTA_RESERVE_PERCENT}
+              step={1}
+              value={reserveDraft}
+              onChange={(event) => setReserveDraft(event.target.value)}
+              aria-invalid={!reserveValid}
+              className="w-20 tabular-nums"
+            />
+            <span className="text-sm text-muted-foreground">%</span>
+            <Button type="submit" size="sm" disabled={!reserveDirty || updateGeneralMutation.isPending}>
+              Save
+            </Button>
+            {!reserveValid && (
+              <span className="text-xs text-destructive">
+                Enter a whole number from 0 to {MAX_PROVIDER_QUOTA_RESERVE_PERCENT}.
+              </span>
+            )}
+          </form>
+          <ProviderQuotaPanel quota={quota} />
         </div>
       </section>
 
@@ -437,6 +507,60 @@ export function InstanceGeneralSettings() {
           </Button>
         </div>
       </section>
+    </div>
+  );
+}
+
+function formatResetTime(iso: string | null) {
+  if (!iso) return "unknown";
+  const date = new Date(iso);
+  const minutes = Math.max(0, Math.round((date.getTime() - Date.now()) / 60_000));
+  const inText = minutes >= 120 ? `${Math.round(minutes / 60)}h` : `${minutes}m`;
+  return `${date.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" })} (in ${inText})`;
+}
+
+function ProviderQuotaPanel({ quota }: { quota: InstanceRunSlotStatus["providerQuota"] | undefined }) {
+  if (!quota) return <div className="text-sm text-muted-foreground">Checking plan quota...</div>;
+  if (quota.provider === "unconfigured") {
+    return <div className="text-sm text-muted-foreground">No ANTHROPIC_BASE_URL / token configured for Claude Code, so there is no plan quota to check.</div>;
+  }
+  if (quota.provider === "unsupported") {
+    return <div className="text-sm text-muted-foreground">Claude Code points at a provider without a supported quota API. Runs are not held.</div>;
+  }
+  return (
+    <div className="space-y-3">
+      <div
+        className={cn(
+          "rounded-md border px-3 py-2 text-sm",
+          quota.error
+            ? "border-destructive/40 bg-destructive/5 text-destructive"
+            : quota.holding
+              ? "border-amber-500/40 bg-amber-500/5"
+              : "border-border bg-background",
+        )}
+      >
+        {quota.error
+          ? `MiniMax quota check failed (${quota.error}). Runs are not being held.`
+          : quota.holding
+            ? `Holding new Claude Code runs: ${quota.reason}. Resumes ${formatResetTime(quota.resumeAt)}.`
+            : !quota.enabled
+              ? "Hold is off. Runs start even when the quota is used up."
+              : "Quota available. Runs start as normal."}
+      </div>
+      {quota.windows.length > 0 && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {quota.windows.map((window) => (
+            <StatusBox
+              key={window.key}
+              label={`MiniMax ${window.label}`}
+              value={`${window.remainingPercent ?? "?"}% left${window.providerExhausted ? " (used up)" : ""} · resets ${formatResetTime(window.resetsAt)}`}
+            />
+          ))}
+        </div>
+      )}
+      <div className="text-xs text-muted-foreground">
+        Checked {new Date(quota.checkedAt).toLocaleTimeString()} · refreshed every minute
+      </div>
     </div>
   );
 }
