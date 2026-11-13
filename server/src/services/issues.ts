@@ -7546,7 +7546,9 @@ export function issueService(db: Db) {
         const binding = await dbOrTx
           .select()
           .from(slackThreadBindings)
-          .where(eq(slackThreadBindings.issueId, issueId))
+          // Only the thread the issue came from gets progress; threads an agent
+          // started with the Slack tool (agent_post) only feed replies back.
+          .where(and(eq(slackThreadBindings.issueId, issueId), eq(slackThreadBindings.source, "slack_mention")))
           .then((rows: Array<typeof slackThreadBindings.$inferSelect>) => rows[0] ?? null);
         if (binding) {
           const agent = await dbOrTx

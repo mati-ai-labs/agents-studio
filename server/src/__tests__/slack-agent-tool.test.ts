@@ -139,9 +139,9 @@ describe("agent slack routes", () => {
     const res = await request(app(agentActor)).get(`/api/companies/${CO}/slack/channels`);
     expect(res.status).toBe(200);
     expect(res.body.channels).toEqual([
-      expect.objectContaining({ id: "C1", canPost: true }),
+      expect.objectContaining({ id: "C1", canPost: true, repliesForwarded: false }),
       expect.objectContaining({ id: "G1", canPost: false }),
-      expect.objectContaining({ id: "G2", canPost: true }),
+      expect.objectContaining({ id: "G2", canPost: true, repliesForwarded: false }),
     ]);
   });
 
