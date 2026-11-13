@@ -34,6 +34,17 @@ import { FREE_TEXT_PATTERNS } from "./feedback-redaction.js";
 import { logActivity } from "./activity-log.js";
 import { logger } from "../middleware/logger.js";
 
+/**
+ * The marker a guardrail policy writes into text it redacts.
+ *
+ * A guardrail redacts prose in place — an issue comment, a document body, a
+ * tool result an agent reads — and the studio already has one marker for a
+ * redacted value: `REDACTED_EVENT_VALUE`. Reusing it means a reader (or a
+ * filter) that recognises the studio's redaction marker recognises the
+ * guardrail's too, whatever surface the redacted text ends up on.
+ */
+const GUARDRAIL_REDACTION_MARKER = REDACTED_EVENT_VALUE;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -281,13 +292,6 @@ function excerptAround(text: string, index: number, length: number): string {
   return slice.length > EXCERPT_MAX_LENGTH ? `${slice.slice(0, EXCERPT_MAX_LENGTH)}…` : slice;
 }
 
-/** Redacts the matched span so a violation row never stores raw PII. */
-function redactSpan(text: string, start: number, length: number): string {
-  const before = text.slice(0, start);
-  const after = text.slice(start + length);
-  return `${before}${REDACTED_EVENT_VALUE}${after}`;
-}
-
 // ---------------------------------------------------------------------------
 // Policy evaluation
 // ---------------------------------------------------------------------------
@@ -302,35 +306,88 @@ interface PolicyMatcherResult {
 
 /**
  * Applies one matcher to one candidate text.
+ *
+ * Every pattern is scanned against the original text first and the
+ * replacements are applied back to front, so a pattern that matches early in
+ * the text cannot shift the offsets of a pattern that matches later. Without
+ * that, two overlapping families would redact the wrong span.
  */
 function applyPatterns(
   text: string,
   patterns: RegExp[],
 ): { matched: boolean; index: number; length: number; excerpt: string; redactedText: string } {
-  let matched = false;
-  let firstIndex = -1;
-  let firstLength = 0;
-  let redactedText = text;
+  const spans: Array<{ start: number; end: number }> = [];
+
   for (const pattern of patterns) {
     const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
     const scanner = new RegExp(pattern.source, flags);
-    let found = false;
     for (const match of text.matchAll(scanner)) {
       const index = match.index ?? 0;
       const value = match[0];
       if (value.length === 0) continue;
-      found = true;
-      if (firstIndex < 0) {
-        firstIndex = index;
-        firstLength = value.length;
-      }
-      redactedText = redactedText.slice(0, index) + REDACTED_EVENT_VALUE + redactedText.slice(index + value.length);
+      spans.push({ start: index, end: index + value.length });
     }
-    if (found) matched = true;
   }
-  const excerpt =
-    firstIndex >= 0 ? excerptAround(text, firstIndex, firstLength) : "";
-  return { matched, index: firstIndex, length: firstLength, excerpt, redactedText };
+
+  if (spans.length === 0) {
+    return { matched: false, index: -1, length: 0, excerpt: "", redactedText: text };
+  }
+
+  spans.sort((left, right) => left.start - right.start || left.end - right.end);
+
+  // Overlapping spans would otherwise redact twice over the same characters.
+  const merged: Array<{ start: number; end: number }> = [];
+  for (const span of spans) {
+    const previous = merged[merged.length - 1];
+    if (previous && span.start < previous.end) {
+      previous.end = Math.max(previous.end, span.end);
+      continue;
+    }
+    merged.push({ ...span });
+  }
+
+  let redactedText = text;
+  for (let index = merged.length - 1; index >= 0; index -= 1) {
+    const span = merged[index]!;
+    redactedText =
+      redactedText.slice(0, span.start) + GUARDRAIL_REDACTION_MARKER + redactedText.slice(span.end);
+  }
+
+  const first = merged[0]!;
+  const excerpt = sanitizeExcerpt(excerptAround(text, first.start, first.end - first.start));
+
+  return {
+    matched: true,
+    index: first.start,
+    length: first.end - first.start,
+    excerpt,
+    redactedText,
+  };
+}
+
+/**
+ * Every pattern the studio recognises, used to strip PII and credentials out
+ * of an excerpt before it is stored.
+ */
+const SANITIZING_PATTERN_KINDS = [
+  ...PII_PATTERN_KINDS,
+  ...SECRET_PATTERN_KINDS,
+] as const;
+
+/**
+ * Removes PII and credentials from an excerpt.
+ *
+ * A violation row is meant to explain what a policy matched without becoming
+ * a second copy of the sensitive data it caught, so the excerpt is scrubbed
+ * with the same patterns the policies themselves use.
+ */
+function sanitizeExcerpt(text: string): string {
+  let output = text;
+  for (const pattern of patternsForFamilies(SANITIZING_PATTERN_KINDS)) {
+    const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
+    output = output.replace(new RegExp(pattern.source, flags), GUARDRAIL_REDACTION_MARKER);
+  }
+  return output;
 }
 
 function evaluatePiiMatcher(
@@ -399,7 +456,11 @@ function evaluateRestrictedActionMatcher(
     if (!regex) continue;
     const match = regex.exec(text);
     if (match) {
-      return { matched: true, field: "tool_args", excerpt: excerptAround(text, match.index, match[0].length) };
+      return {
+        matched: true,
+        field: "tool_args",
+        excerpt: sanitizeExcerpt(excerptAround(text, match.index, match[0].length)),
+      };
     }
   }
   return { matched: false, field: null, excerpt: "" };
@@ -464,7 +525,9 @@ function evaluateMatcher(
         return {
           matched: true,
           field: candidate.field,
-          excerpt: excerptAround(candidate.text, 0, Math.min(candidate.text.length, EXCERPT_MAX_LENGTH)),
+          excerpt: sanitizeExcerpt(
+            excerptAround(candidate.text, 0, Math.min(candidate.text.length, EXCERPT_MAX_LENGTH)),
+          ),
           redactedText: candidate.text,
         };
       }
