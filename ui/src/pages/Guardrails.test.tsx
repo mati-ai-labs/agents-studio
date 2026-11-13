@@ -21,7 +21,8 @@ const deletePolicyMock = vi.hoisted(() => vi.fn());
 const simulateMock = vi.hoisted(() => vi.fn());
 const listViolationsMock = vi.hoisted(() => vi.fn());
 
-vi.mock("@/api/guardrails", () => ({
+vi.mock("@/api/guardrails", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/api/guardrails")>()),
   guardrailsApi: {
     listPolicies: (companyId: string) => listPoliciesMock(companyId),
     createPolicy: (companyId: string, payload: unknown) => createPolicyMock(companyId, payload),
@@ -29,7 +30,7 @@ vi.mock("@/api/guardrails", () => ({
       updatePolicyMock(companyId, policyId, payload),
     deletePolicy: (companyId: string, policyId: string) => deletePolicyMock(companyId, policyId),
     simulate: (companyId: string, payload: unknown) => simulateMock(companyId, payload),
-    listViolations: (companyId: string) => listViolationsMock(companyId),
+    listViolations: (companyId: string, query?: unknown) => listViolationsMock(companyId, query),
   },
 }));
 
@@ -493,6 +494,133 @@ describe("Guardrails", () => {
     });
   });
 
+  it("shows how many times each policy has fired", async () => {
+    listViolationsMock.mockResolvedValue([
+      {
+        id: "violation-1",
+        companyId: "company-1",
+        policyId: "policy-1",
+        policyVersion: 1,
+        stage: "input",
+        actionTaken: "block",
+        actorAgentId: "agent-1",
+        heartbeatRunId: "run-1",
+        subjectKind: "issue_comment",
+        subjectId: null,
+        matchedExcerpt: "the blocked text",
+        resolved: false,
+        createdAt: "2026-04-10T00:00:00.000Z",
+      },
+      {
+        id: "violation-2",
+        companyId: "company-1",
+        policyId: "policy-1",
+        policyVersion: 1,
+        stage: "output",
+        actionTaken: "redact",
+        actorAgentId: "agent-1",
+        heartbeatRunId: null,
+        subjectKind: "tool_result",
+        subjectId: null,
+        matchedExcerpt: null,
+        resolved: false,
+        createdAt: "2026-04-11T00:00:00.000Z",
+      },
+    ]);
+
+    const root = await renderPage();
+
+    expect(container.textContent).toContain("2 fires");
+    expect(container.textContent).toContain("last ");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("shows a policy that has never fired as having no fires", async () => {
+    const root = await renderPage();
+
+    expect(container.textContent).toContain("0 fires");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("evaluates the unsaved draft alongside the saved policies when simulating", async () => {
+    simulateMock.mockResolvedValue({
+      action: "block",
+      decisive: null,
+      matches: [],
+      redactedText: null,
+    });
+
+    const root = await renderPage();
+
+    // Select a policy, then open it in the editor so there is a draft to test.
+    const policyButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("No client PII outbound"),
+    );
+    expect(policyButton).toBeTruthy();
+    await act(async () => {
+      policyButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flushReact();
+
+    const editButton = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent === "Edit",
+    );
+    expect(editButton).toBeTruthy();
+    await act(async () => {
+      editButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flushReact();
+
+    const simulationTab = Array.from(container.querySelectorAll('[role="tab"]')).find(
+      (tab) => tab.textContent === "Simulation",
+    );
+    await act(async () => {
+      simulationTab?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+    });
+    await flushReact();
+
+    const sampleInput = document.body.querySelector<HTMLTextAreaElement>(
+      "#guardrail-simulate-sample",
+    );
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        "value",
+      )?.set;
+      setter?.call(sampleInput, "call 555-12-3456 now");
+      sampleInput?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flushReact();
+
+    const simulateButton = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent === "Simulate",
+    );
+    await act(async () => {
+      simulateButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flushReact();
+
+    expect(simulateMock).toHaveBeenCalledWith("company-1", {
+      stage: "input",
+      subject: "call 555-12-3456 now",
+      candidatePolicy: expect.objectContaining({
+        kind: "regex",
+        action: "redact",
+        matcher: expect.objectContaining({ kind: "regex" }),
+      }),
+    });
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
   it("rejects a draft the shared schema does not accept and does not call the API", async () => {
     const root = await renderPage();
 
@@ -651,6 +779,7 @@ describe("Guardrails", () => {
     expect(simulateMock).toHaveBeenCalledWith("company-1", {
       stage: "input",
       subject: "call 555-12-3456 now",
+      candidatePolicy: null,
     });
     expect(document.body.textContent).toContain("Block outbound PII");
     expect(document.body.textContent).toContain("call 555-12-3456 now");
@@ -753,6 +882,7 @@ describe("Guardrails", () => {
     expect(simulateMock).toHaveBeenCalledWith("company-1", {
       stage: "output",
       subject: "the key is sk-ant-0123456789abcdef",
+      candidatePolicy: null,
     });
     expect(document.body.textContent).toContain("Redact provider tokens");
     expect(document.body.textContent).toContain("sk-ant-0123456789abcdef");

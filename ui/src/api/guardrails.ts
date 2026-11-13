@@ -47,6 +47,49 @@ export interface GuardrailPolicy {
 }
 
 /**
+ * How many times a policy has fired, and when it last did.
+ *
+ * The policy row itself carries no counter, so this is derived from the
+ * violation feed on the client rather than read from the API.
+ */
+export interface GuardrailFireSummary {
+  /** How many recorded violations name this policy. */
+  count: number;
+  /** When the policy last fired, or null when it never has. */
+  lastFiredAt: string | null;
+}
+
+/**
+ * Counts the recorded violations per policy so the list can show how often
+ * each policy has fired.
+ *
+ * A violation is attributed to the decisive policy — the one that set the
+ * outcome — so this is the count of decisions that policy actually caused,
+ * not the count of times it merely matched.
+ */
+export function summariseFiresByPolicy(
+  violations: readonly GuardrailViolation[],
+): Map<string, GuardrailFireSummary> {
+  const summaries = new Map<string, GuardrailFireSummary>();
+  for (const violation of violations) {
+    if (!violation.policyId) continue;
+    const existing = summaries.get(violation.policyId);
+    if (!existing) {
+      summaries.set(violation.policyId, {
+        count: 1,
+        lastFiredAt: violation.createdAt,
+      });
+      continue;
+    }
+    existing.count += 1;
+    if (existing.lastFiredAt === null || violation.createdAt > existing.lastFiredAt) {
+      existing.lastFiredAt = violation.createdAt;
+    }
+  }
+  return summaries;
+}
+
+/**
  * One policy that matched a simulated subject, and what it would do. The
  * excerpt is already scrubbed by the server, so it is safe to render.
  */

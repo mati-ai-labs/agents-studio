@@ -19,7 +19,10 @@ import {
 } from "@paperclipai/shared";
 import {
   guardrailsApi,
+  summariseFiresByPolicy,
+  type GuardrailFireSummary,
   type GuardrailPolicy,
+  type GuardrailPolicyBodyCandidate,
   type GuardrailSimulationResult,
   type GuardrailViolation,
 } from "../api/guardrails";
@@ -395,6 +398,33 @@ export function validateDraft(draft: PolicyDraft): {
     fieldErrors[path] = issue.message;
   }
   return { fieldErrors, payload: null };
+}
+
+/**
+ * Builds the candidate policy the simulate endpoint evaluates alongside the
+ * saved ones, so an author can see what their unsaved draft would do.
+ *
+ * The draft is validated first: a draft the shared schema rejects would be
+ * rejected by the endpoint too, and the author should fix the form rather
+ * than read a validation error from the simulator.
+ */
+export function draftToSimulationCandidate(
+  draft: PolicyDraft,
+): GuardrailPolicyBodyCandidate | null {
+  const { payload } = validateDraft(draft);
+  if (!payload) return null;
+  return {
+    scopeType: payload.scopeType,
+    scopeId: payload.scopeId ?? null,
+    stage: payload.stage,
+    name: payload.name,
+    description: payload.description ?? null,
+    kind: payload.kind,
+    matcher: payload.matcher ?? null,
+    action: payload.action,
+    severity: payload.severity,
+    enabled: payload.enabled ?? true,
+  };
 }
 
 function ScopeTargetSelector({
@@ -939,11 +969,13 @@ export function GuardrailSimulationResults({ result }: { result: GuardrailSimula
 
 function PolicyListRow({
   policy,
+  fires,
   selected,
   onSelect,
   onToggleEnabled,
 }: {
   policy: GuardrailPolicy;
+  fires: GuardrailFireSummary | undefined;
   selected: boolean;
   onSelect: () => void;
   onToggleEnabled: (enabled: boolean) => void;
@@ -974,6 +1006,16 @@ function PolicyListRow({
           <span>{SCOPE_LABELS[policy.scopeType]}</span>
           <span aria-hidden="true">·</span>
           <span>v{policy.version}</span>
+          <span aria-hidden="true">·</span>
+          <span>
+            {fires?.count ?? 0} {fires?.count === 1 ? "fire" : "fires"}
+          </span>
+          {fires?.lastFiredAt && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span>last {relativeTime(fires.lastFiredAt)}</span>
+            </>
+          )}
         </span>
       </button>
       <span
@@ -1065,6 +1107,22 @@ export function Guardrails() {
   const [simulateSample, setSimulateSample] = useState("");
   const [simulation, setSimulation] = useState<GuardrailSimulationResult | null>(null);
   const [simulationError, setSimulationError] = useState<string | null>(null);
+  /**
+   * Whether the draft being edited is also evaluated by the simulator. It is
+   * on by default, because the point of the simulator is to test a policy
+   * before it is saved.
+   */
+  const [simulateDraft, setSimulateDraft] = useState(true);
+
+  /**
+   * The unsaved draft as the simulator sees it. It is only sent when the
+   * draft passes the shared schema, so the simulator never receives a policy
+   * the server would reject.
+   */
+  const simulateCandidate = useMemo<GuardrailPolicyBodyCandidate | null>(() => {
+    if (!simulateDraft || !editing) return null;
+    return draftToSimulationCandidate(draft);
+  }, [draft, editing, simulateDraft]);
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Company Settings", href: "/company/settings" }, { label: "Guardrails" }]);
@@ -1078,12 +1136,18 @@ export function Guardrails() {
 
   const violationsQuery = useQuery({
     queryKey: queryKeys.guardrails.violations(selectedCompanyId ?? ""),
-    queryFn: () => guardrailsApi.listViolations(selectedCompanyId!, { limit: 100 }),
+    queryFn: () => guardrailsApi.listViolations(selectedCompanyId!, { limit: 500 }),
     enabled: Boolean(selectedCompanyId),
-    refetchInterval: 5000,
   });
 
   const policies = policiesQuery.data ?? [];
+  const violations = violationsQuery.data ?? [];
+
+  /**
+   * How often each policy has fired, derived from the violations the company
+   * has recorded. The policy row carries no counter of its own.
+   */
+  const firesByPolicy = useMemo(() => summariseFiresByPolicy(violations), [violations]);
 
   const filteredPolicies = useMemo(
     () =>
@@ -1191,6 +1255,7 @@ export function Guardrails() {
       guardrailsApi.simulate(selectedCompanyId!, {
         stage: simulateStage,
         subject: simulateSample,
+        candidatePolicy: simulateCandidate,
       }),
     onSuccess: (result) => {
       setSimulation(result);
@@ -1312,6 +1377,7 @@ export function Guardrails() {
                   <PolicyListRow
                     key={policy.id}
                     policy={policy}
+                    fires={firesByPolicy.get(policy.id)}
                     selected={policy.id === selectedPolicyId}
                     onSelect={() => {
                       setSelectedPolicyId(policy.id);
@@ -1372,6 +1438,24 @@ export function Guardrails() {
                 />
               </div>
 
+              <div className="rounded-md border border-border bg-muted/30 px-3 py-2.5">
+                <div className="flex items-center gap-2">
+                  <ToggleSwitch
+                    checked={simulateDraft}
+                    onCheckedChange={setSimulateDraft}
+                    aria-label="Include the policy being edited"
+                  />
+                  <span className="text-sm font-medium">Include the policy being edited</span>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {editing
+                    ? simulateCandidate
+                      ? `The unsaved draft "${draft.name.trim() || "Untitled policy"}" is evaluated alongside the saved policies.`
+                      : "The draft is not valid yet, so only the saved policies are evaluated. Fix the highlighted fields to test the draft."
+                    : "Open a policy in the editor to test an unsaved draft before you save it."}
+                </p>
+              </div>
+
               {simulationError && (
                 <div
                   role="alert"
@@ -1392,14 +1476,14 @@ export function Guardrails() {
               <div className="px-4 py-6 text-sm text-destructive">
                 {errorMessage(violationsQuery.error)}
               </div>
-            ) : (violationsQuery.data ?? []).length === 0 ? (
+            ) : violations.length === 0 ? (
               <EmptyState
                 icon={ShieldCheck}
                 message="No violations recorded. Every guardrail decision so far was an allow."
               />
             ) : (
               <div>
-                {(violationsQuery.data ?? []).map((violation) => (
+                {violations.map((violation) => (
                   <ViolationRow key={violation.id} violation={violation} />
                 ))}
               </div>
