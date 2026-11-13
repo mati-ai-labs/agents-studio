@@ -1038,7 +1038,13 @@ function PolicyListRow({
   );
 }
 
-function ViolationRow({ violation }: { violation: GuardrailViolation }) {
+function ViolationRow({
+  violation,
+  policyName,
+}: {
+  violation: GuardrailViolation;
+  policyName: string | null;
+}) {
   const runLink =
     violation.heartbeatRunId && violation.actorAgentId
       ? `/agents/${violation.actorAgentId}/runs/${violation.heartbeatRunId}`
@@ -1057,7 +1063,7 @@ function ViolationRow({ violation }: { violation: GuardrailViolation }) {
             {ACTION_LABELS[violation.actionTaken]}
           </span>
           <span className="text-sm font-medium">
-            {violation.policyId ? `Policy ${violation.policyId.slice(0, 8)}` : "Deleted policy"}
+            {policyName ?? (violation.policyId ? `Policy ${violation.policyId.slice(0, 8)}` : "Deleted policy")}
           </span>
           {violation.policyVersion != null && (
             <span className="text-xs text-muted-foreground">v{violation.policyVersion}</span>
@@ -1529,7 +1535,15 @@ export function Guardrails() {
             ) : (
               <div>
                 {violations.map((violation) => (
-                  <ViolationRow key={violation.id} violation={violation} />
+                  <ViolationRow
+                    key={violation.id}
+                    violation={violation}
+                    policyName={
+                      violation.policyId
+                        ? (policies.find((policy) => policy.id === violation.policyId)?.name ?? null)
+                        : null
+                    }
+                  />
                 ))}
               </div>
             )}

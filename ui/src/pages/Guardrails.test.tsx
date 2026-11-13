@@ -1007,7 +1007,8 @@ describe("Guardrails", () => {
     });
   });
 
-  it("links a violation back to the run that triggered it", async () => {    listViolationsMock.mockResolvedValue([
+  it("links a violation back to the run that triggered it", async () => {
+    listViolationsMock.mockResolvedValue([
       {
         id: "violation-1",
         companyId: "company-1",
@@ -1039,6 +1040,8 @@ describe("Guardrails", () => {
     await flushReact();
 
     expect(document.body.textContent).toContain("the blocked text");
+    // The policy is named rather than shown as a raw id.
+    expect(document.body.textContent).toContain("No client PII outbound");
     const runLink = Array.from(document.body.querySelectorAll("a")).find(
       (link) => link.textContent === "View run",
     );
