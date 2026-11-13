@@ -915,19 +915,19 @@ export function GuardrailSimulationResults({ result }: { result: GuardrailSimula
                 <span className="text-sm font-medium">{match.policyName}</span>
                 <span
                   className={cn(
-                    "rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                    "rounded-full border px-2 py-0.5 text-xs font-medium",
                     ACTION_TONES[match.action],
                   )}
                 >
                   {ACTION_LABELS[match.action]}
                 </span>
-                <span className={cn("text-[11px]", SEVERITY_TONES[match.severity])}>
+                <span className={cn("text-xs", SEVERITY_TONES[match.severity])}>
                   {SEVERITY_LABELS[match.severity]}
                 </span>
-                <span className="text-[11px] text-muted-foreground">
+                <span className="text-xs text-muted-foreground">
                   {SCOPE_LABELS[match.scopeType]}
                 </span>
-                <span className="text-[11px] text-muted-foreground">v{match.policyVersion}</span>
+                <span className="text-xs text-muted-foreground">v{match.policyVersion}</span>
               </div>
               {match.matchedField && (
                 <p className="mt-1.5 text-xs text-muted-foreground">
@@ -935,7 +935,7 @@ export function GuardrailSimulationResults({ result }: { result: GuardrailSimula
                 </p>
               )}
               {match.excerpt && (
-                <pre className="mt-1.5 overflow-x-auto whitespace-pre-wrap break-words rounded bg-muted/40 px-2 py-1 font-mono text-[11px] text-muted-foreground">
+                <pre className="mt-1.5 overflow-x-auto whitespace-pre-wrap break-words rounded bg-muted/40 px-2 py-1 font-mono text-xs text-muted-foreground">
                   {match.excerpt}
                 </pre>
               )}
@@ -955,7 +955,7 @@ export function GuardrailSimulationResults({ result }: { result: GuardrailSimula
 
       {result.redactedText && (
         <div className="space-y-1">
-          <h3 className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+          <h3 className="text-xs uppercase tracking-widest text-muted-foreground">
             Redacted sample
           </h3>
           <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-md border border-border bg-muted/30 px-3 py-2 font-mono text-xs">
@@ -995,10 +995,10 @@ function PolicyListRow({
         <span className="flex w-full items-center gap-2">
           <span className="truncate text-sm font-medium">{policy.name}</span>
           {!policy.enabled && (
-            <span className="shrink-0 text-[11px] text-muted-foreground">disabled</span>
+            <span className="shrink-0 text-xs text-muted-foreground">disabled</span>
           )}
         </span>
-        <span className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+        <span className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
           <span>{STAGE_LABELS[policy.stage]}</span>
           <span aria-hidden="true">·</span>
           <span>{KIND_LABELS[policy.kind]}</span>
@@ -1020,13 +1020,13 @@ function PolicyListRow({
       </button>
       <span
         className={cn(
-          "shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+          "shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium",
           ACTION_TONES[policy.action],
         )}
       >
         {ACTION_LABELS[policy.action]}
       </span>
-      <span className={cn("shrink-0 text-[11px]", SEVERITY_TONES[policy.severity])}>
+      <span className={cn("shrink-0 text-xs", SEVERITY_TONES[policy.severity])}>
         {SEVERITY_LABELS[policy.severity]}
       </span>
       <ToggleSwitch
@@ -1050,7 +1050,7 @@ function ViolationRow({ violation }: { violation: GuardrailViolation }) {
         <div className="flex flex-wrap items-center gap-2">
           <span
             className={cn(
-              "rounded-full border px-2 py-0.5 text-[11px] font-medium",
+              "rounded-full border px-2 py-0.5 text-xs font-medium",
               ACTION_TONES[violation.actionTaken],
             )}
           >
@@ -1060,19 +1060,19 @@ function ViolationRow({ violation }: { violation: GuardrailViolation }) {
             {violation.policyId ? `Policy ${violation.policyId.slice(0, 8)}` : "Deleted policy"}
           </span>
           {violation.policyVersion != null && (
-            <span className="text-[11px] text-muted-foreground">v{violation.policyVersion}</span>
+            <span className="text-xs text-muted-foreground">v{violation.policyVersion}</span>
           )}
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             {STAGE_LABELS[violation.stage]}
           </span>
         </div>
-        <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           {violation.subjectKind && <span>{violation.subjectKind.replace(/_/g, " ")}</span>}
           <span>· {relativeTime(violation.createdAt)}</span>
           {violation.resolved && <span>· resolved</span>}
         </div>
         {violation.matchedExcerpt && (
-          <pre className="mt-1.5 overflow-x-auto whitespace-pre-wrap break-words rounded bg-muted/40 px-2 py-1 font-mono text-[11px] text-muted-foreground">
+          <pre className="mt-1.5 overflow-x-auto whitespace-pre-wrap break-words rounded bg-muted/40 px-2 py-1 font-mono text-xs text-muted-foreground">
             {violation.matchedExcerpt}
           </pre>
         )}
@@ -1492,7 +1492,7 @@ export function Guardrails() {
         </Tabs>
       </div>
 
-      <div className="w-full shrink-0 px-4 py-4 xl:w-[30rem] xl:max-w-[30rem]">
+      <div className="w-full shrink-0 px-4 py-4 xl:w-96 xl:max-w-96">
         {editing ? (
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-2">
@@ -1585,7 +1585,7 @@ export function Guardrails() {
             </dl>
 
             <div>
-              <h3 className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Matcher</h3>
+              <h3 className="text-xs uppercase tracking-widest text-muted-foreground">Matcher</h3>
               <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words rounded-md border border-border bg-muted/30 px-3 py-2 font-mono text-xs">
                 {JSON.stringify(selectedPolicy.matcher, null, 2)}
               </pre>
