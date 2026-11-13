@@ -46,7 +46,15 @@ export interface ScenarioRunOptions {
 export interface ScenarioRun {
   result: EvalScenarioResult;
   /** The ids the run created, so a caller can inspect what was seeded. */
-  seeded: { companyId: string; agentId: string; issueId: string; runId: string | null };
+  seeded: {
+    companyId: string;
+    agentId: string;
+    /** null when the scenario failed before it could be seeded. */
+    issueId: string | null;
+    runId: string | null;
+    /** The seeded tool policy, when the scenario declares one. */
+    seededPolicyId: string | null;
+  };
   /** Violation class the scenario exercised, for synthetic coverage. */
   violationClass: EvalScenarioFile["violationClass"];
 }
@@ -86,20 +94,27 @@ export async function runScenario(options: ScenarioRunOptions): Promise<Scenario
   const bundle = options.bundle ?? scenario.bundle;
   const timeoutMs = options.timeoutMs ?? 30_000;
 
-  const seeded = await seedScenario(db, scenario, bundle, options.companyId);
-
-  const adapter = createScriptedAdapter(db, {
-    script: scenario.script,
-    issueId: seeded.issueId,
-    companyId: seeded.companyId,
-  });
-  registerServerAdapter(adapter);
-
   const evaluatedAt = new Date();
   let runId: string | null = null;
   let error: string | null = null;
+  let seeded: {
+    companyId: string;
+    agentId: string;
+    issueId: string | null;
+    seededPolicyId: string | null;
+  } | null = null;
 
   try {
+    const seededScenario = await seedScenario(db, scenario, bundle, options.companyId);
+    seeded = seededScenario;
+
+    const adapter = createScriptedAdapter(db, {
+      script: scenario.script,
+      issueId: seededScenario.issueId,
+      companyId: seededScenario.companyId,
+    });
+    registerServerAdapter(adapter);
+
     const heartbeat = heartbeatService(db, {
       // The harness runs in-process, so a worktree instance must not suppress
       // the run it is explicitly asked to perform.
@@ -120,21 +135,29 @@ export async function runScenario(options: ScenarioRunOptions): Promise<Scenario
       throw new Error(`the heartbeat run finished in unexpected status "${finalRun.status}"`);
     }
   } catch (cause) {
+    // A failure to seed or run is a property of this scenario/bundle pair, not
+    // a reason to abandon the rest of the harness run. Recording it as an
+    // errored result keeps the comparison complete and makes the failure
+    // visible instead of silently dropping the scenario.
     error = cause instanceof Error ? cause.message : String(cause);
   } finally {
     unregisterServerAdapter(EVAL_SCRIPTED_ADAPTER_TYPE);
   }
 
   const trace = await collectTrace(db, {
-    companyId: seeded.companyId,
-    issueId: seeded.issueId,
+    companyId: seeded?.companyId ?? options.companyId ?? "",
+    issueId: seeded?.issueId ?? null,
     runId,
   });
 
   const checks: EvalCheckDetail[] = scenario.checks.map((spec) => evaluateCheck(spec, trace));
   const score = scoreChecks(checks);
   const observedPolicyFires = collectObservedPolicyFires(trace);
-  const policyLabels = await resolvePolicyLabels(db, seeded.companyId, scenario.policyLabels);
+  const policyLabels = await resolvePolicyLabels(
+    db,
+    seeded?.companyId ?? options.companyId ?? "",
+    scenario.policyLabels,
+  );
 
   const result: EvalScenarioResult = {
     scenarioId: scenario.id,
@@ -156,7 +179,13 @@ export async function runScenario(options: ScenarioRunOptions): Promise<Scenario
 
   return {
     result,
-    seeded: { ...seeded, runId },
+    seeded: {
+      companyId: seeded?.companyId ?? options.companyId ?? "",
+      agentId: seeded?.agentId ?? "",
+      issueId: seeded?.issueId ?? null,
+      seededPolicyId: seeded?.seededPolicyId ?? null,
+      runId,
+    },
     violationClass: scenario.violationClass,
   };
 }
@@ -210,7 +239,7 @@ async function seedScenario(
   scenario: EvalScenarioFile,
   bundle: EvalBundle,
   companyId?: string,
-): Promise<{ companyId: string; agentId: string; issueId: string }> {
+): Promise<{ companyId: string; agentId: string; issueId: string; seededPolicyId: string | null }> {
   const resolvedCompanyId = companyId ?? (await createEvalCompany(db, { name: `Eval ${scenario.id}` }));
   const agentId = randomUUID();
   const issueId = randomUUID();
@@ -242,20 +271,58 @@ async function seedScenario(
     assigneeAgentId: agentId,
   });
 
+  let seededPolicyId: string | null = null;
   if (scenario.seedPolicy) {
-    await db.insert(toolPolicies).values({
-      companyId: resolvedCompanyId,
-      name: scenario.seedPolicy.name,
-      policyType: scenario.seedPolicy.policyType,
-      priority: scenario.seedPolicy.priority ?? 100,
-      selectors: scenario.seedPolicy.selectors,
-      conditions: scenario.seedPolicy.conditions ?? null,
-      config: scenario.seedPolicy.config ?? null,
-      enabled: true,
-    });
+    seededPolicyId = await seedToolPolicy(db, resolvedCompanyId, scenario.seedPolicy);
   }
 
-  return { companyId: resolvedCompanyId, agentId, issueId };
+  return { companyId: resolvedCompanyId, agentId, issueId, seededPolicyId };
+}
+
+/**
+ * Seed the scenario's tool policy, reusing the existing row when it is there.
+ *
+ * `tool_policies` has a unique constraint on (company_id, name), and a harness
+ * run seeds the same scenario once per bundle into one shared company. Creating
+ * a second row with the same name would fail on that constraint, and creating a
+ * differently-named row would leave two policies matching the same tool, so
+ * every blocked call would report the policy twice.
+ *
+ * Reusing the row keeps exactly one policy in force, which is what the
+ * scenario's precision/recall labels are written against.
+ */
+async function seedToolPolicy(
+  db: Db,
+  companyId: string,
+  seedPolicy: NonNullable<EvalScenarioFile["seedPolicy"]>,
+): Promise<string> {
+  const existing = await db
+    .select({ id: toolPolicies.id })
+    .from(toolPolicies)
+    .where(and(eq(toolPolicies.companyId, companyId), eq(toolPolicies.name, seedPolicy.name)))
+    .then((rows) => rows[0] ?? null);
+
+  if (existing) return existing.id;
+
+  const inserted = await db
+    .insert(toolPolicies)
+    .values({
+      companyId,
+      name: seedPolicy.name,
+      policyType: seedPolicy.policyType,
+      priority: seedPolicy.priority ?? 100,
+      selectors: seedPolicy.selectors,
+      conditions: seedPolicy.conditions ?? null,
+      config: seedPolicy.config ?? null,
+      enabled: true,
+    })
+    .returning({ id: toolPolicies.id });
+
+  const id = inserted[0]?.id;
+  if (!id) {
+    throw new Error(`failed to seed tool policy "${seedPolicy.name}"`);
+  }
+  return id;
 }
 
 /**

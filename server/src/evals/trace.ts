@@ -23,17 +23,19 @@ export async function collectTrace(
   db: Db,
   input: {
     companyId: string;
-    issueId: string;
+    issueId: string | null;
     runId: string | null;
   },
 ): Promise<EvalObservedTrace> {
   const { companyId, issueId, runId } = input;
 
-  const issueRow = await db
-    .select({ status: issues.status })
-    .from(issues)
-    .where(eq(issues.id, issueId))
-    .then((rows) => rows[0] ?? null);
+  const issueRow = issueId
+    ? await db
+        .select({ status: issues.status })
+        .from(issues)
+        .where(eq(issues.id, issueId))
+        .then((rows) => rows[0] ?? null)
+    : null;
 
   const runRow = runId
     ? await db
@@ -46,26 +48,28 @@ export async function collectTrace(
         .then((rows) => rows[0] ?? null)
     : null;
 
-  const comments: EvalObservedComment[] = await db
-    .select({
-      body: issueComments.body,
-      authorType: issueComments.authorType,
-      authorAgentId: issueComments.authorAgentId,
-    })
-    .from(issueComments)
-    .where(
-      and(
-        eq(issueComments.companyId, companyId),
-        eq(issueComments.issueId, issueId),
-      ),
-    )
-    .then((rows) =>
-      rows.map((row) => ({
-        body: row.body,
-        authorType: row.authorType ?? null,
-        authorAgentId: row.authorAgentId ?? null,
-      })),
-    );
+  const comments: EvalObservedComment[] = issueId
+    ? await db
+        .select({
+          body: issueComments.body,
+          authorType: issueComments.authorType,
+          authorAgentId: issueComments.authorAgentId,
+        })
+        .from(issueComments)
+        .where(
+          and(
+            eq(issueComments.companyId, companyId),
+            eq(issueComments.issueId, issueId),
+          ),
+        )
+        .then((rows) =>
+          rows.map((row) => ({
+            body: row.body,
+            authorType: row.authorType ?? null,
+            authorAgentId: row.authorAgentId ?? null,
+          })),
+        )
+    : [];
 
   const toolCalls: EvalObservedToolCall[] = runId
     ? await db

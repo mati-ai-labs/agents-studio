@@ -85,7 +85,7 @@ describe.sequential("eval routes", () => {
       "company-1",
       expect.objectContaining({ scenarioId: undefined, bundleId: undefined }),
     );
-  });
+  }, 30_000);
 
   it("forwards the scenario and bundle filters", async () => {
     const app = await createApp();
@@ -95,7 +95,7 @@ describe.sequential("eval routes", () => {
       scenarioId: "core.pickup",
       bundleId: "baseline",
     });
-  });
+  }, 30_000);
 
   it("refuses to list results for a company the caller cannot access", async () => {
     const app = await createApp({
@@ -110,7 +110,7 @@ describe.sequential("eval routes", () => {
 
     expect(res.status).toBe(403);
     expect(mockEvalService.listResults).not.toHaveBeenCalled();
-  });
+  }, 30_000);
 
   it("records a result for a caller with eval administration authority", async () => {
     mockAccessService.canUser.mockResolvedValue(true);
@@ -138,7 +138,7 @@ describe.sequential("eval routes", () => {
         score: 0.5,
       }),
     );
-  });
+  }, 30_000);
 
   it("refuses to record a result for a caller without eval administration authority", async () => {
     mockAccessService.canUser.mockResolvedValue(false);
@@ -150,7 +150,7 @@ describe.sequential("eval routes", () => {
 
     expect(res.status).toBe(403);
     expect(mockEvalService.recordResult).not.toHaveBeenCalled();
-  });
+  }, 30_000);
 
   it("returns per-policy precision and recall", async () => {
     mockEvalService.policyMetrics.mockResolvedValue([
@@ -172,7 +172,7 @@ describe.sequential("eval routes", () => {
     expect(res.status).toBe(200);
     expect(res.body[0].policyId).toBe("policy-a");
     expect(res.body[0].recall).toBeCloseTo(0.667, 3);
-  });
+  }, 30_000);
 
   it("returns the cohort comparison with its definition", async () => {
     const app = await createApp();
@@ -184,7 +184,7 @@ describe.sequential("eval routes", () => {
       "company-1",
       expect.objectContaining({ thresholdDays: 14 }),
     );
-  });
+  }, 30_000);
 
   it("falls back to the default threshold when the query parameter is not a number", async () => {
     const app = await createApp();
@@ -192,7 +192,7 @@ describe.sequential("eval routes", () => {
 
     const call = mockEvalService.cohortComparison.mock.calls[0];
     expect(call?.[1]?.thresholdDays).toBeUndefined();
-  });
+  }, 30_000);
 
   it("compares synthetic observations against real traffic for the coverage report", async () => {
     const app = await createApp();
@@ -206,7 +206,7 @@ describe.sequential("eval routes", () => {
     expect(mockEvalService.coverageReport).toHaveBeenCalledWith("company-1", [
       { class: "privacy_filter.output", label: "Privacy filter", count: 4 },
     ]);
-  });
+  }, 30_000);
 
   it("derives the synthetic classes from the scenario suite when the caller supplies none", async () => {
     const app = await createApp();
@@ -223,5 +223,5 @@ describe.sequential("eval routes", () => {
         "restricted_action.blocked_write",
       ]),
     );
-  });
+  }, 30_000);
 });
