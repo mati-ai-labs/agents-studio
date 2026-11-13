@@ -64,6 +64,16 @@ vi.mock("@/context/ToastContext", () => ({
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+// Radix's Select calls hasPointerCapture/setPointerCapture, which jsdom does
+// not implement. Stub them so the trigger can be opened in a test.
+if (typeof Element !== "undefined" && !Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = function hasPointerCapture() {
+    return false;
+  };
+  Element.prototype.setPointerCapture = function setPointerCapture() {};
+  Element.prototype.releasePointerCapture = function releasePointerCapture() {};
+}
+
 async function flushReact() {
   await act(async () => {
     await Promise.resolve();
@@ -644,6 +654,109 @@ describe("Guardrails", () => {
     });
     expect(document.body.textContent).toContain("Block outbound PII");
     expect(document.body.textContent).toContain("call 555-12-3456 now");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("simulates an output sample and reports the action each policy would take", async () => {
+    simulateMock.mockResolvedValue({
+      action: "redact",
+      decisive: {
+        policyId: "policy-2",
+        policyName: "Redact provider tokens",
+        kind: "secret",
+        action: "redact",
+        severity: "medium",
+        scopeType: "company",
+        scopeId: null,
+        policyVersion: 1,
+        matchedField: "tool_result",
+        excerpt: "sk-ant-0123456789abcdef",
+      },
+      matches: [
+        {
+          policyId: "policy-2",
+          policyName: "Redact provider tokens",
+          kind: "secret",
+          action: "redact",
+          severity: "medium",
+          scopeType: "company",
+          scopeId: null,
+          policyVersion: 1,
+          matchedField: "tool_result",
+          excerpt: "sk-ant-0123456789abcdef",
+        },
+      ],
+      redactedText: "the key is [REDACTED]",
+    });
+
+    const root = await renderPage();
+
+    const simulationTab = Array.from(container.querySelectorAll('[role="tab"]')).find(
+      (tab) => tab.textContent === "Simulation",
+    );
+    await act(async () => {
+      simulationTab?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+    });
+    await flushReact();
+
+    // The stage is a Radix Select, so drive it the way Radix does: open the
+    // trigger, then pick the option with a pointerup.
+    const stageTrigger = document.body.querySelector<HTMLElement>("#guardrail-simulate-stage");
+    expect(stageTrigger).toBeTruthy();
+
+    await act(async () => {
+      stageTrigger?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
+      stageTrigger?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+      stageTrigger?.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
+    });
+    await flushReact();
+
+    const outputOption = Array.from(document.body.querySelectorAll('[role="option"]')).find(
+      (option) => option.textContent === "Output",
+    );
+    expect(outputOption).toBeTruthy();
+
+    await act(async () => {
+      outputOption?.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 0 }));
+      outputOption?.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
+    });
+    await flushReact();
+
+    const sampleInput = document.body.querySelector<HTMLTextAreaElement>(
+      "#guardrail-simulate-sample",
+    );
+    expect(sampleInput).toBeTruthy();
+
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        "value",
+      )?.set;
+      setter?.call(sampleInput, "the key is sk-ant-0123456789abcdef");
+      sampleInput?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flushReact();
+
+    const simulateButton = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent === "Simulate",
+    );
+    expect(simulateButton).toBeTruthy();
+
+    await act(async () => {
+      simulateButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flushReact();
+
+    expect(simulateMock).toHaveBeenCalledWith("company-1", {
+      stage: "output",
+      subject: "the key is sk-ant-0123456789abcdef",
+    });
+    expect(document.body.textContent).toContain("Redact provider tokens");
+    expect(document.body.textContent).toContain("sk-ant-0123456789abcdef");
+    expect(document.body.textContent).toContain("the key is [REDACTED]");
 
     await act(async () => {
       root.unmount();
