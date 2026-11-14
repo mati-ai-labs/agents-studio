@@ -54,7 +54,14 @@ export async function executeApprovedStudioAction(
       await issueService(db)
         .addComment(
           issueId,
-          `Board approved: ${readString(payload.title) ?? readString(payload.tool) ?? "agent action"}. Run exactly the same action again; it will be allowed once.`,
+          (() => {
+            const args = (payload.arguments ?? {}) as Record<string, unknown>;
+            const command = readString(args.command);
+            const what = readString(payload.title) ?? readString(payload.tool) ?? "agent action";
+            return command
+              ? `Board approved: ${what}. Run exactly this command again; it will be allowed once:\n\n\`\`\`\n${command}\n\`\`\``
+              : `Board approved: ${what}. Run exactly the same ${readString(payload.tool) ?? "tool"} action again; it will be allowed once.`;
+          })(),
           {},
           { authorType: "system" },
         )

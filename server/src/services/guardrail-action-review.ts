@@ -72,6 +72,26 @@ export function isReadOnlyAction(toolName: string, toolInput: unknown): boolean 
   return false;
 }
 
+const NON_SEMANTIC_INPUT_KEYS = new Set(["description", "timeout", "run_in_background", "dangerouslyDisableSandbox"]);
+
+/**
+ * The fingerprint an approval is tied to: the tool plus the parts of its input
+ * that change what it does. Claude Code adds fields like `description` that
+ * vary between attempts of the same action, so they are left out, and shell
+ * whitespace is normalised.
+ */
+export function actionFingerprint(toolName: string, toolInput: unknown): string {
+  if (toolInput && typeof toolInput === "object" && !Array.isArray(toolInput)) {
+    const record = toolInput as Record<string, unknown>;
+    if (typeof record.command === "string") {
+      return hashToolValue({ toolName, command: record.command.replace(/\s+/g, " ").trim() });
+    }
+    const semantic = Object.fromEntries(Object.entries(record).filter(([key]) => !NON_SEMANTIC_INPUT_KEYS.has(key)));
+    return hashToolValue({ toolName, toolInput: semantic });
+  }
+  return hashToolValue({ toolName, toolInput: toolInput ?? null });
+}
+
 function summarizeInput(toolInput: unknown): string {
   let text: string;
   try {
@@ -268,7 +288,7 @@ export function guardrailActionReviewService(db: Db) {
     const { companyId, agentId, runId, toolName, toolInput } = input;
     if (isReadOnlyAction(toolName, toolInput)) return { decision: "allow", reason: null, source: "read_only" };
 
-    const argumentsHash = hashToolValue({ toolName, toolInput: toolInput ?? null });
+    const argumentsHash = actionFingerprint(toolName, toolInput);
 
     // A board approval for exactly this action releases it once.
     const prior = await guardrails.findGuardrailApproval({

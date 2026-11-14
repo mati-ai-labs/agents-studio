@@ -14,6 +14,7 @@ import {
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
 import {
+  actionFingerprint,
   guardrailActionReviewService,
   isReadOnlyAction,
   setGuardrailClassifierForTests,
@@ -21,6 +22,16 @@ import {
 } from "../services/guardrail-action-review.js";
 import { guardrailReviewRoutes } from "../routes/guardrail-review.js";
 import { errorHandler } from "../middleware/index.js";
+
+describe("actionFingerprint", () => {
+  it("ignores Claude Code's non-semantic fields and whitespace, but not the command", () => {
+    const a = actionFingerprint("Bash", { command: "curl -X POST $API/x  -d '{}'", description: "Create it" });
+    const b = actionFingerprint("Bash", { command: "curl -X POST $API/x -d '{}'", description: "Create the sub-issue", timeout: 30000 });
+    const c = actionFingerprint("Bash", { command: "curl -X POST $API/y -d '{}'" });
+    expect(a).toBe(b);
+    expect(a).not.toBe(c);
+  });
+});
 
 describe("isReadOnlyAction", () => {
   it("skips reads and read-only shell commands", () => {
