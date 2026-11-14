@@ -1683,3 +1683,22 @@ export const GUARDRAIL_VIOLATION_SUBJECT_KINDS = [
   "tool_action",
 ] as const;
 export type GuardrailViolationSubjectKind = (typeof GUARDRAIL_VIOLATION_SUBJECT_KINDS)[number];
+
+/**
+ * Studio actions a guardrail can gate when an agent calls the Paperclip API.
+ * Name them in a `restricted_action` policy's `toolNames` (stage `action`)
+ * with action `require_approval` (parked until a board user approves) or
+ * `block`. Board users are never gated.
+ */
+export const STUDIO_GUARDED_ACTIONS = [
+  { action: "paperclip:issue.create", label: "Create a top-level issue" },
+  { action: "paperclip:issue.create_subissue", label: "Create a sub-issue" },
+  { action: "paperclip:issue.assign", label: "Assign or reassign an issue" },
+  { action: "paperclip:agent.create", label: "Create or hire an agent" },
+  { action: "paperclip:agent.update", label: "Change an agent's config or instructions" },
+  { action: "paperclip:agent.update_permissions", label: "Change an agent's permissions" },
+  { action: "paperclip:agent.lifecycle", label: "Pause, resume, terminate or delete an agent" },
+  { action: "paperclip:agent.create_key", label: "Create an agent API key" },
+  { action: "paperclip:routine.create", label: "Create a routine" },
+] as const;
+export type StudioGuardedAction = (typeof STUDIO_GUARDED_ACTIONS)[number]["action"];
