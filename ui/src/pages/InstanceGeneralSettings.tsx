@@ -13,6 +13,8 @@ import {
   MAX_PROVIDER_QUOTA_RESERVE_PERCENT,
   DEFAULT_MIN_FREE_MEMORY_MB,
   MAX_MIN_FREE_MEMORY_MB,
+  DEFAULT_MAX_AGENT_RUN_MEMORY_MB,
+  MAX_MAX_AGENT_RUN_MEMORY_MB,
 } from "@paperclipai/shared";
 import { LogOut, SlidersHorizontal } from "lucide-react";
 import { authApi } from "@/api/auth";
@@ -71,6 +73,15 @@ export function InstanceGeneralSettings() {
     setReserveDraft(String(savedReserve));
   }, [savedReserve]);
   const savedMinFreeMemory = generalQuery.data?.minFreeMemoryMb ?? DEFAULT_MIN_FREE_MEMORY_MB;
+  const savedRunMemoryCap = generalQuery.data?.maxAgentRunMemoryMb ?? DEFAULT_MAX_AGENT_RUN_MEMORY_MB;
+  const [runMemoryCapDraft, setRunMemoryCapDraft] = useState<string>("");
+  useEffect(() => {
+    setRunMemoryCapDraft(String(savedRunMemoryCap));
+  }, [savedRunMemoryCap]);
+  const parsedRunMemoryCap = Number(runMemoryCapDraft);
+  const runMemoryCapValid =
+    runMemoryCapDraft.trim() !== "" && Number.isInteger(parsedRunMemoryCap) && parsedRunMemoryCap >= 0 && parsedRunMemoryCap <= MAX_MAX_AGENT_RUN_MEMORY_MB;
+  const runMemoryCapDirty = runMemoryCapValid && parsedRunMemoryCap !== savedRunMemoryCap;
   const [minFreeMemoryDraft, setMinFreeMemoryDraft] = useState<string>("");
   useEffect(() => {
     setMinFreeMemoryDraft(String(savedMinFreeMemory));
@@ -346,6 +357,56 @@ export function InstanceGeneralSettings() {
             />
             <StatusBox label="Floor" value={memory ? (memory.enabled ? `${memory.minFreeMemoryMb.toLocaleString()} MB` : "Off") : "-"} />
           </div>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card p-5">
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <h2 className="text-sm font-semibold">Stop a run that uses too much memory</h2>
+            <p className="max-w-2xl text-sm text-muted-foreground">
+              Every 10 seconds, add up the memory of each running agent run's processes (the agent and everything it
+              starts, like scripts, builds and tests). A run over this cap is stopped, and its issue gets a comment
+              telling the agent to work in smaller steps. This keeps one runaway run from taking the whole server
+              down. Set 0 to turn it off.
+            </p>
+          </div>
+          <form
+            className="flex flex-wrap items-center gap-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!runMemoryCapDirty) return;
+              updateGeneralMutation.mutate({ maxAgentRunMemoryMb: parsedRunMemoryCap });
+            }}
+          >
+            <label className="text-sm text-muted-foreground" htmlFor="max-agent-run-memory">
+              Stop a run above
+            </label>
+            <Input
+              id="max-agent-run-memory"
+              type="number"
+              inputMode="numeric"
+              min={0}
+              max={MAX_MAX_AGENT_RUN_MEMORY_MB}
+              step={256}
+              value={runMemoryCapDraft}
+              onChange={(event) => setRunMemoryCapDraft(event.target.value)}
+              aria-invalid={!runMemoryCapValid}
+              className="w-24 tabular-nums"
+            />
+            <span className="text-sm text-muted-foreground">MB</span>
+            <Button type="submit" size="sm" disabled={!runMemoryCapDirty || updateGeneralMutation.isPending}>
+              Save
+            </Button>
+            {!runMemoryCapValid && (
+              <span className="text-xs text-destructive">
+                Enter a whole number from 0 to {MAX_MAX_AGENT_RUN_MEMORY_MB}.
+              </span>
+            )}
+          </form>
+          <p className="text-xs text-muted-foreground">
+            {savedRunMemoryCap > 0 ? `Currently: stop any run above ${savedRunMemoryCap.toLocaleString()} MB.` : "Currently off."}
+          </p>
         </div>
       </section>
 

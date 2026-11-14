@@ -102,6 +102,7 @@ import { DEFAULT_JSON_BODY_LIMIT, PORTABLE_JSON_BODY_LIMIT } from "./http/body-l
 import { COMPANY_IMPORT_API_PATH } from "./routes/company-import-paths.js";
 import { apiCompression } from "./middleware/api-compression.js";
 import { createSlackDeliveryWorker } from "./services/slack-delivery-worker.js";
+import { startAgentMemoryWatchdog } from "./services/agent-memory-watchdog.js";
 
 type UiMode = "none" | "static" | "vite-dev";
 const FEEDBACK_EXPORT_FLUSH_INTERVAL_MS = 5_000;
@@ -250,6 +251,9 @@ export async function createApp(
   const hostServicesDisposers = new Map<string, () => void>();
   const workerManager = opts.pluginWorkerManager ?? createPluginWorkerManager();
   const slackWorker = createSlackDeliveryWorker(db, { pluginWorkerManager: workerManager });
+  // Stop any single agent run whose processes exceed the per-run memory cap
+  // (Instance Settings > General), before it can OOM the whole server.
+  startAgentMemoryWatchdog(db);
 
   // Mount API routes
   const api = Router();
