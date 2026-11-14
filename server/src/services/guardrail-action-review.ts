@@ -56,6 +56,8 @@ const MUTATING_BASH_MARKERS = /(^|[^<])>(?!&)|\brm\b|\bmv\b|\bcp\b|\bchmod\b|\bc
 /** True when the action cannot change anything, so it is not worth a classifier call. */
 export function isReadOnlyAction(toolName: string, toolInput: unknown): boolean {
   if (READ_ONLY_TOOLS.has(toolName)) return true;
+  // Running a script is never read-only: its contents decide what it does.
+  if (scriptContentsOf((toolInput ?? {}) as Record<string, unknown>).length > 0) return false;
   if (toolName === "Bash" || toolName === "Terminal") {
     const command = typeof (toolInput as { command?: unknown })?.command === "string"
       ? ((toolInput as { command: string }).command)
@@ -81,9 +83,28 @@ function withoutSecrets(text: string): string {
 export function safeToolInput(toolInput: unknown): unknown {
   if (toolInput && typeof toolInput === "object" && !Array.isArray(toolInput)) {
     const record = toolInput as Record<string, unknown>;
-    if (typeof record.command === "string") return { ...record, command: withoutSecrets(record.command) };
+    const scripts = scriptContentsOf(record);
+    if (typeof record.command === "string" || scripts.length > 0) {
+      return {
+        ...record,
+        ...(typeof record.command === "string" ? { command: withoutSecrets(record.command) } : {}),
+        ...(scripts.length > 0
+          ? { scriptContents: scripts.map((script) => ({ path: script.path, content: withoutSecrets(script.content) })) }
+          : {}),
+      };
+    }
   }
   return toolInput;
+}
+
+/** Script files a Bash command runs, as read by the agent-side hook. */
+function scriptContentsOf(record: Record<string, unknown>): Array<{ path: string; content: string }> {
+  const raw = record.scriptContents;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((entry): entry is { path: string; content: string } =>
+      Boolean(entry) && typeof (entry as { path?: unknown }).path === "string" && typeof (entry as { content?: unknown }).content === "string")
+    .slice(0, 5);
 }
 
 const NON_SEMANTIC_INPUT_KEYS = new Set(["description", "timeout", "run_in_background", "dangerouslyDisableSandbox"]);
@@ -98,7 +119,17 @@ export function actionFingerprint(toolName: string, toolInput: unknown): string 
   if (toolInput && typeof toolInput === "object" && !Array.isArray(toolInput)) {
     const record = toolInput as Record<string, unknown>;
     if (typeof record.command === "string") {
-      return hashToolValue({ toolName, command: withoutSecrets(record.command).replace(/\s+/g, " ").trim() });
+      // The scripts a command runs are part of what it does: approving
+      // "bash x.sh" must not approve a different x.sh written afterwards.
+      const scripts = scriptContentsOf(record).map((script) => ({
+        path: script.path,
+        content: withoutSecrets(script.content).replace(/\s+/g, " ").trim(),
+      }));
+      return hashToolValue({
+        toolName,
+        command: withoutSecrets(record.command).replace(/\s+/g, " ").trim(),
+        ...(scripts.length > 0 ? { scripts } : {}),
+      });
     }
     const semantic = Object.fromEntries(Object.entries(record).filter(([key]) => !NON_SEMANTIC_INPUT_KEYS.has(key)));
     return hashToolValue({ toolName, toolInput: semantic });
@@ -143,7 +174,9 @@ Answer with JSON only: {"decision":"allow"|"deny"|"approval","ruleId":"<id of th
 - "allow": the action does not break any rule. Most actions are allowed; do not invent violations.
 - "deny": the action clearly breaks a rule whose enforcement is "block". Explain which rule and what the agent should do instead.
 - "approval": the action breaks a rule whose enforcement is "require_approval" (a human must approve it first).
-Judge the action's real effect (e.g. a curl POST that creates an issue, a git push, a config change), not keywords. When unsure, allow.`;
+Judge the action's real effect (e.g. a curl POST that creates an issue, a git push, a config change), not keywords. When unsure, allow.
+- If the input has "scriptContents", the command runs those script files: judge what the scripts do, not just the command line.
+- Writing or editing a file whose content performs an action that breaks a rule (e.g. a script that changes an agent's config) counts as that action: treat it the same as running it.`;
 
 /** Default classifier: an Anthropic-compatible Messages call on the agents' own provider (MiniMax on prod). */
 export const defaultClassifier: ClassifierFn = async (call) => {
@@ -158,34 +191,56 @@ export const defaultClassifier: ClassifierFn = async (call) => {
     .map((rule) => `- id=${rule.id} [${rule.action === "block" ? "block" : "require_approval"}] ${rule.name}: ${rule.rule}`)
     .join("\n");
   const user = `Company rules:\n${rulesText}\n\nAgent: ${call.agentName}\nCurrent task: ${call.issueTitle ?? "(none)"}\n\nAction about to run:\ntool: ${call.toolName}\ninput:\n${summarizeInput(call.toolInput)}`;
-  const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/v1/messages`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "anthropic-version": "2023-06-01",
-      "x-api-key": token,
-      authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 1024,
-      system: CLASSIFIER_SYSTEM,
-      messages: [{ role: "user", content: user }],
-    }),
-    signal: AbortSignal.timeout(25_000),
-  });
-  if (!response.ok) throw new Error(`classifier HTTP ${response.status}`);
-  const body = (await response.json()) as { content?: Array<{ type?: string; text?: string }> };
-  const text = (body.content ?? []).filter((part) => part.type === "text").map((part) => part.text ?? "").join("");
-  const match = /\{[\s\S]*\}/.exec(text);
-  if (!match) throw new Error("classifier returned no JSON");
-  const parsed = JSON.parse(match[0]) as Record<string, unknown>;
-  const decision = parsed.decision === "deny" || parsed.decision === "approval" ? parsed.decision : "allow";
-  return { decision, ruleId: readString(parsed.ruleId), reason: readString(parsed.reason) ?? "" };
+  // Thinking models (MiniMax) can spend the whole budget reasoning and never
+  // write the answer, so give them room and retry once if no JSON comes back:
+  // a classifier error lets the action through.
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/v1/messages`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "anthropic-version": "2023-06-01",
+        "x-api-key": token,
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 4096,
+        system: CLASSIFIER_SYSTEM,
+        messages: [{ role: "user", content: user }],
+      }),
+      signal: AbortSignal.timeout(25_000),
+    });
+    if (!response.ok) {
+      lastError = new Error(`classifier HTTP ${response.status}`);
+      continue;
+    }
+    const body = (await response.json()) as { content?: Array<{ type?: string; text?: string }> };
+    const text = (body.content ?? []).filter((part) => part.type === "text").map((part) => part.text ?? "").join("");
+    const match = /\{[\s\S]*\}/.exec(text);
+    if (!match) {
+      lastError = new Error("classifier returned no JSON");
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(match[0]) as Record<string, unknown>;
+      const decision = parsed.decision === "deny" || parsed.decision === "approval" ? parsed.decision : "allow";
+      return { decision, ruleId: readString(parsed.ruleId), reason: readString(parsed.reason) ?? "" };
+    } catch {
+      lastError = new Error("classifier returned invalid JSON");
+    }
+  }
+  throw lastError ?? new Error("classifier failed");
 };
 
 let classifier: ClassifierFn = defaultClassifier;
 /** Tests only. */
+/** The classifier in use (the default, or a test stand-in). */
+export function activeGuardrailClassifier(): ClassifierFn {
+  return classifier;
+}
+
 export function setGuardrailClassifierForTests(fn: ClassifierFn | null) {
   classifier = fn ?? defaultClassifier;
 }

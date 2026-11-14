@@ -31,7 +31,7 @@ Do not post routine progress, "starting work" or "done" notes; issue comments an
 
 `curl -sS "$API/api/companies/$PAPERCLIP_COMPANY_ID/slack/channels" -H "Authorization: Bearer $PAPERCLIP_API_KEY"`
 
-Use a channel with `canPost: true`. Prefer the channel the issue came from (if the issue came from Slack, reply in that thread with `threadTs`), then the owners list's channel, then the team's main channel. Never DM, and never post to a channel unrelated to the work.
+Use a channel with `canPost: true`, and prefer one with `repliesForwarded: true` (replies there come back to the issue). Prefer the channel the issue came from (if the issue came from Slack, reply in that thread with `threadTs`), then the owners list's channel, then the team's main channel. Never DM, and never post to a channel unrelated to the work.
 
 ## Post
 
@@ -44,12 +44,21 @@ curl -sS -f -X POST "$API/api/companies/$PAPERCLIP_COMPANY_ID/slack/messages" \
 
 - `channel`: channel id, `#name` or `name`.
 - `mentionUserIds`: Slack user ids from the members list (max 10). The server turns them into real @mentions.
-- `issueId`: always pass it when the message is about an issue. The server adds your name and the issue link, and records the message on the issue.
+- `issueId`: always pass it when the message is about an issue. The server adds your name and the issue link, records the message on the issue, and links the Slack thread to the issue (see Replies).
 - `threadTs` (optional): reply inside an existing thread.
 
 Write the message so the person can act without opening anything: what you need, from whom, by when if it matters, and the one-line reason. Two or three sentences. No secrets, tokens, passwords or customer personal data.
 
 After posting, add an issue comment naming who you tagged and why, so the issue shows it.
+
+## Replies
+
+When you pass `issueId`, the Slack thread is linked to that issue. Anyone who replies in the thread shows up as an issue comment (`From Slack user <name>: ...`) and you are woken to handle it, the same as a board comment. So:
+- Do not poll Slack or ask people to comment on the issue instead; just wait for the reply to arrive as a comment.
+- To answer them, post again with the same `issueId` and `threadTs` set to the `messageTs` you got back, so the conversation stays in one thread.
+- Your issue comments are not copied into this thread. Only messages you post with this tool reach Slack.
+
+The response's `replyTracking` tells you whether replies will come back: `active` means yes. Anything else (`bot_not_in_channel`, `private_channel_unsupported`, `thread_belongs_to_other_issue`, `not_bound`) comes with a `replyTrackingHint`; mention it in your issue comment so a human knows to check Slack.
 
 ## Errors
 

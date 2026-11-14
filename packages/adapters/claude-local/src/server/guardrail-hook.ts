@@ -12,10 +12,50 @@ import path from "node:path";
  * `permissionDecision: "deny"` with a reason the model reads and re-plans
  * around, the same way Claude Code's auto-mode classifier blocks commands.
  *
+ * When a Bash command runs a script file (`bash x.sh`, `python3 x.py`,
+ * `./x.sh`, `source x`...), the hook reads the file and sends its contents as
+ * `toolInput.scriptContents`, so the classifier judges what the script does —
+ * otherwise "write a script, then run it" would hide the action.
+ *
  * If the studio cannot be reached the hook allows the action (fail open), so
  * a server restart never freezes every agent.
  */
 export const GUARDRAIL_HOOK_SCRIPT = String.raw`#!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
+const SCRIPT_RUNNERS = /^(bash|sh|zsh|dash|source|\.|python|python3|node|tsx|ts-node|bun|deno|ruby|perl|php)$/;
+const SCRIPT_EXT = /\.(sh|bash|zsh|py|js|mjs|cjs|ts|mts|rb|pl|php)$/;
+// Files a Bash command would execute: "bash x.sh", "python3 x.py", "./x.sh", "source x".
+function scriptFilesIn(command, cwd) {
+  const files = [];
+  const tokens = String(command).split(/[\s;&|()]+/).filter(Boolean).map((t) => t.replace(/^["']|["']$/g, ""));
+  for (let i = 0; i < tokens.length; i += 1) {
+    const tok = tokens[i];
+    let candidate = null;
+    if (SCRIPT_RUNNERS.test(tok) || /^(deno)$/.test(tok)) {
+      let j = i + 1;
+      while (j < tokens.length && (tokens[j].startsWith("-") || tokens[j] === "run")) j += 1;
+      if (j < tokens.length) candidate = tokens[j];
+    } else if (/^(\.{1,2}\/|\/)/.test(tok) && (SCRIPT_EXT.test(tok) || i === 0)) {
+      candidate = tok;
+    }
+    if (!candidate || candidate.startsWith("-")) continue;
+    const resolved = path.resolve(cwd || process.cwd(), candidate.replace(/^~(?=\/)/, process.env.HOME || "~"));
+    if (!files.includes(resolved)) files.push(resolved);
+  }
+  return files.slice(0, 5);
+}
+function readScripts(command, cwd) {
+  const out = [];
+  for (const file of scriptFilesIn(command, cwd)) {
+    try {
+      const stat = fs.statSync(file);
+      if (!stat.isFile()) continue;
+      out.push({ path: file, content: fs.readFileSync(file, "utf8").slice(0, 20000) });
+    } catch {}
+  }
+  return out;
+}
 const READ_ONLY = new Set(["Read","Glob","Grep","LS","NotebookRead","TodoWrite","TaskCreate","TaskUpdate","TaskList","TaskGet","TaskOutput","ToolSearch","WebSearch","WebFetch","ListMcpResourcesTool","ReadMcpResourceTool","BashOutput"]);
 let raw = "";
 process.stdin.on("data", (chunk) => { raw += chunk; });
@@ -38,10 +78,15 @@ process.stdin.on("end", async () => {
     }
     if (input.hook_event_name === "PreToolUse") {
       if (READ_ONLY.has(input.tool_name)) process.exit(0);
+      let toolInput = input.tool_input;
+      if ((input.tool_name === "Bash" || input.tool_name === "Terminal") && toolInput && typeof toolInput.command === "string") {
+        const scripts = readScripts(toolInput.command, input.cwd);
+        if (scripts.length > 0) toolInput = Object.assign({}, toolInput, { scriptContents: scripts });
+      }
       const res = await fetch(base + "/api/guardrails/review-action", {
         method: "POST",
         headers,
-        body: JSON.stringify({ toolName: input.tool_name, toolInput: input.tool_input }),
+        body: JSON.stringify({ toolName: input.tool_name, toolInput }),
         signal: AbortSignal.timeout(30000),
       });
       if (!res.ok) process.exit(0);

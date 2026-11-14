@@ -18,7 +18,10 @@ import { slackChannelRoutes } from "./slack_channel_routes.js";
  *
  * Invariants:
  *  - Exactly one Paperclip issue may bind to a (workspace, channel, thread_ts).
- *  - Exactly one Slack thread may bind to a Paperclip issue.
+ *  - Exactly one Slack-mention thread (source `slack_mention`) may bind to a
+ *    Paperclip issue. Threads an agent starts with the Slack tool (source
+ *    `agent_post`) also bind to their issue so replies come back as comments;
+ *    an issue can have several of those.
  *  - The Slack root event ID is unique so we can idempotently recover after
  *    a duplicate retry.
  *
@@ -48,6 +51,8 @@ export const slackThreadBindings = pgTable(
     threadTs: text("thread_ts").notNull(),
     rootEventId: text("root_event_id").notNull(),
     rootUserId: text("root_user_id"),
+    /** `slack_mention`: issue was created from this thread (progress mirrors back). `agent_post`: an agent pinged about the issue (replies only). */
+    source: text("source").notNull().default("slack_mention"),
     lastInboundAt: timestamp("last_inbound_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -58,7 +63,9 @@ export const slackThreadBindings = pgTable(
       table.channelId,
       table.threadTs,
     ),
-    issueUq: uniqueIndex("slack_thread_bindings_issue_uq").on(table.issueId),
+    issueUq: uniqueIndex("slack_thread_bindings_issue_uq")
+      .on(table.issueId)
+      .where(sql`${table.source} = 'slack_mention'`),
     rootEventUq: uniqueIndex("slack_thread_bindings_root_event_uq").on(table.rootEventId),
     companyCreatedIdx: index("slack_thread_bindings_company_created_idx").on(
       table.companyId,

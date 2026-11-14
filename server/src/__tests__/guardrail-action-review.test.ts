@@ -32,6 +32,14 @@ describe("actionFingerprint", () => {
     expect(a).not.toBe(c);
   });
 
+  it("ties a script-running command to the script's contents", () => {
+    const run = (content: string) =>
+      actionFingerprint("Bash", { command: "bash ./x.sh", scriptContents: [{ path: "/w/x.sh", content }] });
+    expect(run("echo hi")).toBe(run("echo   hi"));
+    expect(run("echo hi")).not.toBe(run("curl -X PATCH $API/agents/a1 -d '{}'"));
+    expect(run("echo hi")).not.toBe(actionFingerprint("Bash", { command: "bash ./x.sh" }));
+  });
+
   it("does not depend on (or store) the credential typed into a command", () => {
     const withKey = actionFingerprint("Bash", { command: "curl -X POST $API/x -H 'Authorization: Bearer pcp_cd6d59e6921167a4da7ddb9d091c7520f60122e5446998b9'" });
     const otherKey = actionFingerprint("Bash", { command: "curl -X POST $API/x -H 'Authorization: Bearer pcp_0000000000000000000000000000000000000000000000'" });
@@ -55,6 +63,7 @@ describe("isReadOnlyAction", () => {
     expect(isReadOnlyAction("Bash", { command: "npm test" })).toBe(false);
     expect(isReadOnlyAction("Edit", { file_path: "/x" })).toBe(false);
     expect(isReadOnlyAction("mcp__github__create_pull_request", {})).toBe(false);
+    expect(isReadOnlyAction("Bash", { command: "cat notes.txt", scriptContents: [{ path: "/w/x.sh", content: "rm -rf /" }] })).toBe(false);
   });
 });
 
@@ -217,6 +226,29 @@ describeEmbeddedPostgres("guardrail action review", () => {
       expect(denied.hookSpecificOutput.permissionDecisionReason).toContain("Models are mine");
 
       expect(await runHook({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "npm test" } })).toBe("");
+
+      // "Write a script, then run it": the hook reads the script, so the
+      // classifier sees what it does even though the command is just "bash".
+      await writeFile(path.join(dir, "switch_model.sh"), `#!/bin/bash\ncurl -X PATCH $API/api/agents/x -d '{"adapterConfig":{"model":"claude-sonnet-4-6"}}'\n`);
+      const viaScript = JSON.parse(await runHook({
+        hook_event_name: "PreToolUse",
+        tool_name: "Bash",
+        cwd: dir,
+        tool_input: { command: "cd /tmp && bash " + path.join(dir, "switch_model.sh") + " && echo done" },
+      }));
+      expect(viaScript.hookSpecificOutput.permissionDecision).toBe("deny");
+      const relative = JSON.parse(await runHook({
+        hook_event_name: "PreToolUse",
+        tool_name: "Bash",
+        cwd: dir,
+        tool_input: { command: "./switch_model.sh" },
+      }));
+      expect(relative.hookSpecificOutput.permissionDecision).toBe("deny");
+      const scriptCall = calls.find((call) => JSON.stringify(call.toolInput).includes("scriptContents"));
+      expect(JSON.stringify(scriptCall?.toolInput)).toContain("claude-sonnet-4-6");
+      // A harmless script still runs.
+      await writeFile(path.join(dir, "tests.sh"), "#!/bin/bash\npnpm test\n");
+      expect(await runHook({ hook_event_name: "PreToolUse", tool_name: "Bash", cwd: dir, tool_input: { command: "bash tests.sh" } })).toBe("");
       expect(await runHook({ hook_event_name: "PreToolUse", tool_name: "Read", tool_input: { file_path: "/x" } })).toBe("");
 
       const started = JSON.parse(await runHook({ hook_event_name: "SessionStart", source: "startup" }));

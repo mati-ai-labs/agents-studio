@@ -160,6 +160,8 @@ Agents can post in the company's Slack and tag the people who need to act. The b
 | `GET /api/companies/:companyId/slack/channels` | Non-archived channels with `canPost` (public channels always; private only when the bot is a member). |
 | `POST /api/companies/:companyId/slack/messages` | `{channel, text, mentionUserIds?, threadTs?, issueId?}`. Mentions must be workspace members. Adds the agent name and issue link, and logs `slack.message_posted` on the issue. |
 
+Replies: when the post carries `issueId`, the thread (the new message, or the root of `threadTs`) is bound to the issue in `slack_thread_bindings` with `source = 'agent_post'`. Replies then go through the normal inbound path: issue comment, wake/interrupt the assignee, reopen if done. Agent comments are not mirrored into these threads; progress mirroring stays on the `slack_mention` thread an issue came from. An issue may have one `slack_mention` thread and any number of `agent_post` threads. Slack only sends reply events for public channels the bot has joined (`message.channels`), so the response's `replyTracking` is `active` only there.
+
 Guardrails: board or agent auth, company-scoped; max 10 mentions and 3,000 characters per message; 20 messages per agent per hour (429 with `Retry-After`). Channels only, no DMs.
 
 Needs outside the code: the Slack connection must carry `chat:write`, `chat:write.public`, `users:read` and `channels:read` (already in the OAuth scopes). Private channels need the bot invited. DMs would need `im:write` plus a reinstall.

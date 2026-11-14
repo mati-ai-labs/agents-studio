@@ -5085,6 +5085,25 @@ registry.registerPath({
   responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
 });
 
+registry.registerPath({
+  method: "get",
+  path: "/api/guardrails/agent-context",
+  tags: ["guardrails"],
+  summary: "Agent only: the company's plain-English guardrail rules, injected into the agent's context at session start",
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/guardrails/review-action",
+  tags: ["guardrails"],
+  summary: "Agent only: review an action the agent is about to take (allow, deny with reason, or hold for approval)",
+  request: {
+    body: jsonBody(z.object({ toolName: z.string(), toolInput: z.unknown().optional() })),
+  },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden },
+});
+
 // ─── Instance database backups ────────────────────────────────────────────────
 
 registry.registerPath({
