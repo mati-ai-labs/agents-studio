@@ -7,6 +7,7 @@ export const typeLabel: Record<string, string> = {
   budget_override_required: "Budget Override",
   request_board_approval: "Board Approval",
   workspace_runtime_config: "Workspace Services",
+  guardrail_action: "Guardrail",
 };
 
 function firstNonEmptyString(...values: unknown[]): string | null {
@@ -43,6 +44,7 @@ export const typeIcon: Record<string, typeof UserPlus> = {
   budget_override_required: ShieldAlert,
   request_board_approval: ShieldCheck,
   workspace_runtime_config: ShieldAlert,
+  guardrail_action: ShieldAlert,
 };
 
 export const defaultTypeIcon = ShieldCheck;
@@ -146,6 +148,51 @@ export function BudgetOverridePayload({ payload }: { payload: Record<string, unk
       {!!payload.guidance && (
         <p className="text-muted-foreground">{String(payload.guidance)}</p>
       )}
+    </div>
+  );
+}
+
+/** A tool call (or tool result) parked by a `require_approval` guardrail policy. */
+export function GuardrailActionPayload({ payload }: { payload: Record<string, unknown> }) {
+  const tool = firstNonEmptyString(payload.tool, payload.toolName);
+  const policy = firstNonEmptyString(payload.policyName);
+  const stage = payload.stage === "input" ? "Tool result (before the agent reads it)" : payload.stage === "action" ? "Tool call (before it runs)" : payload.stage;
+  const args = payload.arguments;
+  let argsText: string | null = null;
+  if (args !== undefined && args !== null) {
+    try {
+      argsText = JSON.stringify(args, null, 2);
+    } catch {
+      argsText = String(args);
+    }
+    if (argsText.length > 2_000) argsText = `${argsText.slice(0, 2_000)}…`;
+  }
+  const request =
+    typeof payload.request === "object" && payload.request !== null ? (payload.request as Record<string, unknown>) : null;
+  const execution =
+    typeof payload.execution === "object" && payload.execution !== null ? (payload.execution as Record<string, unknown>) : null;
+  return (
+    <div className="mt-3 space-y-1.5 text-sm">
+      {payload.studioAction === true ? <PayloadField label="Agent asks to" value={firstNonEmptyString(payload.summary)} /> : null}
+      <PayloadField label="Tool" value={tool} />
+      {request ? <PayloadField label="Request" value={`${String(request.method ?? "")} ${String(request.path ?? "")}`} /> : null}
+      {execution ? (
+        <div className="rounded-md bg-muted/40 px-3 py-2 text-xs">
+          {execution.executed
+            ? `Carried out${execution.created ? `: ${String(execution.created)}` : ""}.`
+            : `Approved, but carrying it out failed: ${String(execution.error ?? "unknown error")}`}
+        </div>
+      ) : null}
+      <PayloadField label="Policy" value={policy} />
+      <PayloadField label="Checked at" value={stage} />
+      {argsText ? (
+        <pre className="mt-2 max-h-64 overflow-auto rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground whitespace-pre-wrap break-all">
+          {argsText}
+        </pre>
+      ) : null}
+      <p className="text-muted-foreground">
+        {firstNonEmptyString(payload.recommendedAction) ?? "Approve only if this tool action is intended and safe."} Approving releases this one call; rejecting cancels it.
+      </p>
     </div>
   );
 }
@@ -276,6 +323,7 @@ export function ApprovalPayloadRenderer({
   if (type === "hire_agent") return <HireAgentPayload payload={payload} />;
   if (type === "workspace_runtime_config") return <WorkspaceRuntimeConfigPayload payload={payload} />;
   if (type === "budget_override_required") return <BudgetOverridePayload payload={payload} />;
+  if (type === "guardrail_action") return <GuardrailActionPayload payload={payload} />;
   if (type === "request_board_approval") {
     return <BoardApprovalPayload payload={payload} hideTitle={hidePrimaryTitle} />;
   }

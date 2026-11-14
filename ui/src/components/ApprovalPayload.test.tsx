@@ -85,4 +85,54 @@ describe("ApprovalPayloadRenderer", () => {
       root.unmount();
     });
   });
+
+  it("renders a guardrail_action approval as the parked tool call, not as a CEO strategy", () => {
+    const root = createRoot(container);
+    act(() => {
+      root.render(
+        <ApprovalPayloadRenderer
+          type="guardrail_action"
+          payload={{
+            title: "Approve guarded tool action: github:merge_pr",
+            tool: "github:merge_pr",
+            policyName: "Merges need a human",
+            stage: "action",
+            arguments: { repo: "mati-ai-labs/agents-studio", number: 48 },
+          }}
+        />,
+      );
+    });
+    expect(container.textContent).toContain("github:merge_pr");
+    expect(container.textContent).toContain("Merges need a human");
+    expect(container.textContent).toContain("Tool call (before it runs)");
+    expect(container.textContent).toContain("mati-ai-labs/agents-studio");
+    expect(approvalLabel("guardrail_action", { toolName: "x" })).toBe("Guardrail");
+    act(() => root.unmount());
+  });
+
+  it("shows the parked studio request and what happened after approval", () => {
+    const root = createRoot(container);
+    act(() => {
+      root.render(
+        <ApprovalPayloadRenderer
+          type="guardrail_action"
+          payload={{
+            studioAction: true,
+            summary: "CEO wants to: Create a sub-issue.",
+            tool: "paperclip:issue.create_subissue",
+            policyName: "Agents need my approval for decisions",
+            stage: "action",
+            request: { method: "POST", path: "/companies/c1/issues", body: { title: "x" } },
+            arguments: { title: "x", parentId: "p1" },
+            execution: { executed: true, status: 201, created: 'LCH-500 "x"' },
+          }}
+        />,
+      );
+    });
+    expect(container.textContent).toContain("CEO wants to: Create a sub-issue.");
+    expect(container.textContent).toContain("POST /companies/c1/issues");
+    expect(container.textContent).toContain('Carried out: LCH-500 "x"');
+    act(() => root.unmount());
+  });
 });
+
