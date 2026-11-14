@@ -1,7 +1,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { agents, approvals, guardrailPolicies, heartbeatRuns, issueApprovals, issues } from "@paperclipai/db";
-import { guardrailService } from "./guardrails.js";
+import { guardrailService, redactWithMatchers } from "./guardrails.js";
 import { resolveClaudeProviderEnv } from "./provider-quota-gate.js";
 import { hashToolValue } from "./tool-content-guards.js";
 import { logger } from "../middleware/logger.js";
@@ -72,6 +72,20 @@ export function isReadOnlyAction(toolName: string, toolInput: unknown): boolean 
   return false;
 }
 
+/** Credentials typed into a command are never stored, shown, or sent to the classifier. */
+function withoutSecrets(text: string): string {
+  return redactWithMatchers([{ kind: "secret" }], text);
+}
+
+/** The tool input with any credentials in a shell command redacted. */
+export function safeToolInput(toolInput: unknown): unknown {
+  if (toolInput && typeof toolInput === "object" && !Array.isArray(toolInput)) {
+    const record = toolInput as Record<string, unknown>;
+    if (typeof record.command === "string") return { ...record, command: withoutSecrets(record.command) };
+  }
+  return toolInput;
+}
+
 const NON_SEMANTIC_INPUT_KEYS = new Set(["description", "timeout", "run_in_background", "dangerouslyDisableSandbox"]);
 
 /**
@@ -84,7 +98,7 @@ export function actionFingerprint(toolName: string, toolInput: unknown): string 
   if (toolInput && typeof toolInput === "object" && !Array.isArray(toolInput)) {
     const record = toolInput as Record<string, unknown>;
     if (typeof record.command === "string") {
-      return hashToolValue({ toolName, command: record.command.replace(/\s+/g, " ").trim() });
+      return hashToolValue({ toolName, command: withoutSecrets(record.command).replace(/\s+/g, " ").trim() });
     }
     const semantic = Object.fromEntries(Object.entries(record).filter(([key]) => !NON_SEMANTIC_INPUT_KEYS.has(key)));
     return hashToolValue({ toolName, toolInput: semantic });
@@ -258,7 +272,7 @@ export function guardrailActionReviewService(db: Db) {
           source: "guardrails",
           agentAction: true,
           tool: input.toolName,
-          arguments: input.toolInput,
+          arguments: safeToolInput(input.toolInput),
           argumentsHash: input.argumentsHash,
           agentId: input.agentId,
           runId: input.runId,
@@ -285,7 +299,8 @@ export function guardrailActionReviewService(db: Db) {
     toolName: string;
     toolInput: unknown;
   }): Promise<ActionReviewResult> {
-    const { companyId, agentId, runId, toolName, toolInput } = input;
+    const { companyId, agentId, runId, toolName } = input;
+    const toolInput = safeToolInput(input.toolInput);
     if (isReadOnlyAction(toolName, toolInput)) return { decision: "allow", reason: null, source: "read_only" };
 
     const argumentsHash = actionFingerprint(toolName, toolInput);

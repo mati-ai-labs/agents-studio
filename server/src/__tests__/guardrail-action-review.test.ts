@@ -31,6 +31,12 @@ describe("actionFingerprint", () => {
     expect(a).toBe(b);
     expect(a).not.toBe(c);
   });
+
+  it("does not depend on (or store) the credential typed into a command", () => {
+    const withKey = actionFingerprint("Bash", { command: "curl -X POST $API/x -H 'Authorization: Bearer pcp_cd6d59e6921167a4da7ddb9d091c7520f60122e5446998b9'" });
+    const otherKey = actionFingerprint("Bash", { command: "curl -X POST $API/x -H 'Authorization: Bearer pcp_0000000000000000000000000000000000000000000000'" });
+    expect(withKey).toBe(otherKey);
+  });
 });
 
 describe("isReadOnlyAction", () => {
