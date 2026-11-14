@@ -50,6 +50,7 @@ import { PluginSettings } from "./pages/PluginSettings";
 import { AdapterManager } from "./pages/AdapterManager";
 import { Connectors } from "./pages/Connectors";
 import { Guardrails } from "./pages/Guardrails";
+import { Evals } from "./pages/Evals";
 import CeoChat from "./pages/CeoChat";
 import { PluginPage } from "./pages/PluginPage";
 import { OrgChart } from "./pages/OrgChart";
@@ -83,6 +84,7 @@ function boardRoutes() {
       <Route path="company/settings/secrets" element={<RestrictedOperatorGate><Secrets /></RestrictedOperatorGate>} />
       <Route path="company/settings/connectors" element={<RestrictedOperatorGate><Connectors /></RestrictedOperatorGate>} />
       <Route path="company/settings/guardrails" element={<RestrictedOperatorGate><Guardrails /></RestrictedOperatorGate>} />
+      <Route path="company/settings/evals" element={<RestrictedOperatorGate><Evals /></RestrictedOperatorGate>} />
       <Route path="chat" element={<CeoChat />} />
       <Route path="skills/*" element={<RestrictedOperatorGate><CompanySkills /></RestrictedOperatorGate>} />
       <Route path="connectors" element={<RestrictedOperatorGate><Connectors /></RestrictedOperatorGate>} />

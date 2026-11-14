@@ -156,6 +156,10 @@ export const queryKeys = {
   sidebarBadges: (companyId: string) => ["sidebar-badges", companyId] as const,
   inboxDismissals: (companyId: string) => ["inbox-dismissals", companyId] as const,
   activity: (companyId: string) => ["activity", companyId] as const,
+  evals: {
+    results: (companyId: string, scenarioId?: string) => ["eval-results", companyId, scenarioId ?? null] as const,
+    cohorts: (companyId: string, thresholdDays: number) => ["eval-agent-cohorts", companyId, thresholdDays] as const,
+  },
   guardrails: {
     policies: (companyId: string) => ["guardrail-policies", companyId] as const,
     violations: (companyId: string) => ["guardrail-violations", companyId] as const,

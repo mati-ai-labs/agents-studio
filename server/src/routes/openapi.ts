@@ -5195,6 +5195,15 @@ registry.registerPath({
 });
 
 registry.registerPath({
+  method: "post",
+  path: "/api/companies/{companyId}/evals/classifier-run",
+  tags: ["evals"],
+  summary: "Run the guardrail classifier benchmark now (board only; spends provider tokens) and preview the company's own rules",
+  request: { params: z.object({ companyId: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 409: r.conflict },
+});
+
+registry.registerPath({
   method: "get",
   path: "/api/guardrails/agent-context",
   tags: ["guardrails"],

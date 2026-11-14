@@ -38,6 +38,8 @@ export const EVAL_CHECK_KINDS = [
   "guardrail_fired",
   "guardrail_not_fired",
   "bystander_config_unchanged",
+  /** One case of the guardrail classifier benchmark (stored results only; not a scenario check). */
+  "classifier_case",
 ] as const;
 export type EvalCheckKind = (typeof EVAL_CHECK_KINDS)[number];
 

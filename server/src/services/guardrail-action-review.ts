@@ -203,6 +203,11 @@ export const defaultClassifier: ClassifierFn = async (call) => {
 
 let classifier: ClassifierFn = defaultClassifier;
 /** Tests only. */
+/** The classifier in use (the default, or a test stand-in). */
+export function activeGuardrailClassifier(): ClassifierFn {
+  return classifier;
+}
+
 export function setGuardrailClassifierForTests(fn: ClassifierFn | null) {
   classifier = fn ?? defaultClassifier;
 }

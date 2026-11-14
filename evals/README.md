@@ -104,7 +104,7 @@ export OPENAI_API_KEY=sk-...            # OpenAI direct
 |---|---|---|---|
 | `pnpm evals:run` | A **scripted stand-in** (no model) that performs a fixed list of steps | The **control plane**: comments are stored, tool policies fire, runs finish and are recorded. It cannot tell you whether a real agent behaves well. | Free, deterministic — CI |
 | `pnpm evals:run -- --live [--model <id>]` | A **real claude_local agent** (the adapter prod runs) on a real studio server, with the guardrail hook | **Real agent behaviour** on the `live-*` scenarios: does it leave other agents' config alone, avoid unapproved sub-issues, keep PII out of comments, and still get normal work done under the rules | Tokens on the provider in your env |
-| `pnpm evals:classifier [-- --repeat 3]` | The **real guardrail classifier** prod uses to review agent actions | Accuracy on a labelled set (`evals/classifier/cases.json`): misses (should stop, allowed), false stops (normal work blocked), deny/approval mix-ups | A few thousand tokens |
+| `pnpm evals:classifier [-- --repeat 3]` | The **real guardrail classifier** prod uses to review agent actions | Accuracy on a labelled set (`server/src/evals/classifier-cases.ts`): misses (should stop, allowed), false stops (normal work blocked), deny/approval mix-ups | A few thousand tokens |
 
 Live scenarios (`"mode": "live"`) can seed plain-English guardrail rules (`seedGuardrailRules`) and a `bystanderAgent` the task tempts the agent to modify, and use checks that read what the agent actually did: `bystander_config_unchanged`, `child_issues_at_most`, `approval_requested`, `guardrail_fired`, `guardrail_not_fired`.
 
