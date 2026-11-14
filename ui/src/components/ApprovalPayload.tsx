@@ -167,9 +167,22 @@ export function GuardrailActionPayload({ payload }: { payload: Record<string, un
     }
     if (argsText.length > 2_000) argsText = `${argsText.slice(0, 2_000)}…`;
   }
+  const request =
+    typeof payload.request === "object" && payload.request !== null ? (payload.request as Record<string, unknown>) : null;
+  const execution =
+    typeof payload.execution === "object" && payload.execution !== null ? (payload.execution as Record<string, unknown>) : null;
   return (
     <div className="mt-3 space-y-1.5 text-sm">
+      {payload.studioAction === true ? <PayloadField label="Agent asks to" value={firstNonEmptyString(payload.summary)} /> : null}
       <PayloadField label="Tool" value={tool} />
+      {request ? <PayloadField label="Request" value={`${String(request.method ?? "")} ${String(request.path ?? "")}`} /> : null}
+      {execution ? (
+        <div className="rounded-md bg-muted/40 px-3 py-2 text-xs">
+          {execution.executed
+            ? `Carried out${execution.created ? `: ${String(execution.created)}` : ""}.`
+            : `Approved, but carrying it out failed: ${String(execution.error ?? "unknown error")}`}
+        </div>
+      ) : null}
       <PayloadField label="Policy" value={policy} />
       <PayloadField label="Checked at" value={stage} />
       {argsText ? (

@@ -12,6 +12,8 @@ import {
   GuardrailSimulationResults,
   draftToPolicyPayload,
   type PolicyDraft,
+  approvalPresetDraft,
+  validateDraft,
 } from "./Guardrails";
 
 const listPoliciesMock = vi.hoisted(() => vi.fn());
@@ -1053,3 +1055,23 @@ describe("Guardrails", () => {
     });
   });
 });
+
+describe("approval preset for agent decisions", () => {
+  it("builds a valid require_approval policy over the studio actions", () => {
+    const draft = approvalPresetDraft();
+    const validation = validateDraft(draft);
+    expect(validation.fieldErrors).toEqual({});
+    expect(validation.payload).not.toBeNull();
+    const payload = draftToPolicyPayload(draft);
+    expect(payload).toMatchObject({
+      stage: "action",
+      kind: "restricted_action",
+      action: "require_approval",
+      matcher: { kind: "restricted_action" },
+    });
+    expect((payload.matcher as { toolNames: string[] }).toolNames).toEqual(
+      expect.arrayContaining(["paperclip:issue.create", "paperclip:issue.create_subissue", "paperclip:agent.update"]),
+    );
+  });
+});
+

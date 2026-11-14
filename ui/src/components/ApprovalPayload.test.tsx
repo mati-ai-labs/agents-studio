@@ -109,5 +109,30 @@ describe("ApprovalPayloadRenderer", () => {
     expect(approvalLabel("guardrail_action", { toolName: "x" })).toBe("Guardrail");
     act(() => root.unmount());
   });
+
+  it("shows the parked studio request and what happened after approval", () => {
+    const root = createRoot(container);
+    act(() => {
+      root.render(
+        <ApprovalPayloadRenderer
+          type="guardrail_action"
+          payload={{
+            studioAction: true,
+            summary: "CEO wants to: Create a sub-issue.",
+            tool: "paperclip:issue.create_subissue",
+            policyName: "Agents need my approval for decisions",
+            stage: "action",
+            request: { method: "POST", path: "/companies/c1/issues", body: { title: "x" } },
+            arguments: { title: "x", parentId: "p1" },
+            execution: { executed: true, status: 201, created: 'LCH-500 "x"' },
+          }}
+        />,
+      );
+    });
+    expect(container.textContent).toContain("CEO wants to: Create a sub-issue.");
+    expect(container.textContent).toContain("POST /companies/c1/issues");
+    expect(container.textContent).toContain('Carried out: LCH-500 "x"');
+    act(() => root.unmount());
+  });
 });
 

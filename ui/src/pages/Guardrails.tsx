@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "@/lib/router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  STUDIO_GUARDED_ACTIONS,
   GUARDRAIL_MATCHER_FIELDS,
   GUARDRAIL_POLICY_ACTIONS,
   GUARDRAIL_POLICY_KINDS,
@@ -160,6 +161,33 @@ export type PolicyDraft = {
   /** Matcher fields the policy applies to. Empty means every field. */
   fields: string[];
 };
+
+/** Studio actions a "needs my approval" policy covers by default. */
+export const DEFAULT_APPROVAL_ACTIONS = [
+  "paperclip:issue.create",
+  "paperclip:issue.create_subissue",
+  "paperclip:agent.create",
+  "paperclip:agent.update",
+  "paperclip:agent.update_permissions",
+  "paperclip:agent.lifecycle",
+  "paperclip:agent.create_key",
+  "paperclip:routine.create",
+];
+
+/** A ready-made policy: agents must get board approval before taking studio decisions. */
+export function approvalPresetDraft(): PolicyDraft {
+  return {
+    ...emptyDraft(),
+    name: "Agents need my approval for decisions",
+    description:
+      "Agents cannot create issues or sub-issues, hire or change agents, change permissions, or create routines without board approval. Approving carries out exactly the request.",
+    stage: "action",
+    kind: "restricted_action",
+    action: "require_approval",
+    severity: "high",
+    toolNames: DEFAULT_APPROVAL_ACTIONS.join("\n"),
+  };
+}
 
 function emptyDraft(): PolicyDraft {
   return {
@@ -713,6 +741,30 @@ export function GuardrailPolicyEditor({
         </div>
       ) : draft.kind === "restricted_action" ? (
         <div className="space-y-4">
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-medium">Agent actions in the studio</legend>
+            <p className="text-xs text-muted-foreground">
+              Applies when an agent does this through the studio. Board users are never gated.
+            </p>
+            <div className="grid gap-1.5 sm:grid-cols-2">
+              {STUDIO_GUARDED_ACTIONS.map((entry) => {
+                const selected = splitLines(draft.toolNames).includes(entry.action);
+                return (
+                  <label key={entry.action} className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={(event) => {
+                        const current = splitLines(draft.toolNames).filter((name) => name !== entry.action);
+                        set("toolNames", (event.target.checked ? [...current, entry.action] : current).join("\n"));
+                      }}
+                    />
+                    {entry.label}
+                  </label>
+                );
+              })}
+            </div>
+          </fieldset>
           <div className="space-y-2">
             <Label htmlFor="guardrail-tool-names">Tool names</Label>
             <Textarea
@@ -1306,6 +1358,14 @@ export function Guardrails() {
     setEditing(true);
   }
 
+  function startApprovalPreset() {
+    setDraft(approvalPresetDraft());
+    setFieldErrors({});
+    setFormError(null);
+    setSelectedPolicyId(null);
+    setEditing(true);
+  }
+
   function startEdit(policy: GuardrailPolicy) {
     setDraft(draftFromPolicy(policy));
     setFieldErrors({});
@@ -1379,7 +1439,10 @@ export function Guardrails() {
               <span className="text-xs text-muted-foreground">
                 {filteredPolicies.length} of {policies.length}
               </span>
-              <Button size="sm" onClick={startCreate} className="ml-auto">
+              <Button size="sm" variant="outline" onClick={startApprovalPreset} className="ml-auto">
+                Require my approval for agent decisions
+              </Button>
+              <Button size="sm" onClick={startCreate}>
                 <Plus className="mr-1.5 h-3.5 w-3.5" />
                 New policy
               </Button>
