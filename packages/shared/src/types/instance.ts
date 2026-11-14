@@ -34,6 +34,14 @@ export const MAX_PROVIDER_QUOTA_RESERVE_PERCENT = 50;
 export const DEFAULT_MIN_FREE_MEMORY_MB = 1536;
 export const MAX_MIN_FREE_MEMORY_MB = 65536;
 
+/**
+ * Per-run memory cap: stop an agent run whose processes (the agent CLI and
+ * everything it starts) together use more than this many MB, so one runaway
+ * run cannot push the whole server into the kernel OOM killer. 0 turns it off.
+ */
+export const DEFAULT_MAX_AGENT_RUN_MEMORY_MB = 3072;
+export const MAX_MAX_AGENT_RUN_MEMORY_MB = 65536;
+
 export const DEFAULT_BACKUP_RETENTION: BackupRetentionPolicy = {
   dailyDays: 7,
   weeklyWeeks: 4,
@@ -69,6 +77,8 @@ export interface InstanceGeneralSettings {
   providerQuotaReservePercent: number;
   /** Hold new runs while host available memory is below this (MB). 0 = off. */
   minFreeMemoryMb: number;
+  /** Stop a single agent run whose processes use more than this (MB). 0 = off. */
+  maxAgentRunMemoryMb: number;
   /**
    * Execution policy. Absent/`"any"` = unrestricted; `"kubernetes"` forces the
    * Kubernetes sandbox provider and denies local/ssh execution.
