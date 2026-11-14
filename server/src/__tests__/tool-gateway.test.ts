@@ -30,6 +30,7 @@ import {
   toolMcpGateways,
   toolMcpGatewayTokens,
   toolPolicies,
+  guardrailPolicies,
   toolProfileBindings,
   toolProfileEntries,
   toolProfiles,
@@ -652,6 +653,91 @@ describeEmbeddedPostgres("tool gateway acceptance", () => {
         .send({ jsonrpc: "2.0", id: 6, method: "tools/list" })
         .expect(401);
       expect(revoked.body.error.data.reasonCode).toBe("gateway_token_revoked");
+    } finally {
+      await remote.close();
+    }
+  });
+
+  it("applies guardrail redact policies to an MCP tool result's text content parts", async () => {
+    const company = await createCompany(db);
+    await db.insert(guardrailPolicies).values({
+      companyId: company.id,
+      scopeType: "company",
+      scopeId: null,
+      stage: "input",
+      name: "No emails or codenames in tool results",
+      kind: "pii",
+      matcher: { kind: "pii", piiTypes: ["email"] },
+      action: "redact",
+      severity: "medium",
+      enabled: true,
+      version: 1,
+    });
+    await db.insert(guardrailPolicies).values({
+      companyId: company.id,
+      scopeType: "company",
+      scopeId: null,
+      stage: "input",
+      name: "Codename",
+      kind: "regex",
+      matcher: { kind: "regex", patterns: ["Project Falcon"] },
+      action: "redact",
+      severity: "medium",
+      enabled: true,
+      version: 1,
+    });
+    const remote = await startFakeRemoteMcpServer(async () => ({
+      body: {
+        jsonrpc: "2.0",
+        id: "test",
+        result: { content: [{ type: "text", text: "owner asha@example.com runs Project Falcon" }] },
+      },
+    }));
+    try {
+      const { application, connection, catalogEntry } = await createRemoteMcpTool(db, company.id, {
+        url: remote.url,
+        applicationKey: "guardrail-result-app",
+        toolName: "read_note",
+        title: "Read note",
+        riskLevel: "read",
+      });
+      const gatewayToolName = expectedConnectedToolName({
+        applicationKey: application.applicationKey,
+        connectionId: connection.id,
+        toolName: catalogEntry.toolName,
+      });
+      const [profile] = await db.insert(toolProfiles).values({
+        companyId: company.id,
+        profileKey: `guardrail-result-${randomUUID()}`,
+        name: `Guardrail result ${randomUUID()}`,
+        defaultAction: "deny",
+      }).returning();
+      await db.insert(toolProfileEntries).values({
+        companyId: company.id,
+        profileId: profile.id,
+        selectorType: "tool_name",
+        effect: "include",
+        toolName: gatewayToolName,
+      });
+      const gateway = createTestToolGatewayService(db);
+      const created = await gateway.createNamedGateway({
+        companyId: company.id,
+        body: { name: "Guarded reader", profileId: profile.id },
+      });
+      const token = await gateway.createNamedGatewayToken({
+        companyId: company.id,
+        gatewayId: created.id,
+        body: { name: "Reader" },
+      });
+      const called = await request(createGatewayRouteApp(db, gateway))
+        .post(`/api/tool-gateway/gateways/${created.id}/mcp`)
+        .set("authorization", `Bearer ${token.token}`)
+        .send({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: gatewayToolName, arguments: { key: "a" } } })
+        .expect(200);
+      const text = called.body.result.content[0].text as string;
+      expect(text).not.toContain("asha@example.com");
+      expect(text).not.toContain("Project Falcon");
+      expect(text).toContain("owner");
     } finally {
       await remote.close();
     }

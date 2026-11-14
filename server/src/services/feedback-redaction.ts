@@ -10,9 +10,9 @@ export type FeedbackRedactionState = {
   counts: Map<string, number>;
 };
 
-type PatternReplacement = string | ((match: string, ...args: string[]) => string);
+export type PatternReplacement = string | ((match: string, ...args: string[]) => string);
 
-type RedactionPattern = {
+export type RedactionPattern = {
   kind: string;
   regex: RegExp;
   replacement: PatternReplacement;
@@ -21,7 +21,7 @@ type RedactionPattern = {
 const SECRET_ASSIGNMENT_RE =
   /\b(api[-_]?key|access[-_]?token|auth(?:_?token)?|authorization|bearer|secret|passwd|password|credential|jwt|private[-_]?key|cookie|connectionstring)\s*[:=]\s*([^\s,;]+)/gi;
 
-const FREE_TEXT_PATTERNS: RedactionPattern[] = [
+export const FREE_TEXT_PATTERNS: RedactionPattern[] = [
   {
     kind: "pem_block",
     regex: /-----BEGIN [^-]+-----[\s\S]+?-----END [^-]+-----/g,

@@ -114,6 +114,11 @@ import {
   evaluateSkillPolicySchema,
   replaceSkillPolicySchema,
   updateInboxAgentPolicySchema,
+  // Guardrail policies
+  createGuardrailPolicySchema,
+  updateGuardrailPolicySchema,
+  simulateGuardrailPoliciesSchema,
+  guardrailViolationsQuerySchema,
   // Issue tree
   createIssueTreeHoldSchema,
   previewIssueTreeControlSchema,
@@ -144,6 +149,7 @@ import {
   archiveCompanyMemberSchema,
   updateMemberPermissionsSchema,
   updateUserCompanyAccessSchema,
+  updateUserRestrictedOperatorSchema,
   // Instance settings
   patchInstanceGeneralSettingsSchema,
   patchInstanceExperimentalSettingsSchema,
@@ -3274,6 +3280,14 @@ registry.registerPath({
 
 registry.registerPath({
   method: "get",
+  path: "/api/instance/run-slots",
+  tags: ["instance"],
+  summary: "Live instance-wide run slot usage",
+  responses: { 200: r.ok(), 401: r.unauthorized },
+});
+
+registry.registerPath({
+  method: "get",
   path: "/api/instance/settings/experimental",
   tags: ["instance"],
   summary: "Get experimental instance settings",
@@ -4985,6 +4999,92 @@ registry.registerPath({
   responses: { 200: r.ok(), 401: r.unauthorized },
 });
 
+// ─── Guardrail policies ───────────────────────────────────────────────────────
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/guardrail-policies",
+  tags: ["guardrails"],
+  summary: "List the guardrail policies that apply to a company",
+  request: { params: z.object({ companyId: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/guardrail-policies/{policyId}",
+  tags: ["guardrails"],
+  summary: "Get a guardrail policy",
+  request: { params: z.object({ companyId: z.string(), policyId: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/companies/{companyId}/guardrail-policies",
+  tags: ["guardrails"],
+  summary: "Create a guardrail policy",
+  request: {
+    params: z.object({ companyId: z.string() }),
+    body: jsonBody(createGuardrailPolicySchema),
+  },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 422: r.unprocessable },
+});
+
+registry.registerPath({
+  method: "patch",
+  path: "/api/companies/{companyId}/guardrail-policies/{policyId}",
+  tags: ["guardrails"],
+  summary: "Update a guardrail policy",
+  request: {
+    params: z.object({ companyId: z.string(), policyId: z.string() }),
+    body: jsonBody(updateGuardrailPolicySchema),
+  },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound, 422: r.unprocessable },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/api/companies/{companyId}/guardrail-policies/{policyId}",
+  tags: ["guardrails"],
+  summary: "Delete a guardrail policy",
+  request: { params: z.object({ companyId: z.string(), policyId: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/companies/{companyId}/guardrail-policies/simulate",
+  tags: ["guardrails"],
+  summary: "Simulate the guardrail policies against a sample subject",
+  request: {
+    params: z.object({ companyId: z.string() }),
+    body: jsonBody(simulateGuardrailPoliciesSchema),
+  },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 422: r.unprocessable },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/guardrail-violations",
+  tags: ["guardrails"],
+  summary: "List the recorded guardrail violations for a company",
+  request: {
+    params: z.object({ companyId: z.string() }),
+    query: guardrailViolationsQuerySchema,
+  },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/companies/{companyId}/guardrail-violations/{violationId}/resolve",
+  tags: ["guardrails"],
+  summary: "Mark a guardrail violation as resolved",
+  request: { params: z.object({ companyId: z.string(), violationId: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+});
+
 // ─── Instance database backups ────────────────────────────────────────────────
 
 registry.registerPath({
@@ -5256,6 +5356,18 @@ registry.registerPath({
   request: {
     params: z.object({ userId: z.string() }),
     body: jsonBody(updateUserCompanyAccessSchema),
+  },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "put",
+  path: "/api/admin/users/{userId}/restricted-operator",
+  tags: ["admin"],
+  summary: "Set the restricted-operator flag for a user (admin)",
+  request: {
+    params: z.object({ userId: z.string() }),
+    body: jsonBody(updateUserRestrictedOperatorSchema),
   },
   responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden },
 });
