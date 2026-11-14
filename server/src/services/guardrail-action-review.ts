@@ -113,9 +113,12 @@ Judge the action's real effect (e.g. a curl POST that creates an issue, a git pu
 
 /** Default classifier: an Anthropic-compatible Messages call on the agents' own provider (MiniMax on prod). */
 export const defaultClassifier: ClassifierFn = async (call) => {
+  // A dedicated classifier provider can be set; otherwise the agents' own
+  // Anthropic-compatible provider (MiniMax on prod) is used.
   const provider = resolveClaudeProviderEnv();
-  const baseUrl = provider.baseUrl ?? "https://api.anthropic.com";
-  if (!provider.token) throw new Error("no provider key for the guardrail classifier");
+  const baseUrl = process.env.GUARDRAIL_CLASSIFIER_BASE_URL ?? provider.baseUrl ?? "https://api.anthropic.com";
+  const token = process.env.GUARDRAIL_CLASSIFIER_API_KEY ?? provider.token;
+  if (!token) throw new Error("no provider key for the guardrail classifier");
   const model = process.env.GUARDRAIL_CLASSIFIER_MODEL ?? process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5";
   const rulesText = call.rules
     .map((rule) => `- id=${rule.id} [${rule.action === "block" ? "block" : "require_approval"}] ${rule.name}: ${rule.rule}`)
@@ -126,8 +129,8 @@ export const defaultClassifier: ClassifierFn = async (call) => {
     headers: {
       "content-type": "application/json",
       "anthropic-version": "2023-06-01",
-      "x-api-key": provider.token,
-      authorization: `Bearer ${provider.token}`,
+      "x-api-key": token,
+      authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({
       model,
