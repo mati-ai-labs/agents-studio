@@ -10,7 +10,7 @@
  *   pnpm evals:run                     run every scenario, write the report
  *   pnpm evals:run -- --scenario <id>  run one scenario
  *   pnpm evals:run -- --json <path>    also write the report as JSON
- *   pnpm evals:run -- --live [--model <id>] [--scenario <id>]
+ *   pnpm evals:run -- --live [--model <id>] [--scenario <id>] [--allowed-tools "Bash(curl:*)"]
  *                                      run the `live` scenarios with a REAL
  *                                      claude_local agent on a real studio
  *                                      server (uses the provider in your env;
@@ -87,6 +87,12 @@ interface CliOptions {
   live: boolean;
   /** Model for the live agent (default: the CLI's configured model). */
   model?: string;
+  /**
+   * Live agents run like prod (dangerouslySkipPermissions) unless this is set:
+   * then permissions stay on and only these tools are pre-approved, e.g.
+   * "Bash(curl:*)" for a local run.
+   */
+  allowedTools?: string;
 }
 
 function parseArgs(argv: string[]): CliOptions {
@@ -107,6 +113,9 @@ function parseArgs(argv: string[]): CliOptions {
       options.live = true;
     } else if (arg === "--model") {
       options.model = argv[index + 1];
+      index += 1;
+    } else if (arg === "--allowed-tools") {
+      options.allowedTools = argv[index + 1];
       index += 1;
     }
   }
@@ -391,9 +400,10 @@ async function startStudioServer(databaseUrl: string): Promise<{ apiBase: string
   const logPath = path.join(home, "server.log");
   const { createWriteStream } = await import("node:fs");
   const log = createWriteStream(logPath);
+  // Same tsx the evals:run script itself uses.
   const child: ChildProcess = spawn(
-    path.join(repoRoot, "node_modules", ".bin", "tsx"),
-    ["src/index.ts"],
+    process.execPath,
+    [path.join(repoRoot, "cli", "node_modules", "tsx", "dist", "cli.mjs"), "src/index.ts"],
     {
       cwd: path.join(repoRoot, "server"),
       env: {
@@ -460,7 +470,12 @@ async function runLive(options: CliOptions, allScenarios: EvalScenarioFile[]) {
         apiBase: server.apiBase,
         companyId,
         bundle,
-        adapterConfig: options.model ? { model: options.model } : {},
+        adapterConfig: {
+          ...(options.model ? { model: options.model } : {}),
+          ...(options.allowedTools
+            ? { dangerouslySkipPermissions: false, extraArgs: ["--allowedTools", options.allowedTools] }
+            : {}),
+        },
       });
       const recorded = await recordScenarioResult(db, { companyId, scenario, bundle, result: run.result, runId: run.seeded.runId });
       reports.push({

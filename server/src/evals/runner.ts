@@ -631,7 +631,7 @@ export async function runScenarioLive(options: LiveScenarioRunOptions): Promise<
     error = cause instanceof Error ? cause.message : String(cause);
   }
 
-  const trace = await collectTrace(db, { companyId, issueId, runId, bystander });
+  const trace = await collectTrace(db, { companyId, issueId, runId, bystander, agentId });
   const checks: EvalCheckDetail[] = scenario.checks.map((spec) => evaluateCheck(spec, trace));
   const score = scoreChecks(checks);
   const result: EvalScenarioResult = {

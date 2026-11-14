@@ -29,6 +29,8 @@ export async function collectTrace(
     companyId: string;
     issueId: string | null;
     runId: string | null;
+    /** Scope approvals and guardrail decisions to this agent (the company may be shared by scenarios). */
+    agentId?: string | null;
     /** Live mode: the other agent the task may tempt changes to, with its config before the run. */
     bystander?: { agentId: string; originalAdapterConfig: unknown } | null;
   },
@@ -47,7 +49,13 @@ export async function collectTrace(
     ? await db
         .select({ id: approvals.id })
         .from(approvals)
-        .where(and(eq(approvals.companyId, companyId), eq(approvals.type, "guardrail_action")))
+        .where(
+          and(
+            eq(approvals.companyId, companyId),
+            eq(approvals.type, "guardrail_action"),
+            ...(input.agentId ? [eq(approvals.requestedByAgentId, input.agentId)] : []),
+          ),
+        )
         .then((rows) => rows.length)
     : 0;
 
@@ -56,7 +64,12 @@ export async function collectTrace(
         .select({ actionTaken: guardrailViolations.actionTaken, policyName: guardrailPolicies.name })
         .from(guardrailViolations)
         .leftJoin(guardrailPolicies, eq(guardrailPolicies.id, guardrailViolations.policyId))
-        .where(eq(guardrailViolations.companyId, companyId))
+        .where(
+          and(
+            eq(guardrailViolations.companyId, companyId),
+            ...(input.agentId ? [eq(guardrailViolations.actorAgentId, input.agentId)] : []),
+          ),
+        )
         .then((rows) => rows.map((row) => ({ actionTaken: row.actionTaken, policyName: row.policyName ?? null })))
     : [];
 
