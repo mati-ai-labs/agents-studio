@@ -1,5 +1,15 @@
 import type { Db } from "@paperclipai/db";
-import { listSlackChannels, listSlackMembers, type SlackChannel, type SlackMember } from "./slack.js";
+import { slackThreadBindings } from "@paperclipai/db";
+import { and, eq } from "drizzle-orm";
+import { connectorRegistryService } from "./connector-registry.js";
+import {
+  listSlackChannels,
+  listSlackMembers,
+  readSlackWorkspaceMetadata,
+  resolveSlackTokenCompanyId,
+  type SlackChannel,
+  type SlackMember,
+} from "./slack.js";
 
 /**
  * Helpers for the agent-facing Slack tool: agents look up workspace members and
@@ -97,4 +107,72 @@ export function resetAgentSlackMessagingState() {
   memberCache.clear();
   channelCache.clear();
   sendLog.clear();
+}
+
+/**
+ * Slack only delivers thread replies (message.channels) for public channels
+ * the bot has joined. Private channels would need groups:history, which the
+ * app does not request.
+ */
+export function slackChannelDeliversReplies(channel: SlackChannel): boolean {
+  return !channel.isPrivate && channel.isMember && !channel.isArchived;
+}
+
+export type AgentSlackThreadBindingResult =
+  | { status: "bound" | "already_bound"; bindingId: string; issueId: string }
+  | { status: "bound_to_other_issue"; issueId: string }
+  | { status: "skipped"; reason: string };
+
+/**
+ * Bind the Slack thread an agent just posted into (its own message, or the
+ * root of the thread it replied in) to the issue, so replies in that thread
+ * come back as issue comments through the normal inbound path. Never throws:
+ * the Slack message is already out, so a failed binding must not fail the post.
+ */
+export async function bindAgentSlackThread(
+  db: Db,
+  input: { companyId: string; issueId: string; channel: SlackChannel; threadTs: string },
+): Promise<AgentSlackThreadBindingResult> {
+  try {
+    const tokenCompanyId = await resolveSlackTokenCompanyId(db, input.companyId, input.channel.id);
+    const connector = await connectorRegistryService(db).getByType(tokenCompanyId, "slack", null);
+    if (!connector) return { status: "skipped", reason: "no Slack connector" };
+    const workspace = readSlackWorkspaceMetadata(connector.config);
+    if (!workspace) return { status: "skipped", reason: "Slack connector has no workspace metadata" };
+    const now = new Date();
+    const inserted = await db
+      .insert(slackThreadBindings)
+      .values({
+        companyId: input.companyId,
+        connectorId: connector.id,
+        issueId: input.issueId,
+        workspaceId: workspace.workspaceId,
+        channelId: input.channel.id,
+        channelName: input.channel.name,
+        threadTs: input.threadTs,
+        rootEventId: `agent_post:${workspace.workspaceId}:${input.channel.id}:${input.threadTs}`,
+        source: "agent_post",
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoNothing()
+      .returning();
+    if (inserted[0]) return { status: "bound", bindingId: inserted[0].id, issueId: input.issueId };
+    const existing = await db
+      .select()
+      .from(slackThreadBindings)
+      .where(and(
+        eq(slackThreadBindings.workspaceId, workspace.workspaceId),
+        eq(slackThreadBindings.channelId, input.channel.id),
+        eq(slackThreadBindings.threadTs, input.threadTs),
+      ))
+      .then((rows) => rows[0] ?? null);
+    if (!existing) return { status: "skipped", reason: "binding conflict" };
+    if (existing.issueId === input.issueId) {
+      return { status: "already_bound", bindingId: existing.id, issueId: existing.issueId };
+    }
+    return { status: "bound_to_other_issue", issueId: existing.issueId };
+  } catch (error) {
+    return { status: "skipped", reason: error instanceof Error ? error.message : String(error) };
+  }
 }

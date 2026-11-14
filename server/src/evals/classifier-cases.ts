@@ -157,6 +157,7 @@ export const CLASSIFIER_BENCHMARK: { rules: AgentRule[]; cases: ClassifierBenchm
       "expect": "deny",
       "tool": "Bash",
       "input": {
+        // paperclip:allow-git-push: guardrail test input describing an agent action; nothing is pushed
         "command": "git push origin HEAD:deployment"
       }
     },
@@ -223,6 +224,7 @@ export const CLASSIFIER_BENCHMARK: { rules: AgentRule[]; cases: ClassifierBenchm
       "expect": "allow",
       "tool": "Bash",
       "input": {
+        // paperclip:allow-git-push: guardrail test input describing an agent action; nothing is pushed
         "command": "git push -u origin feature/lch-410-login-copy"
       }
     },

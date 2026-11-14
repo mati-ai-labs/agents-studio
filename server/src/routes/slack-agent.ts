@@ -11,11 +11,13 @@ import { logActivity } from "../services/activity-log.js";
 import {
   AGENT_SLACK_MAX_MENTIONS,
   AGENT_SLACK_MAX_TEXT_LENGTH,
+  bindAgentSlackThread,
   buildAgentSlackMessage,
   canPostToSlackChannel,
   getCachedSlackChannels,
   getCachedSlackMembers,
   resolveSlackChannel,
+  slackChannelDeliversReplies,
   takeAgentSlackSendSlot,
 } from "../services/slack-agent-messaging.js";
 
@@ -37,6 +39,13 @@ const SLACK_ERROR_HINTS: Record<string, string> = {
   is_archived: "That channel is archived.",
   missing_scope: "The Slack app is missing a scope for this action. A human must update the Slack app and reconnect.",
   slack_not_connected: "Slack is not connected for this company.",
+};
+
+const REPLY_TRACKING_HINTS: Record<string, string> = {
+  not_bound: "The message was posted, but replies will not reach the issue (thread binding failed). Check the issue for replies manually.",
+  thread_belongs_to_other_issue: "That thread already belongs to another issue; replies go there.",
+  private_channel_unsupported: "Replies in private channels do not reach the issue. Prefer a public channel the bot is in.",
+  bot_not_in_channel: "The bot is not a member of this channel, so Slack does not send it replies. Ask a human to invite the bot, or prefer a channel with repliesForwarded: true.",
 };
 
 function toHttpError(error: unknown): unknown {
@@ -85,7 +94,11 @@ export function slackAgentRoutes(db: Db): Router {
       res.json({
         channels: channels
           .filter((channel) => !channel.isArchived)
-          .map((channel) => ({ ...channel, canPost: canPostToSlackChannel(channel) })),
+          .map((channel) => ({
+            ...channel,
+            canPost: canPostToSlackChannel(channel),
+            repliesForwarded: slackChannelDeliversReplies(channel),
+          })),
       });
     } catch (error) {
       next(toHttpError(error));
@@ -170,6 +183,26 @@ export function slackAgentRoutes(db: Db): Router {
         threadTs: input.threadTs ?? null,
       });
 
+      // Bind the thread to the issue so replies come back as issue comments.
+      const rootTs = input.threadTs ?? posted.messageTs;
+      const binding = issue && rootTs
+        ? await bindAgentSlackThread(db, { companyId, issueId: issue.id, channel, threadTs: rootTs })
+        : null;
+      const repliesForwarded = Boolean(
+        binding && (binding.status === "bound" || binding.status === "already_bound") && slackChannelDeliversReplies(channel),
+      );
+      const replyTracking = !issue
+        ? "no_issue"
+        : !binding || binding.status === "skipped"
+          ? "not_bound"
+          : binding.status === "bound_to_other_issue"
+            ? "thread_belongs_to_other_issue"
+            : repliesForwarded
+              ? "active"
+              : channel.isPrivate
+                ? "private_channel_unsupported"
+                : "bot_not_in_channel";
+
       await logActivity(db, {
         companyId,
         actorType: actor.actorType,
@@ -188,6 +221,9 @@ export function slackAgentRoutes(db: Db): Router {
           threadTs: input.threadTs ?? null,
           mentionUserIds,
           text: input.text.slice(0, 500),
+          replyTracking,
+          ...(binding && "bindingId" in binding ? { bindingId: binding.bindingId } : {}),
+          ...(binding?.status === "skipped" ? { bindingSkippedReason: binding.reason } : {}),
         },
       });
 
@@ -196,6 +232,8 @@ export function slackAgentRoutes(db: Db): Router {
         channelName: channel.name,
         messageTs: posted.messageTs,
         mentionUserIds,
+        replyTracking,
+        ...(issue && replyTracking !== "active" ? { replyTrackingHint: REPLY_TRACKING_HINTS[replyTracking] } : {}),
       });
     } catch (error) {
       next(toHttpError(error));

@@ -174,7 +174,7 @@ Answer with JSON only: {"decision":"allow"|"deny"|"approval","ruleId":"<id of th
 - "allow": the action does not break any rule. Most actions are allowed; do not invent violations.
 - "deny": the action clearly breaks a rule whose enforcement is "block". Explain which rule and what the agent should do instead.
 - "approval": the action breaks a rule whose enforcement is "require_approval" (a human must approve it first).
-Judge the action's real effect (e.g. a curl POST that creates an issue, a git push, a config change), not keywords. When unsure, allow.
+Judge the action's real effect (e.g. a curl POST that creates an issue, a push to a git remote, a config change), not keywords. When unsure, allow.
 - If the input has "scriptContents", the command runs those script files: judge what the scripts do, not just the command line.
 - Writing or editing a file whose content performs an action that breaks a rule (e.g. a script that changes an agent's config) counts as that action: treat it the same as running it.`;
 

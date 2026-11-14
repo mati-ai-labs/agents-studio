@@ -58,6 +58,7 @@ describe("isReadOnlyAction", () => {
     expect(isReadOnlyAction("Bash", { command: "curl -s -X POST $API/api/companies/c/issues -d '{}'" })).toBe(false);
     expect(isReadOnlyAction("Bash", { command: "curl -s $API/x --data '{\"a\":1}'" })).toBe(false);
     expect(isReadOnlyAction("Bash", { command: "gh pr merge 48 --squash" })).toBe(false);
+    // paperclip:allow-git-push: guardrail test input describing an agent action; nothing is pushed
     expect(isReadOnlyAction("Bash", { command: "git push origin main" })).toBe(false);
     expect(isReadOnlyAction("Bash", { command: "echo hi > file.txt" })).toBe(false);
     expect(isReadOnlyAction("Bash", { command: "npm test" })).toBe(false);
@@ -189,6 +190,7 @@ describeEmbeddedPostgres("guardrail action review", () => {
     setGuardrailClassifierForTests(async () => {
       throw new Error("provider down");
     });
+    // paperclip:allow-git-push: guardrail test input describing an agent action; nothing is pushed
     expect(await review().reviewAction({ companyId, agentId, runId: null, ...bash("git push origin x") })).toMatchObject({ decision: "allow", source: "error" });
   });
 
