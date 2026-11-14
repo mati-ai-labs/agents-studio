@@ -781,4 +781,56 @@ describe("LiveUpdatesProvider coalesced list invalidation", () => {
     flush();
     expect(invalidations).toEqual([{ queryKey: queryKeys.dashboard("company-1") }]);
   });
+
+  it("batches the guardrail violations feed with the other company-wide lists", () => {
+    vi.useFakeTimers();
+    try {
+      const { invalidations, queryClient } = makeClient();
+      const { client, dispose } = __liveUpdatesTestUtils.createCoalescingInvalidationClient(
+        queryClient as never,
+        "company-1",
+        2000,
+      );
+
+      void client.invalidateQueries({ queryKey: queryKeys.guardrails.violations("company-1") });
+      void client.invalidateQueries({ queryKey: queryKeys.guardrails.violations("company-1") });
+      expect(invalidations).toEqual([]);
+
+      vi.advanceTimersByTime(2000);
+      expect(invalidations).toEqual([
+        { queryKey: queryKeys.guardrails.violations("company-1") },
+      ]);
+      dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("LiveUpdatesProvider guardrail violation invalidation", () => {
+  it("refreshes the violations feed when a guardrail decision is logged", () => {
+    const invalidations: unknown[] = [];
+    const queryClient = {
+      invalidateQueries: (input: unknown) => {
+        invalidations.push(input);
+      },
+      getQueryData: () => undefined,
+    };
+
+    __liveUpdatesTestUtils.invalidateActivityQueries(
+      queryClient as never,
+      "company-1",
+      {
+        entityType: "guardrail_violation",
+        entityId: "violation-1",
+        action: "guardrail.violation",
+        details: null,
+      },
+      { userId: null, agentId: null },
+    );
+
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.guardrails.violations("company-1"),
+    });
+  });
 });

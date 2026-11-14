@@ -162,3 +162,5 @@ export { pluginWebhookDeliveries } from "./plugin_webhooks.js";
 export { chatSessions, chatMessages } from "./chat.js";
 export { pluginLogs } from "./plugin_logs.js";
 export { searchfundNiches, searchfundScores, searchfundFiles, searchfundSheets, searchfundLayerDocs } from "./searchfund.js";
+export { guardrailPolicies } from "./guardrail_policies.js";
+export { guardrailViolations } from "./guardrail_violations.js";

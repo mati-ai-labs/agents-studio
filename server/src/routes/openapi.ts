@@ -114,6 +114,11 @@ import {
   evaluateSkillPolicySchema,
   replaceSkillPolicySchema,
   updateInboxAgentPolicySchema,
+  // Guardrail policies
+  createGuardrailPolicySchema,
+  updateGuardrailPolicySchema,
+  simulateGuardrailPoliciesSchema,
+  guardrailViolationsQuerySchema,
   // Issue tree
   createIssueTreeHoldSchema,
   previewIssueTreeControlSchema,
@@ -5101,6 +5106,111 @@ registry.registerPath({
     })),
   },
   responses: { 200: r.ok(), 401: r.unauthorized },
+});
+
+// ─── Guardrail policies ───────────────────────────────────────────────────────
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/guardrail-policies",
+  tags: ["guardrails"],
+  summary: "List the guardrail policies that apply to a company",
+  request: { params: z.object({ companyId: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/guardrail-policies/{policyId}",
+  tags: ["guardrails"],
+  summary: "Get a guardrail policy",
+  request: { params: z.object({ companyId: z.string(), policyId: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/companies/{companyId}/guardrail-policies",
+  tags: ["guardrails"],
+  summary: "Create a guardrail policy",
+  request: {
+    params: z.object({ companyId: z.string() }),
+    body: jsonBody(createGuardrailPolicySchema),
+  },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 422: r.unprocessable },
+});
+
+registry.registerPath({
+  method: "patch",
+  path: "/api/companies/{companyId}/guardrail-policies/{policyId}",
+  tags: ["guardrails"],
+  summary: "Update a guardrail policy",
+  request: {
+    params: z.object({ companyId: z.string(), policyId: z.string() }),
+    body: jsonBody(updateGuardrailPolicySchema),
+  },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound, 422: r.unprocessable },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/api/companies/{companyId}/guardrail-policies/{policyId}",
+  tags: ["guardrails"],
+  summary: "Delete a guardrail policy",
+  request: { params: z.object({ companyId: z.string(), policyId: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/companies/{companyId}/guardrail-policies/simulate",
+  tags: ["guardrails"],
+  summary: "Simulate the guardrail policies against a sample subject",
+  request: {
+    params: z.object({ companyId: z.string() }),
+    body: jsonBody(simulateGuardrailPoliciesSchema),
+  },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 422: r.unprocessable },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/guardrail-violations",
+  tags: ["guardrails"],
+  summary: "List the recorded guardrail violations for a company",
+  request: {
+    params: z.object({ companyId: z.string() }),
+    query: guardrailViolationsQuerySchema,
+  },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/companies/{companyId}/guardrail-violations/{violationId}/resolve",
+  tags: ["guardrails"],
+  summary: "Mark a guardrail violation as resolved",
+  request: { params: z.object({ companyId: z.string(), violationId: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/guardrails/agent-context",
+  tags: ["guardrails"],
+  summary: "Agent only: the company's plain-English guardrail rules, injected into the agent's context at session start",
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/guardrails/review-action",
+  tags: ["guardrails"],
+  summary: "Agent only: review an action the agent is about to take (allow, deny with reason, or hold for approval)",
+  request: {
+    body: jsonBody(z.object({ toolName: z.string(), toolInput: z.unknown().optional() })),
+  },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden },
 });
 
 // ─── Instance database backups ────────────────────────────────────────────────

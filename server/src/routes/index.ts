@@ -17,6 +17,7 @@ export { goalRoutes } from "./goals.js";
 export { approvalRoutes } from "./approvals.js";
 export { secretRoutes } from "./secrets.js";
 export { toolAccessRoutes } from "./tool-access.js";
+export { guardrailPolicyRoutes } from "./guardrail-policies.js";
 export { smokeLabRoutes } from "./smoke-lab.js";
 export { costRoutes } from "./costs.js";
 export { activityRoutes } from "./activity.js";

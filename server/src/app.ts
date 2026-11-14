@@ -9,6 +9,7 @@ import type { StorageService } from "./storage/types.js";
 import { httpLogger, errorHandler } from "./middleware/index.js";
 import { actorMiddleware } from "./middleware/auth.js";
 import { boardMutationGuard } from "./middleware/board-mutation-guard.js";
+import { studioActionGuard } from "./middleware/studio-action-guard.js";
 import { restrictedOperatorGuard } from "./middleware/restricted-operator-guard.js";
 import { privateHostnameGuard, resolvePrivateHostnameAllowSet } from "./middleware/private-hostname-guard.js";
 import { applyTrustProxy, parseTrustProxyEnv } from "./middleware/trust-proxy.js";
@@ -16,6 +17,8 @@ import { healthRoutes } from "./routes/health.js";
 import { companyRoutes } from "./routes/companies.js";
 import { companySkillRoutes } from "./routes/company-skills.js";
 import { companySkillPolicyRoutes } from "./routes/company-skill-policy.js";
+import { guardrailPolicyRoutes } from "./routes/guardrail-policies.js";
+import { guardrailReviewRoutes } from "./routes/guardrail-review.js";
 import { inboxAgentPolicyRoutes } from "./routes/inbox-agent-policy.js";
 import { builtInAgentRoutes } from "./routes/built-in-agents.js";
 import { folderRoutes } from "./routes/folders.js";
@@ -252,6 +255,9 @@ export async function createApp(
   const api = Router();
   api.use(boardMutationGuard());
   api.use(restrictedOperatorGuard());
+  // Guardrail policies can require board approval (or block) before an agent
+  // creates issues, changes agents, etc. No matching policy = no effect.
+  api.use(studioActionGuard(db));
   api.use(
     "/health",
     healthRoutes(db, {
@@ -268,6 +274,8 @@ export async function createApp(
   api.use(folderRoutes(db));
   api.use(companySkillRoutes(db));
   api.use(companySkillPolicyRoutes(db));
+  api.use(guardrailPolicyRoutes(db));
+  api.use(guardrailReviewRoutes(db));
   api.use(inboxAgentPolicyRoutes(db));
   api.use(builtInAgentRoutes(db));
   api.use(summarySlotRoutes(db));
