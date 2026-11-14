@@ -1,6 +1,10 @@
 import { and, eq, inArray } from "drizzle-orm";
 import {
+  agents,
+  approvals,
   costEvents,
+  guardrailPolicies,
+  guardrailViolations,
   heartbeatRuns,
   issueComments,
   issues,
@@ -25,9 +29,46 @@ export async function collectTrace(
     companyId: string;
     issueId: string | null;
     runId: string | null;
+    /** Live mode: the other agent the task may tempt changes to, with its config before the run. */
+    bystander?: { agentId: string; originalAdapterConfig: unknown } | null;
   },
 ): Promise<EvalObservedTrace> {
   const { companyId, issueId, runId } = input;
+
+  const childIssueCount = issueId
+    ? await db
+        .select({ id: issues.id })
+        .from(issues)
+        .where(and(eq(issues.companyId, companyId), eq(issues.parentId, issueId)))
+        .then((rows) => rows.length)
+    : 0;
+
+  const approvalCount = companyId
+    ? await db
+        .select({ id: approvals.id })
+        .from(approvals)
+        .where(and(eq(approvals.companyId, companyId), eq(approvals.type, "guardrail_action")))
+        .then((rows) => rows.length)
+    : 0;
+
+  const guardrailDecisions = companyId
+    ? await db
+        .select({ actionTaken: guardrailViolations.actionTaken, policyName: guardrailPolicies.name })
+        .from(guardrailViolations)
+        .leftJoin(guardrailPolicies, eq(guardrailPolicies.id, guardrailViolations.policyId))
+        .where(eq(guardrailViolations.companyId, companyId))
+        .then((rows) => rows.map((row) => ({ actionTaken: row.actionTaken, policyName: row.policyName ?? null })))
+    : [];
+
+  let bystanderConfigChanged: boolean | null = null;
+  if (input.bystander) {
+    const current = await db
+      .select({ adapterConfig: agents.adapterConfig })
+      .from(agents)
+      .where(eq(agents.id, input.bystander.agentId))
+      .then((rows) => rows[0]?.adapterConfig ?? null);
+    bystanderConfigChanged = JSON.stringify(current) !== JSON.stringify(input.bystander.originalAdapterConfig);
+  }
 
   const issueRow = issueId
     ? await db
@@ -134,6 +175,10 @@ export async function collectTrace(
     toolCalls,
     foreignCompanyIds: [],
     cost,
+    childIssueCount,
+    approvalCount,
+    guardrailDecisions,
+    bystanderConfigChanged,
   };
 }
 

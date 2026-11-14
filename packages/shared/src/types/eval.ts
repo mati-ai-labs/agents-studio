@@ -33,6 +33,11 @@ export const EVAL_CHECK_KINDS = [
   "company_boundary_respected",
   "policy_fired",
   "policy_not_fired",
+  "child_issues_at_most",
+  "approval_requested",
+  "guardrail_fired",
+  "guardrail_not_fired",
+  "bystander_config_unchanged",
 ] as const;
 export type EvalCheckKind = (typeof EVAL_CHECK_KINDS)[number];
 
@@ -102,7 +107,18 @@ export type EvalCheckSpec =
   | { kind: "run_succeeded"; name: string; detail?: string }
   | { kind: "company_boundary_respected"; name: string; detail?: string }
   | { kind: "policy_fired"; name: string; policyId: string; detail?: string }
-  | { kind: "policy_not_fired"; name: string; policyId: string; detail?: string };
+  | { kind: "policy_not_fired"; name: string; policyId: string; detail?: string }
+  // Live-mode checks: what a real agent did to the studio.
+  /** The agent created at most `max` sub-issues under the scenario issue. */
+  | { kind: "child_issues_at_most"; name: string; max: number; detail?: string }
+  /** A board approval was requested (a guardrail held an action). */
+  | { kind: "approval_requested"; name: string; detail?: string }
+  /** A guardrail decision was recorded (optionally for a named rule). */
+  | { kind: "guardrail_fired"; name: string; policyName?: string; detail?: string }
+  /** No guardrail decision was recorded: normal work was not blocked or held. */
+  | { kind: "guardrail_not_fired"; name: string; detail?: string }
+  /** The scenario's bystander agent's config is unchanged after the run. */
+  | { kind: "bystander_config_unchanged"; name: string; detail?: string };
 
 /** A tool call observed during an evaluated run. */
 export interface EvalObservedToolCall {
@@ -135,6 +151,14 @@ export interface EvalObservedTrace {
   toolCalls: EvalObservedToolCall[];
   /** Company ids observed outside the scenario's company, if any. */
   foreignCompanyIds: string[];
+  /** Sub-issues created under the scenario issue. */
+  childIssueCount?: number;
+  /** guardrail_action approvals created for the scenario company. */
+  approvalCount?: number;
+  /** Guardrail decisions recorded during the scenario. */
+  guardrailDecisions?: Array<{ actionTaken: string; policyName: string | null }>;
+  /** Whether the bystander agent's adapter config changed (null when there is none). */
+  bystanderConfigChanged?: boolean | null;
   cost: {
     costCents: number;
     inputTokens: number;
@@ -181,7 +205,24 @@ export interface EvalScenarioFile {
     conditions?: Record<string, unknown> | null;
     config?: Record<string, unknown> | null;
   };
-  /** The scripted agent's actions, in order. */
+  /**
+   * `scripted` (default): a deterministic stand-in plays the agent — a test of
+   * the control plane, not of the agent. `live`: a real agent (claude_local,
+   * the same adapter prod runs) works the task against a real studio server.
+   */
+  mode?: "scripted" | "live";
+  /**
+   * Plain-English guardrail rules seeded before the run (live mode). They are
+   * enforced by the agent-side guardrail hook exactly as on prod.
+   */
+  seedGuardrailRules?: Array<{ name: string; rule: string; action: "block" | "require_approval" }>;
+  /**
+   * A second agent in the company the task may tempt the agent to modify.
+   * `{{bystanderAgentId}}`, `{{issueId}}` and `{{companyId}}` in the task text
+   * are replaced with the seeded ids.
+   */
+  bystanderAgent?: { name: string; role?: string; adapterConfig?: Record<string, unknown> };
+  /** The scripted agent's actions, in order (empty for live scenarios). */
   script: EvalAgentAction[];
   checks: EvalCheckSpec[];
   /** Policies this scenario is labelled for, used for precision/recall. */

@@ -10,8 +10,17 @@
  *   pnpm evals:run                     run every scenario, write the report
  *   pnpm evals:run -- --scenario <id>  run one scenario
  *   pnpm evals:run -- --json <path>    also write the report as JSON
+ *   pnpm evals:run -- --live [--model <id>] [--scenario <id>]
+ *                                      run the `live` scenarios with a REAL
+ *                                      claude_local agent on a real studio
+ *                                      server (uses the provider in your env;
+ *                                      costs tokens)
  */
-import { writeFile } from "node:fs/promises";
+import { spawn, type ChildProcess } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -36,6 +45,7 @@ import {
   createEvalCompany,
   recordScenarioResult,
   runScenario,
+  runScenarioLive,
   withSchedulingGatesDisabled,
 } from "../server/src/evals/runner.js";
 import { evalService } from "../server/src/services/evals.js";
@@ -73,10 +83,14 @@ interface CliOptions {
   scenarioId?: string;
   bundleIds: string[];
   jsonPath?: string;
+  /** Run the `live` scenarios with a real claude_local agent instead of the scripted ones. */
+  live: boolean;
+  /** Model for the live agent (default: the CLI's configured model). */
+  model?: string;
 }
 
 function parseArgs(argv: string[]): CliOptions {
-  const options: CliOptions = { bundleIds: BUNDLES.map((bundle) => bundle.id) };
+  const options: CliOptions = { bundleIds: BUNDLES.map((bundle) => bundle.id), live: false };
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -88,6 +102,11 @@ function parseArgs(argv: string[]): CliOptions {
       index += 1;
     } else if (arg === "--json") {
       options.jsonPath = argv[index + 1];
+      index += 1;
+    } else if (arg === "--live") {
+      options.live = true;
+    } else if (arg === "--model") {
+      options.model = argv[index + 1];
       index += 1;
     }
   }
@@ -133,7 +152,13 @@ interface HarnessReport {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
 
-  const allScenarios = loadScenarios(scenariosDir);
+  const allScenarios = loadScenarios(scenariosDir).filter((scenario) =>
+    options.live ? scenario.mode === "live" : scenario.mode !== "live",
+  );
+  if (options.live) {
+    await runLive(options, allScenarios);
+    return;
+  }
   const scenarios = options.scenarioId
     ? allScenarios.filter((scenario) => scenario.id === options.scenarioId)
     : allScenarios;
@@ -339,6 +364,136 @@ async function main() {
       process.exitCode = 1;
     }
   } finally {
+    await tempDb.cleanup();
+  }
+}
+
+async function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      server.close(() => resolve(port));
+    });
+  });
+}
+
+/**
+ * Start a real studio server process on the harness database, so a live agent
+ * gets exactly what it gets on prod: the API, its skills, and the guardrail
+ * hook. Provider env (ANTHROPIC_*, GUARDRAIL_CLASSIFIER_*) is passed through.
+ */
+async function startStudioServer(databaseUrl: string): Promise<{ apiBase: string; stop: () => void; logPath: string }> {
+  const port = await freePort();
+  const home = await mkdtemp(path.join(os.tmpdir(), "paperclip-eval-home-"));
+  const logPath = path.join(home, "server.log");
+  const { createWriteStream } = await import("node:fs");
+  const log = createWriteStream(logPath);
+  const child: ChildProcess = spawn(
+    path.join(repoRoot, "node_modules", ".bin", "tsx"),
+    ["src/index.ts"],
+    {
+      cwd: path.join(repoRoot, "server"),
+      env: {
+        ...process.env,
+        DATABASE_URL: databaseUrl,
+        PORT: String(port),
+        PAPERCLIP_HOME: home,
+        PAPERCLIP_INSTANCE_ID: "evals",
+        PAPERCLIP_DEPLOYMENT_MODE: "local_trusted",
+        PAPERCLIP_MIGRATION_AUTO_APPLY: "true",
+        PAPERCLIP_MIGRATION_PROMPT: "never",
+        PAPERCLIP_AGENT_JWT_SECRET: process.env.PAPERCLIP_AGENT_JWT_SECRET ?? randomBytes(24).toString("hex"),
+        PAPERCLIP_API_URL: `http://127.0.0.1:${port}`,
+        SERVE_UI: "false",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  child.stdout?.pipe(log);
+  child.stderr?.pipe(log);
+  const apiBase = `http://127.0.0.1:${port}`;
+  const deadline = Date.now() + 120_000;
+  for (;;) {
+    try {
+      const res = await fetch(`${apiBase}/api/health`);
+      if (res.ok) break;
+    } catch {
+      // not up yet
+    }
+    if (child.exitCode !== null) throw new Error(`studio server exited (${child.exitCode}); see ${logPath}`);
+    if (Date.now() > deadline) throw new Error(`studio server did not start; see ${logPath}`);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  return { apiBase, stop: () => child.kill("SIGTERM"), logPath };
+}
+
+/** Live mode: real agents, real server, same checks. */
+async function runLive(options: CliOptions, allScenarios: EvalScenarioFile[]) {
+  const scenarios = options.scenarioId
+    ? allScenarios.filter((scenario) => scenario.id === options.scenarioId)
+    : allScenarios;
+  if (scenarios.length === 0) throw new Error("no live scenarios found");
+
+  const tempDb = await startEmbeddedPostgresTestDatabase("paperclip-evals-live-");
+  const db = createDb(tempDb.connectionString);
+  const server = await startStudioServer(tempDb.connectionString);
+  console.log(`Live mode: ${scenarios.length} scenario(s), real claude_local agent, studio server at ${server.apiBase}`);
+  console.log(`  server log: ${server.logPath}`);
+  const bundle: EvalBundle = {
+    id: `live.claude_local${options.model ? `.${options.model}` : ""}`,
+    adapter: "claude_local",
+    model: options.model ?? "default",
+    promptTemplate: "prod",
+    skills: [],
+    flags: {},
+  };
+  const reports: ScenarioReport[] = [];
+  try {
+    const companyId = await createEvalCompany(db, { name: "Eval Harness (live)" });
+    for (const scenario of scenarios) {
+      const run = await runScenarioLive({
+        db,
+        scenario,
+        apiBase: server.apiBase,
+        companyId,
+        bundle,
+        adapterConfig: options.model ? { model: options.model } : {},
+      });
+      const recorded = await recordScenarioResult(db, { companyId, scenario, bundle, result: run.result, runId: run.seeded.runId });
+      reports.push({
+        scenarioId: scenario.id,
+        description: scenario.description,
+        violationClass: scenario.violationClass?.class ?? null,
+        bundleId: bundle.id,
+        status: run.result.status,
+        score: run.result.score,
+        checks: run.result.checks.map((check) => ({ kind: check.kind, name: check.name, passed: check.passed, detail: check.detail })),
+        costCents: run.result.efficiency.costCents,
+        inputTokens: run.result.efficiency.inputTokens,
+        outputTokens: run.result.efficiency.outputTokens,
+        error: run.result.error,
+        recordedRowId: recorded.id,
+      });
+      const status = run.result.status === "passed" ? "PASS" : run.result.status === "error" ? "ERROR" : "FAIL";
+      console.log(`  ${status} ${scenario.id} score=${run.result.score.toFixed(2)} tokens=${run.result.efficiency.inputTokens + run.result.efficiency.outputTokens}`);
+      for (const check of run.result.checks) {
+        console.log(`       ${check.passed ? "ok  " : "FAIL"} ${check.name} — ${check.detail}`);
+      }
+      if (run.result.error) console.log(`       error: ${run.result.error}`);
+    }
+    if (options.jsonPath) {
+      await writeFile(path.resolve(repoRoot, options.jsonPath), `${JSON.stringify({ generatedAt: new Date().toISOString(), mode: "live", scenarios: reports }, null, 2)}\n`, "utf8");
+      console.log(`Wrote ${options.jsonPath}`);
+    }
+    const passed = reports.filter((report) => report.status === "passed").length;
+    console.log("");
+    console.log(`Live result: ${passed}/${reports.length} scenario(s) passed.`);
+    if (passed < reports.length) process.exitCode = 1;
+  } finally {
+    server.stop();
     await tempDb.cleanup();
   }
 }

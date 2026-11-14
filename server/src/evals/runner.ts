@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import {
   agents,
   companies,
+  guardrailPolicies,
   costEvents,
   heartbeatRuns,
   instanceSettings,
@@ -499,4 +500,160 @@ export async function listHarnessIssues(db: Db, companyId: string) {
     .select({ id: issues.id, status: issues.status })
     .from(issues)
     .where(and(eq(issues.companyId, companyId)));
+}
+
+
+// ---------------------------------------------------------------------------
+// Live mode: a real agent against a real studio server
+// ---------------------------------------------------------------------------
+
+export interface LiveScenarioRunOptions {
+  db: Db;
+  scenario: EvalScenarioFile;
+  /** Base URL of a running studio server that shares `db` (e.g. http://127.0.0.1:3299). */
+  apiBase: string;
+  companyId: string;
+  /** adapterConfig for the agent under test (claude_local). */
+  adapterConfig?: Record<string, unknown>;
+  /** How long the real agent may take. Default 10 minutes. */
+  timeoutMs?: number;
+  bundle?: EvalBundle;
+}
+
+function fillTemplate(text: string, values: Record<string, string>): string {
+  return text.replace(/\{\{(\w+)\}\}/g, (match, key: string) => values[key] ?? match);
+}
+
+/**
+ * Run one scenario with a real agent.
+ *
+ * The agent is a claude_local agent — the adapter prod runs — woken through
+ * the studio's own API on a real server process, so it gets the same prompt,
+ * skills, guardrail hook and API as on prod. The checks then score what it
+ * actually did to the studio: comments, sub-issues, approvals, guardrail
+ * decisions, and whether it touched another agent's config.
+ */
+export async function runScenarioLive(options: LiveScenarioRunOptions): Promise<ScenarioRun> {
+  const { db, scenario, apiBase, companyId } = options;
+  const bundle = options.bundle ?? scenario.bundle;
+  const timeoutMs = options.timeoutMs ?? 10 * 60_000;
+  const evaluatedAt = new Date();
+  let runId: string | null = null;
+  let error: string | null = null;
+  const agentId = randomUUID();
+  const issueId = randomUUID();
+  let bystander: { agentId: string; originalAdapterConfig: unknown } | null = null;
+
+  try {
+    if (scenario.bystanderAgent) {
+      const bystanderId = randomUUID();
+      const adapterConfig = scenario.bystanderAgent.adapterConfig ?? { model: "MiniMax-M3.1-Flash", effort: "low" };
+      await db.insert(agents).values({
+        id: bystanderId,
+        companyId,
+        name: scenario.bystanderAgent.name,
+        role: scenario.bystanderAgent.role ?? "engineer",
+        // Paused so the studio never runs it during the scenario.
+        status: "paused",
+        adapterType: "claude_local",
+        adapterConfig,
+        runtimeConfig: {},
+        permissions: {},
+      });
+      bystander = { agentId: bystanderId, originalAdapterConfig: adapterConfig };
+    }
+
+    const values = { issueId, companyId, agentId, bystanderAgentId: bystander?.agentId ?? "" };
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: scenario.task.agentName ?? `Eval Agent ${scenario.id}`,
+      role: scenario.task.agentRole ?? "engineer",
+      status: "idle",
+      adapterType: "claude_local",
+      adapterConfig: { dangerouslySkipPermissions: true, ...(options.adapterConfig ?? {}) },
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: fillTemplate(scenario.task.title, values),
+      description: fillTemplate(scenario.task.description, values),
+      status: "todo",
+      priority: "medium",
+      assigneeAgentId: agentId,
+    });
+    for (const rule of scenario.seedGuardrailRules ?? []) {
+      const existing = await db
+        .select({ id: guardrailPolicies.id })
+        .from(guardrailPolicies)
+        .where(and(eq(guardrailPolicies.companyId, companyId), eq(guardrailPolicies.name, rule.name)))
+        .then((rows) => rows[0] ?? null);
+      if (existing) continue;
+      await db.insert(guardrailPolicies).values({
+        companyId,
+        scopeType: "company",
+        scopeId: null,
+        stage: "action",
+        name: rule.name,
+        kind: "rule",
+        matcher: { kind: "rule", rule: rule.rule },
+        action: rule.action,
+        severity: "high",
+        enabled: true,
+        version: 1,
+      });
+    }
+
+    const response = await fetch(`${apiBase.replace(/\/+$/, "")}/api/agents/${agentId}/heartbeat/invoke`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reason: "eval_scenario", payload: { issueId } }),
+    });
+    if (!response.ok) throw new Error(`waking the agent failed: HTTP ${response.status} ${await response.text()}`);
+    const woken = (await response.json()) as { id?: string } | null;
+    runId = typeof woken?.id === "string" ? woken.id : null;
+
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const rows = await db
+        .select({ id: heartbeatRuns.id, status: heartbeatRuns.status })
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.agentId, agentId));
+      const run = (runId ? rows.find((row) => row.id === runId) : null) ?? rows[0] ?? null;
+      if (run) runId = run.id;
+      if (run && ["succeeded", "failed", "cancelled", "interrupted", "timed_out"].includes(run.status)) break;
+      if (Date.now() > deadline) throw new Error(`the agent did not finish within ${Math.round(timeoutMs / 1000)}s`);
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  } catch (cause) {
+    error = cause instanceof Error ? cause.message : String(cause);
+  }
+
+  const trace = await collectTrace(db, { companyId, issueId, runId, bystander });
+  const checks: EvalCheckDetail[] = scenario.checks.map((spec) => evaluateCheck(spec, trace));
+  const score = scoreChecks(checks);
+  const result: EvalScenarioResult = {
+    scenarioId: scenario.id,
+    bundleId: bundle.id,
+    status: error ? "error" : score === 1 ? "passed" : "failed",
+    score,
+    checks,
+    efficiency: {
+      costCents: trace.cost.costCents,
+      inputTokens: trace.cost.inputTokens,
+      outputTokens: trace.cost.outputTokens,
+      cachedInputTokens: trace.cost.cachedInputTokens,
+    },
+    policyLabels: [],
+    observedPolicyFires: collectObservedPolicyFires(trace),
+    error,
+    evaluatedAt: evaluatedAt.toISOString(),
+  };
+  return {
+    result,
+    seeded: { companyId, agentId, issueId, runId, seededPolicyId: null },
+    violationClass: scenario.violationClass,
+  };
 }
