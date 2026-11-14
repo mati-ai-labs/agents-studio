@@ -11,7 +11,14 @@ import {
   guardrailPolicies,
   guardrailViolations,
 } from "@paperclipai/db";
-import { guardrailService, evaluatePolicy, type EffectivePolicy } from "../services/guardrails.js";
+import {
+  guardrailService,
+  evaluatePolicy,
+  mapToolResultText,
+  redactWithMatchers,
+  toolResultText,
+  type EffectivePolicy,
+} from "../services/guardrails.js";
 import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
@@ -453,5 +460,29 @@ describeEmbeddedPostgres("guardrail service", () => {
       { stage: "action" },
     );
     expect(decision.action).toBe("allow");
+  });
+});
+
+describe("tool result text helpers", () => {
+  const mcp = { content: [{ type: "text", text: "key sk-live-123 for asha@example.com" }, { type: "image", data: "xx" }], isError: false };
+
+  it("reads text from strings, { content: string } and MCP content parts", () => {
+    expect(toolResultText("plain")).toBe("plain");
+    expect(toolResultText({ content: "wrapped" })).toBe("wrapped");
+    expect(toolResultText(mcp)).toBe("key sk-live-123 for asha@example.com");
+    expect(toolResultText({ rows: [{ email: "a@b.co" }] })).toContain("a@b.co");
+    expect(toolResultText(null)).toBe("");
+  });
+
+  it("redacts inside the result's own shape", () => {
+    const redact = (text: string) =>
+      redactWithMatchers([{ kind: "pii", piiTypes: ["email"] }, { kind: "regex", patterns: ["sk-live-\\d+"] }], text);
+    const out = mapToolResultText(mcp, redact) as typeof mcp;
+    expect(out.content[0]).toMatchObject({ type: "text" });
+    expect((out.content[0] as { text: string }).text).not.toMatch(/asha@example\.com|sk-live-123/);
+    expect(out.content[1]).toEqual({ type: "image", data: "xx" });
+    expect(out.isError).toBe(false);
+    expect(mapToolResultText({ content: "mail a@b.co" }, redact)).toEqual({ content: expect.not.stringContaining("a@b.co") });
+    expect(mapToolResultText({ rows: [{ email: "a@b.co" }] }, redact)).toEqual({ rows: [{ email: expect.not.stringContaining("a@b.co") }] });
   });
 });

@@ -56,7 +56,7 @@ import { secretService } from "./secrets.js";
 import { mcpHttpRequestHeaders, parseMcpHttpResponseBody } from "./mcp-http.js";
 import { assertPublicRemoteHttpEndpoint, parseRemoteHttpEndpoint } from "./remote-http-endpoint-guard.js";
 import { toolAccessPolicyService } from "./tool-access-policy.js";
-import { guardrailService } from "./guardrails.js";
+import { guardrailService, mapToolResultText, redactWithMatchers, toolResultText } from "./guardrails.js";
 import { issueThreadInteractionService } from "./issue-thread-interactions.js";
 import {
   createToolRuntimeSupervisor,
@@ -5909,12 +5909,9 @@ export function createToolGatewayService(
         const guardedResult = await guardrails.enforceToolResult({
           companyId: session.companyId,
           toolName: tool.name,
-          content:
-            typeof resultValidation.value === "string"
-              ? resultValidation.value
-              : typeof (resultValidation.value as { content?: unknown })?.content === "string"
-                ? (resultValidation.value as { content: string }).content
-                : "",
+          // MCP tools return `{ content: [{ type: "text", text }] }`; reading
+          // only string results would hand the policies an empty string.
+          content: toolResultText(resultValidation.value),
           agentId: session.agentId,
           runId: session.runId,
           projectId: session.projectId,
@@ -6033,9 +6030,13 @@ export function createToolGatewayService(
             },
           );
         }
+        // Redact inside the result's own shape (string, `{ content }`, or MCP
+        // content parts) so the agent gets the redacted text, not the original.
         const finalResult =
-          guardedResult.outcome === "redact" && typeof resultValidation.value === "string"
-            ? guardedResult.content
+          guardedResult.outcome === "redact"
+            ? mapToolResultText(resultValidation.value, (text) =>
+                redactWithMatchers(guardedResult.decision.redactionMatchers, text),
+              )
             : resultValidation.value;
         await db
           .update(toolInvocations)

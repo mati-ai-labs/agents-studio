@@ -4543,7 +4543,16 @@ export async function buildPaperclipWakePayload(input: {
   // A `block` decision drops the offending text; a `redact` decision replaces
   // the matched span.
   const wakeGuardrails = guardrailService(input.db);
-  async function guardrailWakeText(text: string, subjectKind: GuardrailViolationSubjectKind) {
+  // A board user's own words are never withheld from the agent (a policy must
+  // not silence a human): for them a `block` is downgraded to redaction only.
+  // Other text (agent-, system- or Slack-authored) that is blocked is replaced
+  // by a visible marker so the agent knows something was withheld instead of
+  // reading an empty comment.
+  async function guardrailWakeText(
+    text: string,
+    subjectKind: GuardrailViolationSubjectKind,
+    options: { humanAuthored?: boolean } = {},
+  ) {
     if (!text) return text;
     const result = await wakeGuardrails.applyTextGuardrails(
       {
@@ -4554,11 +4563,19 @@ export async function buildPaperclipWakePayload(input: {
       { stage: "input", violation: { subjectKind } },
     );
     if (result.decision.action === "block") {
+      if (options.humanAuthored) {
+        logger.warn(
+          { companyId: input.companyId, stage: "input", subjectKind },
+          "guardrail policy matched board-user text in the wake payload; kept it (redactions only)",
+        );
+        return result.decision.redactedText ?? text;
+      }
       logger.warn(
         { companyId: input.companyId, stage: "input", subjectKind },
         "guardrail policy blocked wake payload text; the text was withheld",
       );
-      return "";
+      const policyName = result.decision.decisive?.policyName ?? "unknown";
+      return `[withheld by guardrail policy "${policyName}"]`;
     }
     return result.text;
   }
@@ -4577,7 +4594,9 @@ export async function buildPaperclipWakePayload(input: {
 
     const deletedAt = row.deletedAt ?? null;
     const safeRow = deletedAt || input.exposeLowTrustRaw ? row : sanitizeQuarantinedCommentForHigherTrust(row);
-    const fullBody = deletedAt ? "" : await guardrailWakeText(safeRow.body, "wake_context");
+    const fullBody = deletedAt
+      ? ""
+      : await guardrailWakeText(safeRow.body, "wake_context", { humanAuthored: Boolean(row.authorUserId) });
     const allowedBodyChars = Math.min(MAX_INLINE_WAKE_COMMENT_BODY_CHARS, remainingBodyChars);
     if (allowedBodyChars <= 0) {
       truncated = true;
@@ -4716,7 +4735,10 @@ export async function buildPaperclipWakePayload(input: {
       taskSource === "ceo_chat" || chatSessionId || chatMessage
         ? {
             sessionId: chatSessionId,
-            message: chatMessage ? await guardrailWakeText(chatMessage, "wake_context") : chatMessage,
+            // The CEO chat message is typed by a board user.
+            message: chatMessage
+              ? await guardrailWakeText(chatMessage, "wake_context", { humanAuthored: true })
+              : chatMessage,
             messageTruncated: chatMessageTruncated,
           }
         : null,

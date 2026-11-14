@@ -231,7 +231,20 @@ describeEmbeddedPostgres("guardrail enforcement points", () => {
   // Input stage: the wake context the agent reads
   // -------------------------------------------------------------------------
 
-  it("withholds a wake comment that matches an input policy", async () => {
+  async function wakeBodyFor(values: Record<string, unknown>) {
+    const comment = await db
+      .insert(issueComments)
+      .values({ companyId, issueId, body: "this is classified material", ...values })
+      .returning();
+    const payload = await buildPaperclipWakePayload({
+      db,
+      companyId,
+      contextSnapshot: { issueId, wakeCommentIds: [comment[0]!.id], wakeReason: "issue_commented" },
+    });
+    return payload?.comments?.[0]?.body ?? null;
+  }
+
+  it("withholds a non-human wake comment that matches a block input policy, with a visible marker", async () => {
     await seed();
     await insertPolicy({
       name: "wake-policy",
@@ -240,30 +253,9 @@ describeEmbeddedPostgres("guardrail enforcement points", () => {
       action: "block",
     });
 
-    const comment = await db
-      .insert(issueComments)
-      .values({
-        companyId,
-        issueId,
-        authorUserId: "board-user",
-        body: "this is classified material",
-      })
-      .returning();
-
-    const payload = await buildPaperclipWakePayload({
-      db,
-      companyId,
-      contextSnapshot: {
-        issueId,
-        wakeCommentIds: [comment[0]!.id],
-        wakeReason: "issue_commented",
-      },
-    });
-
-    // The blocked text is withheld rather than passed to the agent.
-    expect(payload?.comments).toMatchObject([
-      expect.objectContaining({ id: comment[0]!.id, body: "" }),
-    ]);
+    // e.g. a Slack reply or another agent's comment: untrusted input.
+    const body = await wakeBodyFor({ authorType: "system", authorUserId: null });
+    expect(body).toBe('[withheld by guardrail policy "wake-policy"]');
 
     const violations = await db
       .select()
@@ -275,6 +267,39 @@ describeEmbeddedPostgres("guardrail enforcement points", () => {
       actionTaken: "block",
       subjectKind: "wake_context",
     });
+  });
+
+  it("never withholds a board user's own wake comment, even under a block policy", async () => {
+    await seed();
+    await insertPolicy({
+      name: "wake-policy",
+      stage: "input",
+      matcher: { kind: "regex", patterns: ["classified"] },
+      action: "block",
+    });
+
+    expect(await wakeBodyFor({ authorUserId: "board-user" })).toBe("this is classified material");
+  });
+
+  it("still applies redact policies to a board user's wake comment when a block policy also matches", async () => {
+    await seed();
+    await insertPolicy({ name: "block-all", stage: "input", matcher: { kind: "regex", patterns: ["material"] }, action: "block" });
+    await insertPolicy({ name: "redact-word", stage: "input", matcher: { kind: "regex", patterns: ["classified"] }, action: "redact" });
+
+    const body = await wakeBodyFor({ authorUserId: "board-user" });
+    expect(body).not.toContain("classified");
+    expect(body).toContain("material");
+  });
+
+  it("applies every matching redact policy to an agent comment, not only the last one", async () => {
+    await seed();
+    await insertPolicy({ name: "emails", kind: "pii", matcher: { kind: "pii", piiTypes: ["email"] }, action: "redact" });
+    await insertPolicy({ name: "codename", matcher: { kind: "regex", patterns: ["Project Falcon"] }, action: "redact" });
+
+    const comment = await issueService(db).addComment(issueId, "Mail asha@example.com about Project Falcon", { agentId });
+    expect(comment.body).not.toContain("asha@example.com");
+    expect(comment.body).not.toContain("Project Falcon");
+    expect(comment.body).toContain("Mail");
   });
 
   it("redacts a wake comment in place when the policy says redact", async () => {

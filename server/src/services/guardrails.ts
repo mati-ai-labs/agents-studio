@@ -91,8 +91,17 @@ export interface GuardrailDecision {
   decisive: GuardrailMatch | null;
   /** Every policy that matched, ordered most to least severe. */
   matches: GuardrailMatch[];
-  /** The subject text after redaction, when the action was `redact`. */
+  /**
+   * The subject text with every matched `redact` policy applied (not just the
+   * last one), when a `redact` policy matched.
+   */
   redactedText: string | null;
+  /**
+   * Matchers of every `redact` policy that matched, so a caller can apply the
+   * same redaction to text it holds in a different shape (an MCP tool result's
+   * content parts, for instance) via `redactWithMatchers`.
+   */
+  redactionMatchers: Record<string, unknown>[];
 }
 
 export interface GuardrailViolationInput {
@@ -417,6 +426,97 @@ function evaluateSecretMatcher(
   if (patterns.length === 0) return { matched: false, excerpt: "", redactedText: text };
   const result = applyPatterns(text, patterns);
   return { matched: result.matched, excerpt: result.excerpt, redactedText: result.redactedText };
+}
+
+/**
+ * The patterns a text matcher redacts with. `restricted_action` and
+ * `allowlist` matchers do not name a span, so they redact nothing.
+ */
+function matcherRedactionPatterns(matcher: Record<string, unknown>): RegExp[] {
+  const kind = matcher.kind;
+  if (kind === "pii") {
+    const requested = Array.isArray(matcher.piiTypes)
+      ? matcher.piiTypes.filter((value): value is string => typeof value === "string")
+      : [];
+    return patternsForFamilies(requested.length > 0 ? requested : PII_PATTERN_KINDS);
+  }
+  if (kind === "secret") {
+    const requested = Array.isArray(matcher.secretTypes)
+      ? matcher.secretTypes.filter((value): value is string => typeof value === "string")
+      : [];
+    return patternsForFamilies(requested.length > 0 ? requested : SECRET_PATTERN_KINDS);
+  }
+  if (kind === "regex") {
+    const patterns = Array.isArray(matcher.patterns)
+      ? matcher.patterns.filter((value): value is string => typeof value === "string")
+      : [];
+    return patterns
+      .map((pattern) => toSafeRegExp(pattern))
+      .filter((pattern): pattern is RegExp => pattern !== null);
+  }
+  return [];
+}
+
+/**
+ * Applies every given matcher's redaction to `text` in one pass, so two
+ * `redact` policies (say, emails and a codename) both take effect.
+ */
+export function redactWithMatchers(matchers: Record<string, unknown>[], text: string): string {
+  if (!text || matchers.length === 0) return text;
+  const patterns = matchers.flatMap((matcher) => matcherRedactionPatterns(matcher));
+  if (patterns.length === 0) return text;
+  return applyPatterns(text, patterns).redactedText;
+}
+
+/**
+ * The text an agent will read from a tool result. Handles a plain string,
+ * `{ content: string }`, and the MCP shape `{ content: [{ type: "text", text }] }`.
+ * Anything else is stringified so a policy can still match on it.
+ */
+export function toolResultText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (isPlainObject(value)) {
+    const content = value.content;
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      return content
+        .map((part) => (isPlainObject(part) && typeof part.text === "string" ? part.text : ""))
+        .filter((text) => text.length > 0)
+        .join("\n");
+    }
+  }
+  if (value === null || value === undefined) return "";
+  return safeStringify(value);
+}
+
+/**
+ * Rewrites the text inside a tool result, keeping its shape: a string, a
+ * `{ content: string }` object, or MCP text content parts. Other shapes are
+ * rewritten through their JSON form.
+ */
+export function mapToolResultText(value: unknown, transform: (text: string) => string): unknown {
+  if (typeof value === "string") return transform(value);
+  if (isPlainObject(value)) {
+    const content = value.content;
+    if (typeof content === "string") return { ...value, content: transform(content) };
+    if (Array.isArray(content)) {
+      return {
+        ...value,
+        content: content.map((part) =>
+          isPlainObject(part) && typeof part.text === "string" ? { ...part, text: transform(part.text) } : part,
+        ),
+      };
+    }
+  }
+  if (value === null || value === undefined) return value;
+  const json = safeStringify(value);
+  const transformed = transform(json);
+  if (transformed === json) return value;
+  try {
+    return JSON.parse(transformed);
+  } catch {
+    return transformed;
+  }
 }
 
 /**
@@ -769,18 +869,23 @@ export function guardrailService(db: Db) {
       }));
 
     const matches: GuardrailMatch[] = [];
-    let redactedText: string | null = null;
+    const redactionMatchers: Record<string, unknown>[] = [];
 
     for (const entry of policies) {
       const match = evaluatePolicy(entry.policy, subject);
       if (!match) continue;
       matches.push(match);
-      if (entry.policy.action === "redact" && subject.text) {
-        const matcher = isPlainObject(entry.policy.matcher) ? entry.policy.matcher : {};
-        const result = evaluateMatcher(matcher, subject);
-        if (result.matched) redactedText = result.redactedText;
+      if (entry.policy.action === "redact" && isPlainObject(entry.policy.matcher)) {
+        redactionMatchers.push(entry.policy.matcher);
       }
     }
+
+    // Every matched redact policy is applied, not just the last one: with an
+    // email policy and a codename policy, both spans must be redacted.
+    const redactedText =
+      redactionMatchers.length > 0 && subject.text
+        ? redactWithMatchers(redactionMatchers, subject.text)
+        : null;
 
     const { action, decisive } = decide(matches);
 
@@ -807,6 +912,7 @@ export function guardrailService(db: Db) {
         return SEVERITY_PRECEDENCE[right.severity] - SEVERITY_PRECEDENCE[left.severity];
       }),
       redactedText,
+      redactionMatchers,
     };
   }
 
