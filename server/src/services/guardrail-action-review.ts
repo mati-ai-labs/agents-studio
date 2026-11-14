@@ -158,30 +158,47 @@ export const defaultClassifier: ClassifierFn = async (call) => {
     .map((rule) => `- id=${rule.id} [${rule.action === "block" ? "block" : "require_approval"}] ${rule.name}: ${rule.rule}`)
     .join("\n");
   const user = `Company rules:\n${rulesText}\n\nAgent: ${call.agentName}\nCurrent task: ${call.issueTitle ?? "(none)"}\n\nAction about to run:\ntool: ${call.toolName}\ninput:\n${summarizeInput(call.toolInput)}`;
-  const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/v1/messages`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "anthropic-version": "2023-06-01",
-      "x-api-key": token,
-      authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 1024,
-      system: CLASSIFIER_SYSTEM,
-      messages: [{ role: "user", content: user }],
-    }),
-    signal: AbortSignal.timeout(25_000),
-  });
-  if (!response.ok) throw new Error(`classifier HTTP ${response.status}`);
-  const body = (await response.json()) as { content?: Array<{ type?: string; text?: string }> };
-  const text = (body.content ?? []).filter((part) => part.type === "text").map((part) => part.text ?? "").join("");
-  const match = /\{[\s\S]*\}/.exec(text);
-  if (!match) throw new Error("classifier returned no JSON");
-  const parsed = JSON.parse(match[0]) as Record<string, unknown>;
-  const decision = parsed.decision === "deny" || parsed.decision === "approval" ? parsed.decision : "allow";
-  return { decision, ruleId: readString(parsed.ruleId), reason: readString(parsed.reason) ?? "" };
+  // Thinking models (MiniMax) can spend the whole budget reasoning and never
+  // write the answer, so give them room and retry once if no JSON comes back:
+  // a classifier error lets the action through.
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/v1/messages`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "anthropic-version": "2023-06-01",
+        "x-api-key": token,
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 4096,
+        system: CLASSIFIER_SYSTEM,
+        messages: [{ role: "user", content: user }],
+      }),
+      signal: AbortSignal.timeout(25_000),
+    });
+    if (!response.ok) {
+      lastError = new Error(`classifier HTTP ${response.status}`);
+      continue;
+    }
+    const body = (await response.json()) as { content?: Array<{ type?: string; text?: string }> };
+    const text = (body.content ?? []).filter((part) => part.type === "text").map((part) => part.text ?? "").join("");
+    const match = /\{[\s\S]*\}/.exec(text);
+    if (!match) {
+      lastError = new Error("classifier returned no JSON");
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(match[0]) as Record<string, unknown>;
+      const decision = parsed.decision === "deny" || parsed.decision === "approval" ? parsed.decision : "allow";
+      return { decision, ruleId: readString(parsed.ruleId), reason: readString(parsed.reason) ?? "" };
+    } catch {
+      lastError = new Error("classifier returned invalid JSON");
+    }
+  }
+  throw lastError ?? new Error("classifier failed");
 };
 
 let classifier: ClassifierFn = defaultClassifier;
