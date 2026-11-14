@@ -103,6 +103,15 @@ export const guardrailAllowlistMatcherSchema = z.object({
 });
 
 /**
+ * `rule` — a plain-English rule the agent must follow, e.g. "Never change
+ * another agent's model or effort". Enforced by the action classifier.
+ */
+export const guardrailRuleMatcherSchema = z.object({
+  kind: z.literal("rule"),
+  rule: z.string().trim().min(3).max(2000),
+});
+
+/**
  * The matcher payload, discriminated by `kind`. The stored `matcher` jsonb
  * carries its own `kind` so a matcher is self-describing when read back.
  */
@@ -112,6 +121,7 @@ export const guardrailMatcherSchema = z.discriminatedUnion("kind", [
   guardrailRestrictedActionMatcherBase,
   guardrailRegexMatcherSchema,
   guardrailAllowlistMatcherSchema,
+  guardrailRuleMatcherSchema,
 ]);
 
 export type GuardrailMatcher = z.infer<typeof guardrailMatcherSchema>;
@@ -129,6 +139,8 @@ export function guardrailMatcherSchemaForKind(kind: (typeof GUARDRAIL_POLICY_KIN
       return guardrailRegexMatcherSchema;
     case "allowlist":
       return guardrailAllowlistMatcherSchema;
+    case "rule":
+      return guardrailRuleMatcherSchema;
   }
 }
 

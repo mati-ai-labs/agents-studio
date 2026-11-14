@@ -2112,6 +2112,7 @@ export {
   guardrailRestrictedActionMatcherSchema,
   guardrailRegexMatcherSchema,
   guardrailAllowlistMatcherSchema,
+  guardrailRuleMatcherSchema,
   guardrailMatcherSchema,
   guardrailPolicyBodySchema,
   createGuardrailPolicySchema,

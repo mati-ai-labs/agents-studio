@@ -66,6 +66,7 @@ const KIND_LABELS: Record<GuardrailPolicyKind, string> = {
   restricted_action: "Restricted action",
   regex: "Regex",
   allowlist: "Allowlist",
+  rule: "Rule (plain English)",
 };
 
 const ACTION_LABELS: Record<GuardrailPolicyAction, string> = {
@@ -160,6 +161,8 @@ export type PolicyDraft = {
   argumentPatterns: string;
   /** Matcher fields the policy applies to. Empty means every field. */
   fields: string[];
+  /** `rule` — the plain-English rule the agent must follow. */
+  rule: string;
 };
 
 /** Studio actions a "needs my approval" policy covers by default. */
@@ -173,6 +176,11 @@ export const DEFAULT_APPROVAL_ACTIONS = [
   "paperclip:agent.create_key",
   "paperclip:routine.create",
 ];
+
+/** A blank plain-English rule, enforced on every agent action by the classifier. */
+export function ruleDraft(): PolicyDraft {
+  return { ...emptyDraft(), name: "", stage: "action", kind: "rule", action: "block", severity: "high" };
+}
 
 /** A ready-made policy: agents must get board approval before taking studio decisions. */
 export function approvalPresetDraft(): PolicyDraft {
@@ -208,6 +216,7 @@ function emptyDraft(): PolicyDraft {
     connectorTypes: "",
     argumentPatterns: "",
     fields: [],
+    rule: "",
   };
 }
 
@@ -271,6 +280,7 @@ function draftFromPolicy(policy: GuardrailPolicy): PolicyDraft {
       .map((entry) => `${entry.path ?? ""}=${entry.pattern ?? ""}`)
       .join("\n"),
     fields,
+    rule: typeof matcher.rule === "string" ? matcher.rule : "",
   };
 }
 
@@ -291,6 +301,15 @@ export function draftToPolicyPayload(draft: PolicyDraft): CreateGuardrailPolicy 
     severity: draft.severity,
     enabled: draft.enabled,
   };
+
+  if (draft.kind === "rule") {
+    return {
+      ...base,
+      // A rule is enforced by the action classifier, before the agent acts.
+      stage: "action",
+      matcher: { kind: "rule", rule: draft.rule.trim() },
+    };
+  }
 
   if (draft.kind === "allowlist") {
     return {
@@ -726,7 +745,25 @@ export function GuardrailPolicyEditor({
         </div>
       )}
 
-      {draft.kind === "allowlist" ? (
+      {draft.kind === "rule" ? (
+        <div className="space-y-2">
+          <Label htmlFor="guardrail-rule">Rule</Label>
+          <Textarea
+            id="guardrail-rule"
+            value={draft.rule}
+            onChange={(event) => set("rule", event.target.value)}
+            placeholder={"Never change another agent's model, effort or instructions."}
+            className="min-h-24 text-sm"
+            aria-invalid={Boolean(fieldErrors["matcher.rule"])}
+          />
+          <p className="text-xs text-muted-foreground">
+            Written in plain English. Agents see every rule at the start of each session, and before an agent takes any
+            action that changes something (a command, an edit, an API call), a classifier checks it against the rules.
+            Block stops the action and tells the agent why; Require approval holds it until you approve.
+          </p>
+          <FieldError message={fieldErrors["matcher.rule"]} />
+        </div>
+      ) : draft.kind === "allowlist" ? (
         <div className="space-y-2">
           <Label htmlFor="guardrail-values">Allowed values</Label>
           <Textarea
@@ -878,7 +915,7 @@ export function GuardrailPolicyEditor({
         </div>
       )}
 
-      {draft.kind !== "restricted_action" && (
+      {draft.kind !== "restricted_action" && draft.kind !== "rule" && (
         <fieldset className="space-y-2">
           <legend className="text-sm font-medium">Fields to match</legend>
           <div className="flex flex-wrap gap-2">
@@ -1358,6 +1395,14 @@ export function Guardrails() {
     setEditing(true);
   }
 
+  function startRule() {
+    setDraft(ruleDraft());
+    setFieldErrors({});
+    setFormError(null);
+    setSelectedPolicyId(null);
+    setEditing(true);
+  }
+
   function startApprovalPreset() {
     setDraft(approvalPresetDraft());
     setFieldErrors({});
@@ -1439,7 +1484,11 @@ export function Guardrails() {
               <span className="text-xs text-muted-foreground">
                 {filteredPolicies.length} of {policies.length}
               </span>
-              <Button size="sm" variant="outline" onClick={startApprovalPreset} className="ml-auto">
+              <Button size="sm" onClick={startRule} className="ml-auto">
+                <Plus className="mr-1.5 h-3.5 w-3.5" />
+                Add a rule for agents
+              </Button>
+              <Button size="sm" variant="outline" onClick={startApprovalPreset}>
                 Require my approval for agent decisions
               </Button>
               <Button size="sm" onClick={startCreate}>

@@ -13,6 +13,7 @@ import {
   draftToPolicyPayload,
   type PolicyDraft,
   approvalPresetDraft,
+  ruleDraft,
   validateDraft,
 } from "./Guardrails";
 
@@ -103,6 +104,7 @@ function baseDraft(overrides: Partial<PolicyDraft> = {}): PolicyDraft {
     connectorTypes: "",
     argumentPatterns: "",
     fields: ["comment"],
+    rule: "",
     ...overrides,
   };
 }
@@ -1072,6 +1074,26 @@ describe("approval preset for agent decisions", () => {
     expect((payload.matcher as { toolNames: string[] }).toolNames).toEqual(
       expect.arrayContaining(["paperclip:issue.create", "paperclip:issue.create_subissue", "paperclip:agent.update"]),
     );
+  });
+});
+
+describe("plain-English rule policies", () => {
+  it("builds a valid action-stage rule policy", () => {
+    const draft = { ...ruleDraft(), name: "Models are mine", rule: "Never change another agent's model or effort." };
+    const validation = validateDraft(draft);
+    expect(validation.fieldErrors).toEqual({});
+    expect(validation.payload).toMatchObject({
+      stage: "action",
+      kind: "rule",
+      action: "block",
+      matcher: { kind: "rule", rule: "Never change another agent's model or effort." },
+    });
+  });
+
+  it("rejects an empty rule", () => {
+    const validation = validateDraft({ ...ruleDraft(), name: "x", rule: "" });
+    expect(validation.payload).toBeNull();
+    expect(Object.keys(validation.fieldErrors).join(",")).toContain("matcher.rule");
   });
 });
 
