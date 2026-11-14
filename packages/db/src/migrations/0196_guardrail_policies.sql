@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS "guardrail_policies" (
 		OR ("scope_type" IN ('agent', 'project', 'goal') AND "scope_id" IS NOT NULL)
 	),
 	CONSTRAINT "guardrail_policies_stage_check" CHECK ("stage" IN ('input', 'output', 'action')),
-	CONSTRAINT "guardrail_policies_kind_check" CHECK ("kind" IN ('pii', 'secret', 'restricted_action', 'regex', 'allowlist')),
+	CONSTRAINT "guardrail_policies_kind_check" CHECK ("kind" IN ('pii', 'secret', 'restricted_action', 'regex', 'allowlist', 'rule')),
 	CONSTRAINT "guardrail_policies_action_check" CHECK ("action" IN ('allow', 'redact', 'block', 'require_approval')),
 	CONSTRAINT "guardrail_policies_severity_check" CHECK ("severity" IN ('info', 'medium', 'high', 'critical')),
 	CONSTRAINT "guardrail_policies_version_check" CHECK ("version" >= 1)

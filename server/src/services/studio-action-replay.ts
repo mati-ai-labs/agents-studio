@@ -47,6 +47,21 @@ export async function executeApprovedStudioAction(
   const approval = await db.select().from(approvals).where(eq(approvals.id, approvalId)).then((rows) => rows[0] ?? null);
   if (!approval || approval.type !== "guardrail_action" || approval.status !== "approved") return null;
   const payload = (approval.payload ?? {}) as Record<string, unknown>;
+  if (payload.agentAction === true) {
+    // An action the agent's own guardrail hook held: the agent re-runs it.
+    const issueId = readString(payload.issueId);
+    if (issueId) {
+      await issueService(db)
+        .addComment(
+          issueId,
+          `Board approved: ${readString(payload.title) ?? readString(payload.tool) ?? "agent action"}. Run exactly the same action again; it will be allowed once.`,
+          {},
+          { authorType: "system" },
+        )
+        .catch((error) => logger.warn({ err: error, approvalId }, "failed to post approval comment"));
+    }
+    return null;
+  }
   if (payload.studioAction !== true) return null;
 
   const request = (payload.request ?? {}) as Record<string, unknown>;
@@ -152,7 +167,7 @@ export async function noteRejectedStudioAction(db: Db, approvalId: string, decis
   const approval = await db.select().from(approvals).where(eq(approvals.id, approvalId)).then((rows) => rows[0] ?? null);
   if (!approval || approval.type !== "guardrail_action") return;
   const payload = (approval.payload ?? {}) as Record<string, unknown>;
-  if (payload.studioAction !== true) return;
+  if (payload.studioAction !== true && payload.agentAction !== true) return;
   const issueId = readString(payload.issueId);
   if (!issueId) return;
   const title = readString(payload.title) ?? readString(payload.tool) ?? "agent action";

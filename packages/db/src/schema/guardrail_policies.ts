@@ -74,7 +74,7 @@ export const guardrailPolicies = pgTable(
     ),
     kindCheck: check(
       "guardrail_policies_kind_check",
-      sql`${table.kind} in ('pii', 'secret', 'restricted_action', 'regex', 'allowlist')`,
+      sql`${table.kind} in ('pii', 'secret', 'restricted_action', 'regex', 'allowlist', 'rule')`,
     ),
     actionCheck: check(
       "guardrail_policies_action_check",

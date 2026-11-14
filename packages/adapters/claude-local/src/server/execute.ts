@@ -23,6 +23,7 @@ import {
   startAdapterExecutionTargetPaperclipBridge,
 } from "@paperclipai/adapter-utils/execution-target";
 import { shellQuote } from "@paperclipai/adapter-utils/ssh";
+import { prepareGuardrailHook } from "./guardrail-hook.js";
 import {
   asString,
   asNumber,
@@ -1059,6 +1060,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     heartbeatPromptChars: renderedPrompt.length,
   };
 
+  // Board guardrails: a PreToolUse/SessionStart hook reviews every action
+  // against the company's guardrail rules before it runs (local runs only).
+  // Disable per agent with adapterConfig.guardrailHook = false.
+  const guardrailSettingsPath =
+    !executionTargetIsRemote && config.guardrailHook !== false
+      ? await prepareGuardrailHook(runId).catch(() => null)
+      : null;
+
   const buildClaudeArgs = (
     resumeSessionId: string | null,
     attemptInstructionsFilePath: string | undefined,
@@ -1096,6 +1105,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       args.push("--strict-mcp-config");
     }
     args.push("--add-dir", effectivePromptBundleAddDir);
+    if (guardrailSettingsPath) args.push("--settings", guardrailSettingsPath);
     if (extraArgs.length > 0) args.push(...extraArgs);
     return args;
   };

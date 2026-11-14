@@ -1656,6 +1656,11 @@ export const GUARDRAIL_POLICY_KINDS = [
   "restricted_action",
   "regex",
   "allowlist",
+  // A plain-English rule. A classifier model reviews every consequential
+  // action an agent is about to take (Bash, edits, API calls, MCP tools)
+  // against the company's rules before it runs, and the rules are injected
+  // into the agent's context at session start so it plans within them.
+  "rule",
 ] as const;
 export type GuardrailPolicyKind = (typeof GUARDRAIL_POLICY_KINDS)[number];
 

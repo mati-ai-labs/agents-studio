@@ -93,3 +93,4 @@ export const sessionCodec: AdapterSessionCodec = {
     );
   },
 };
+export { GUARDRAIL_HOOK_SCRIPT, buildGuardrailHookSettings, prepareGuardrailHook } from "./guardrail-hook.js";
