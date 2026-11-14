@@ -108,12 +108,16 @@ const mockBudgetService = vi.hoisted(() => ({
 const mockAccessService = vi.hoisted(() => ({
   decide: vi.fn(),
 }));
+const mockEvalService = vi.hoisted(() => ({
+  cohortComparison: vi.fn(),
+}));
 
 function registerModuleMocks() {
   vi.doMock("../services/index.js", () => ({
     accessService: () => mockAccessService,
     budgetService: () => mockBudgetService,
     costService: () => mockCostService,
+    evalService: () => mockEvalService,
     financeService: () => mockFinanceService,
     companyService: () => mockCompanyService,
     agentService: () => mockAgentService,
@@ -269,6 +273,41 @@ describe("cost routes", () => {
       runCount: 0,
       runtimeMs: 0,
     });
+  });
+
+  it("returns the agent cohort comparison for the company", async () => {
+    const comparison = {
+      thresholdDays: 30,
+      evaluatedAt: "2026-04-15T00:00:00.000Z",
+      newAgents: [],
+      establishedAgents: [],
+    };
+    mockEvalService.cohortComparison.mockResolvedValue(comparison);
+
+    const app = await createApp();
+    const res = await request(app).get("/api/companies/company-1/costs/agent-cohorts");
+
+    expect(res.status).toBe(200);
+    expect(mockEvalService.cohortComparison).toHaveBeenCalledWith(
+      "company-1",
+      expect.objectContaining({ thresholdDays: undefined }),
+    );
+    expect(res.body).toEqual(comparison);
+  });
+
+  it("passes a numeric threshold to the agent cohort comparison", async () => {
+    mockEvalService.cohortComparison.mockResolvedValue({ thresholdDays: 7 });
+
+    const app = await createApp();
+    const res = await request(app)
+      .get("/api/companies/company-1/costs/agent-cohorts")
+      .query({ thresholdDays: "7" });
+
+    expect(res.status).toBe(200);
+    expect(mockEvalService.cohortComparison).toHaveBeenCalledWith(
+      "company-1",
+      expect.objectContaining({ thresholdDays: 7 }),
+    );
   });
 
   it("returns 400 for invalid finance event list limits", async () => {

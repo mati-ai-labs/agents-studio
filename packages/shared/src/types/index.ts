@@ -85,6 +85,35 @@ export {
   SMOKE_RUN_STEP_STATUSES,
   SMOKE_RUN_TRIGGERS,
 } from "./smoke-lab.js";
+export type {
+  EvalAgentCohort,
+  EvalAgentAction,
+  EvalBundle,
+  EvalBundleComparison,
+  EvalCheckDetail,
+  EvalCheckKind,
+  EvalCheckSpec,
+  EvalCohortComparison,
+  EvalCohortSummary,
+  EvalCoverageReport,
+  EvalObservedComment,
+  EvalObservedToolCall,
+  EvalObservedTrace,
+  EvalPolicyExpectation,
+  EvalPolicyLabel,
+  EvalPolicyMetrics,
+  EvalResultStatus,
+  EvalScenario,
+  EvalScenarioFile,
+  EvalScenarioResult,
+  EvalViolationClass,
+} from "./eval.js";
+export {
+  EVAL_AGENT_COHORTS,
+  EVAL_CHECK_KINDS,
+  EVAL_POLICY_EXPECTATIONS,
+  EVAL_RESULT_STATUSES,
+} from "./eval.js";
 export {
   DAILY_RETENTION_PRESETS,
   WEEKLY_RETENTION_PRESETS,
