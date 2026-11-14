@@ -114,6 +114,7 @@ import { finalizeSummarySlotsForTerminalIssue } from "./summary-slot-finalizatio
 import { issueCompletionDeliveryService } from "./issue-completion-deliveries.js";
 import { enqueueSlackOutbound } from "./slack-outbound-dispatch.js";
 import { buildSlackProgressMessage } from "./slack-message-builder.js";
+import { guardrailService } from "./guardrails.js";
 
 const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
 const MAX_ISSUE_COMMENT_PAGE_LIMIT = 500;
@@ -6180,6 +6181,44 @@ export function issueService(db: Db) {
       if (data.status === "in_progress" && !data.assigneeAgentId && !data.assigneeUserId) {
         throw unprocessable("in_progress issues require an assignee");
       }
+
+      // An agent-authored issue title or description is output the studio
+      // publishes on the agent's behalf, so the `output`-stage policies apply.
+      if (issueData.createdByAgentId) {
+        const guardrails = guardrailService(db);
+        for (const [field, subjectKind] of [
+          ["title", "issue_title"],
+          ["description", "issue_description"],
+        ] as const) {
+          const value = issueData[field];
+          if (typeof value !== "string" || value.length === 0) continue;
+          const guarded = await guardrails.applyTextGuardrails(
+            {
+              companyId,
+              agentId: issueData.createdByAgentId,
+              projectId: issueData.projectId ?? null,
+              goalId: issueData.goalId ?? null,
+              text: value,
+              fields: { [field]: value },
+            },
+            {
+              stage: "output",
+              violation: {
+                subjectKind,
+                actorAgentId: issueData.createdByAgentId,
+                heartbeatRunId: actorRunId ?? null,
+              },
+            },
+          );
+          if (guarded.decision.action === "block") {
+            throw unprocessable(
+              `Issue ${field} blocked by guardrail policy "${guarded.decision.decisive?.policyName ?? "unknown"}"`,
+              { code: "guardrail_policy_blocked", policyId: guarded.decision.decisive?.policyId ?? null },
+            );
+          }
+          issueData[field] = guarded.text;
+        }
+      }
       return db.transaction(async (tx) => {
         const idempotencyKey = rawIdempotencyKey?.trim() || null;
         const normalizedTitle = normalizeCreateIssueTitle(issueData.title);
@@ -6481,6 +6520,7 @@ export function issueService(db: Db) {
         blockedByIssueIds?: string[];
         actorAgentId?: string | null;
         actorUserId?: string | null;
+        actorRunId?: string | null;
       },
       dbOrTx: any = db,
     ) => {
@@ -6496,6 +6536,7 @@ export function issueService(db: Db) {
         blockedByIssueIds,
         actorAgentId,
         actorUserId,
+        actorRunId,
         ...issueData
       } = data;
       const isolatedWorkspacesEnabled = (await instanceSettings.getExperimental()).enableIsolatedWorkspaces;
@@ -6507,6 +6548,44 @@ export function issueService(db: Db) {
 
       if (issueData.status) {
         assertTransition(existing.status, issueData.status);
+      }
+
+      // An agent-authored title or description is output the studio publishes
+      // on the agent's behalf, so the `output`-stage policies apply. Human
+      // edits are left alone.
+      if (actorAgentId) {
+        const guardrails = guardrailService(dbOrTx as Db);
+        for (const [field, subjectKind] of [
+          ["title", "issue_title"],
+          ["description", "issue_description"],
+        ] as const) {
+          const value = issueData[field];
+          if (typeof value !== "string" || value.length === 0) continue;
+          const guarded = await guardrails.applyTextGuardrails(
+            {
+              companyId: existing.companyId,
+              agentId: actorAgentId,
+              text: value,
+              fields: { [field]: value },
+            },
+            {
+              stage: "output",
+              violation: {
+                subjectKind,
+                subjectId: existing.id,
+                actorAgentId,
+                heartbeatRunId: actorRunId ?? null,
+              },
+            },
+          );
+          if (guarded.decision.action === "block") {
+            throw unprocessable(
+              `Issue ${field} blocked by guardrail policy "${guarded.decision.decisive?.policyName ?? "unknown"}"`,
+              { code: "guardrail_policy_blocked", policyId: guarded.decision.decisive?.policyId ?? null },
+            );
+          }
+          issueData[field] = guarded.text;
+        }
       }
 
       if (issueData.status === "done" && existing.status !== "done") {
@@ -7500,6 +7579,40 @@ export function issueService(db: Db) {
         enabled: (await instanceSettings.getGeneral()).censorUsernameInLogs,
       };
       const redactedBody = redactCurrentUserText(body, currentUserRedactionOptions);
+
+      // An agent-authored comment is output the studio publishes on the
+      // agent's behalf, so the `output`-stage policies are applied to it. A
+      // `block` policy stops the comment from being written; a `redact`
+      // policy replaces the matched span before it is stored.
+      //
+      // Only agent-authored comments are guarded: a board user's own words are
+      // not agent output, and a policy must not be able to silence a human.
+      const guarded = actor.agentId
+        ? await guardrailService(dbOrTx as Db).applyTextGuardrails(
+            {
+              companyId: issue.companyId,
+              agentId: actor.agentId,
+              text: redactedBody,
+              fields: { comment: redactedBody },
+            },
+            {
+              stage: "output",
+              violation: {
+                subjectKind: "issue_comment",
+                subjectId: issueId,
+                actorAgentId: actor.agentId,
+                heartbeatRunId: actor.runId ?? null,
+              },
+            },
+          )
+        : null;
+      if (guarded?.decision.action === "block") {
+        throw unprocessable(
+          `Comment blocked by guardrail policy "${guarded.decision.decisive?.policyName ?? "unknown"}"`,
+          { code: "guardrail_policy_blocked", policyId: guarded.decision.decisive?.policyId ?? null },
+        );
+      }
+      const commentBody = guarded?.text ?? redactedBody;
       const authorType = issueCommentAuthorTypeSchema.parse(
         options?.authorType ?? (actor.agentId ? "agent" : actor.userId ? "user" : "system"),
       );
@@ -7524,7 +7637,7 @@ export function issueService(db: Db) {
           authorUserId: actor.userId ?? null,
           authorType,
           createdByRunId,
-          body: redactedBody,
+          body: commentBody,
           presentation,
           metadata,
           sourceTrust: options?.sourceTrust ?? null,
@@ -7566,7 +7679,7 @@ export function issueService(db: Db) {
             dedupeKey: `progress:comment:${comment.id}`,
             channelId: binding.channelId,
             threadTs: binding.threadTs,
-            payload: { text: buildSlackProgressMessage({ issue, agentName: agent?.name, body: redactedBody }) },
+            payload: { text: buildSlackProgressMessage({ issue, agentName: agent?.name, body: commentBody }) },
           });
         }
       }

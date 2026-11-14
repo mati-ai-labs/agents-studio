@@ -3,6 +3,7 @@ import type { Db } from "@paperclipai/db";
 import { documentRevisions, documents, issueDocuments, issues } from "@paperclipai/db";
 import { isSystemIssueDocumentKey, issueDocumentKeySchema } from "@paperclipai/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
+import { guardrailService } from "./guardrails.js";
 
 function normalizeDocumentKey(key: string) {
   const normalized = key.trim().toLowerCase();
@@ -216,6 +217,38 @@ export function documentService(db: Db) {
         .then((rows) => rows[0] ?? null);
       if (!issue) throw notFound("Issue not found");
 
+      // An agent-authored document body is output the studio publishes on the
+      // agent's behalf, so the `output`-stage policies apply to it. Human
+      // authored documents are left alone — a policy must not silence a board
+      // user.
+      let body = input.body;
+      if (input.createdByAgentId) {
+        const guarded = await guardrailService(db).applyTextGuardrails(
+          {
+            companyId: issue.companyId,
+            agentId: input.createdByAgentId,
+            text: input.body,
+            fields: { document_body: input.body },
+          },
+          {
+            stage: "output",
+            violation: {
+              subjectKind: "document_body",
+              subjectId: input.issueId,
+              actorAgentId: input.createdByAgentId,
+              heartbeatRunId: input.createdByRunId ?? null,
+            },
+          },
+        );
+        if (guarded.decision.action === "block") {
+          throw unprocessable(
+            `Document body blocked by guardrail policy "${guarded.decision.decisive?.policyName ?? "unknown"}"`,
+            { code: "guardrail_policy_blocked", policyId: guarded.decision.decisive?.policyId ?? null },
+          );
+        }
+        body = guarded.text;
+      }
+
       const maxAttempts = input.lockedDocumentStrategy === "create_new_document" ? 3 : 1;
       for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         try {
@@ -263,7 +296,7 @@ export function documentService(db: Db) {
                     companyId: issue.companyId,
                     title: input.title ?? null,
                     format: input.format,
-                    latestBody: input.body,
+                    latestBody: body,
                     latestRevisionId: null,
                     latestRevisionNumber: 1,
                     createdByAgentId: input.createdByAgentId ?? null,
@@ -287,7 +320,7 @@ export function documentService(db: Db) {
                     revisionNumber: 1,
                     title: input.title ?? null,
                     format: input.format,
-                    body: input.body,
+                    body: body,
                     changeSummary: input.changeSummary ?? null,
                     createdByAgentId: input.createdByAgentId ?? null,
                     createdByUserId: input.createdByUserId ?? null,
@@ -367,7 +400,7 @@ export function documentService(db: Db) {
                 revisionNumber: nextRevisionNumber,
                 title: input.title ?? null,
                 format: input.format,
-                body: input.body,
+                body: body,
                 changeSummary: input.changeSummary ?? null,
                 createdByAgentId: input.createdByAgentId ?? null,
                 createdByUserId: input.createdByUserId ?? null,
@@ -381,7 +414,7 @@ export function documentService(db: Db) {
               .set({
                 title: input.title ?? null,
                 format: input.format,
-                latestBody: input.body,
+                latestBody: body,
                 latestRevisionId: revision.id,
                 latestRevisionNumber: nextRevisionNumber,
                 updatedByAgentId: input.createdByAgentId ?? null,
@@ -402,7 +435,7 @@ export function documentService(db: Db) {
                 ...existing,
                 title: input.title ?? null,
                 format: input.format,
-                body: input.body,
+                body: body,
                 latestRevisionId: revision.id,
                 latestRevisionNumber: nextRevisionNumber,
                 updatedByAgentId: input.createdByAgentId ?? null,
@@ -426,7 +459,7 @@ export function documentService(db: Db) {
               companyId: issue.companyId,
               title: input.title ?? null,
               format: input.format,
-              latestBody: input.body,
+              latestBody: body,
               latestRevisionId: null,
               latestRevisionNumber: 1,
               createdByAgentId: input.createdByAgentId ?? null,
@@ -450,7 +483,7 @@ export function documentService(db: Db) {
               revisionNumber: 1,
               title: input.title ?? null,
               format: input.format,
-              body: input.body,
+              body: body,
               changeSummary: input.changeSummary ?? null,
               createdByAgentId: input.createdByAgentId ?? null,
               createdByUserId: input.createdByUserId ?? null,

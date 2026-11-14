@@ -35,6 +35,7 @@ const COALESCED_LIST_KEY_ROOTS = new Set([
   "activity",
   "costs",
   "sidebar-badges",
+  "guardrail-violations",
 ]);
 
 function shouldCoalesceListInvalidation(queryKey: readonly unknown[], companyId: string): boolean {
@@ -815,6 +816,14 @@ function invalidateActivityQueries(
 
   if (entityType === "routine" || entityType === "routine_trigger" || entityType === "routine_run") {
     queryClient.invalidateQueries({ queryKey: ["routines"] });
+    return;
+  }
+
+  // A guardrail decision is logged as activity, so the violations feed
+  // refreshes off the same transport as everything else on the activity
+  // timeline rather than polling on its own.
+  if (entityType === "guardrail_violation") {
+    queryClient.invalidateQueries({ queryKey: queryKeys.guardrails.violations(companyId) });
     return;
   }
 

@@ -11,6 +11,7 @@ import {
 } from "@paperclipai/shared";
 import { validate } from "../middleware/validate.js";
 import { logger } from "../middleware/logger.js";
+import { executeApprovedStudioAction, noteRejectedStudioAction } from "../services/studio-action-replay.js";
 import {
   approvalService,
   accessService,
@@ -215,6 +216,17 @@ export function approvalRoutes(
     const decidedByUserId = req.actor.userId ?? "board";
     const { approval, applied } = await svc.approve(id, decidedByUserId, req.body.decisionNote);
 
+    // A guardrail-parked studio action (an agent creating an issue, changing an
+    // agent, ...) is carried out now, before the agent is woken, so the wake
+    // sees the result.
+    if (applied && approval.type === "guardrail_action") {
+      try {
+        await executeApprovedStudioAction(db, approval.id, { port: req.socket.localPort ?? Number(process.env.PORT ?? 3100) });
+      } catch (err) {
+        logger.warn({ err, approvalId: approval.id }, "failed to carry out approved studio action");
+      }
+    }
+
     if (applied) {
       const linkedIssues = await issueApprovalsSvc.listIssuesForApproval(approval.id);
       const linkedIssueIds = linkedIssues.map((issue) => issue.id);
@@ -310,6 +322,12 @@ export function approvalRoutes(
     }
     const decidedByUserId = req.actor.userId ?? "board";
     const { approval, applied } = await svc.reject(id, decidedByUserId, req.body.decisionNote);
+
+    if (applied && approval.type === "guardrail_action") {
+      await noteRejectedStudioAction(db, approval.id, req.body.decisionNote).catch((err) =>
+        logger.warn({ err, approvalId: approval.id }, "failed to note rejected studio action"),
+      );
+    }
 
     if (applied) {
       await logActivity(db, {

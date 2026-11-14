@@ -892,3 +892,26 @@ export {
 } from "./tool-access.js";
 export * from "./skill-policy.js";
 export * from "./app-definition.js";
+export {
+  GUARDRAIL_MATCHER_FIELDS,
+  guardrailMatcherFieldSchema,
+  guardrailPiiMatcherSchema,
+  guardrailSecretMatcherSchema,
+  guardrailRestrictedActionMatcherSchema,
+  guardrailRegexMatcherSchema,
+  guardrailAllowlistMatcherSchema,
+  guardrailRuleMatcherSchema,
+  guardrailMatcherSchema,
+  guardrailPolicyBodySchema,
+  createGuardrailPolicySchema,
+  updateGuardrailPolicySchema,
+  simulateGuardrailPoliciesSchema,
+  guardrailViolationsQuerySchema,
+  type GuardrailMatcherField,
+  type GuardrailMatcher,
+  type GuardrailPolicyBody,
+  type CreateGuardrailPolicy,
+  type UpdateGuardrailPolicy,
+  type SimulateGuardrailPolicies,
+  type GuardrailViolationsQuery,
+} from "./guardrail-policy.js";
