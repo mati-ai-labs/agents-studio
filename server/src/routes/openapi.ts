@@ -149,6 +149,7 @@ import {
   archiveCompanyMemberSchema,
   updateMemberPermissionsSchema,
   updateUserCompanyAccessSchema,
+  updateUserRestrictedOperatorSchema,
   // Instance settings
   patchInstanceGeneralSettingsSchema,
   patchInstanceExperimentalSettingsSchema,
@@ -3279,6 +3280,14 @@ registry.registerPath({
 
 registry.registerPath({
   method: "get",
+  path: "/api/instance/run-slots",
+  tags: ["instance"],
+  summary: "Live instance-wide run slot usage",
+  responses: { 200: r.ok(), 401: r.unauthorized },
+});
+
+registry.registerPath({
+  method: "get",
   path: "/api/instance/settings/experimental",
   tags: ["instance"],
   summary: "Get experimental instance settings",
@@ -5347,6 +5356,18 @@ registry.registerPath({
   request: {
     params: z.object({ userId: z.string() }),
     body: jsonBody(updateUserCompanyAccessSchema),
+  },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "put",
+  path: "/api/admin/users/{userId}/restricted-operator",
+  tags: ["admin"],
+  summary: "Set the restricted-operator flag for a user (admin)",
+  request: {
+    params: z.object({ userId: z.string() }),
+    body: jsonBody(updateUserRestrictedOperatorSchema),
   },
   responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden },
 });
