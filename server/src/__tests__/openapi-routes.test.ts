@@ -84,6 +84,7 @@ const explicitOpenApiCoverageExclusions = new Set([
   "slack-agent.ts",
   "slack-channel-routes.ts",
   "slack-events.ts",
+  "slack-interactions.ts",
   "slack-slash-commands.ts",
 ]);
 

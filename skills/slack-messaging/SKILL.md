@@ -1,11 +1,11 @@
 ---
 name: slack-messaging
-description: Post a message in the company's Slack and tag the people responsible for an item. Use when work needs a human's decision, review, access or action and the issue comment alone won't reach them, or when the user asks you to notify someone on Slack.
+description: Read, post, react, and run polls in the company's Slack. Use when an issue points at Slack messages or threads ("check the messages on the group"), when work needs a human's decision, review, access or action and an issue comment alone won't reach them, when you need a quick choice from people (poll), or when the user asks you to notify someone on Slack.
 ---
 
 # Slack messaging
 
-You can post in the company's Slack workspace through the Paperclip API. The server holds the Slack bot token; you never see it, and you never need it.
+You can read and post in the company's Slack workspace through the Paperclip API: read channels and threads, post and tag people, react, edit or delete your own messages, and run polls whose votes come back to the issue. The server holds the Slack bot token; you never see it, and you never need it.
 
 API base: `API="${PAPERCLIP_API_URL%/}"; API="${API%/api}"`. Auth: `-H "Authorization: Bearer $PAPERCLIP_API_KEY"`. Add `-H "X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID"` on the POST.
 
@@ -60,9 +60,78 @@ When you pass `issueId`, the Slack thread is linked to that issue. Anyone who re
 
 The response's `replyTracking` tells you whether replies will come back: `active` means yes. Anything else (`bot_not_in_channel`, `private_channel_unsupported`, `thread_belongs_to_other_issue`, `not_bound`) comes with a `replyTrackingHint`; mention it in your issue comment so a human knows to check Slack.
 
+## Read Slack
+
+You can read any channel the bot is in. Use this whenever the issue points at Slack ("check the messages in the group", "see what X said", an issue created from a Slack mention).
+
+1. **Find the issue's Slack thread.** Issues created from Slack say `Source: Slack <workspace>/<channel>/<ts>` in the description. Or list the threads linked to the issue:
+   `curl -sS "$API/api/companies/$PAPERCLIP_COMPANY_ID/issues/$PAPERCLIP_TASK_ID/slack/threads" -H "Authorization: Bearer $PAPERCLIP_API_KEY"`
+2. **Read the whole thread** (root message plus all replies, oldest first):
+   `curl -sS "$API/api/companies/$PAPERCLIP_COMPANY_ID/slack/channels/<channel>/threads/<threadTs>" -H "Authorization: Bearer $PAPERCLIP_API_KEY"`
+3. **Read recent channel messages** (top-level, newest first; a message with `replyCount > 0` has a thread you can read with step 2):
+   `curl -sS "$API/api/companies/$PAPERCLIP_COMPANY_ID/slack/channels/<channel>/messages?limit=50" -H "Authorization: Bearer $PAPERCLIP_API_KEY"`
+   Narrow by time with `oldest=<ts>` / `latest=<ts>`; page with `cursor=<nextCursor>` while `hasMore` is true.
+4. **Read one message:** `GET .../slack/channels/<channel>/messages/<ts>` (works for thread replies too).
+
+`<channel>` is a channel id (`C…`), `name` or `%23name`. Each message has `ts`, `threadTs`, `userId`, `userName`, `text`, `replyCount`, `files`, `reactions` and a `link` to open it in Slack. Text keeps Slack markup: `<@U123>` is a person (look the id up in the members list), `<#C123>` a channel.
+
+If you get `422 not_in_channel`, the bot has not joined that channel. For a public channel, join it and retry:
+`curl -sS -X POST "$API/api/companies/$PAPERCLIP_COMPANY_ID/slack/channels/<channel>/join" -H "Authorization: Bearer $PAPERCLIP_API_KEY"`
+A private channel needs a human to invite the bot; say so on the issue.
+
+Quote what you read in your issue comment (who said what, with the `link`) so the issue carries the context.
+
+## React to a message
+
+Acknowledge a message without posting: `:eyes:` when you start on it, `:white_check_mark:` when it's handled.
+
+```bash
+curl -sS -f -X POST "$API/api/companies/$PAPERCLIP_COMPANY_ID/slack/reactions" \
+  -H "Authorization: Bearer $PAPERCLIP_API_KEY" -H "Content-Type: application/json" \
+  -d '{"channel":"<channel>","ts":"<message ts>","name":"eyes"}'
+```
+
+Add `"remove": true` to take a reaction off.
+
+## Edit or delete your own message
+
+Only messages the Paperclip bot posted. Fix a mistake rather than posting a correction:
+
+```bash
+curl -sS -f -X PATCH "$API/api/companies/$PAPERCLIP_COMPANY_ID/slack/messages" \
+  -H "Authorization: Bearer $PAPERCLIP_API_KEY" -H "Content-Type: application/json" \
+  -d '{"channel":"<channel>","ts":"<messageTs>","text":"Corrected text"}'
+curl -sS -f -X DELETE "$API/api/companies/$PAPERCLIP_COMPANY_ID/slack/messages?channel=<channel>&ts=<messageTs>" \
+  -H "Authorization: Bearer $PAPERCLIP_API_KEY"
+```
+
+## Polls
+
+Use a poll when you need a choice between known options from one or more people (a date, an approach, yes/no). People click a button in Slack; you get each vote back.
+
+```bash
+curl -sS -f -X POST "$API/api/companies/$PAPERCLIP_COMPANY_ID/slack/polls" \
+  -H "Authorization: Bearer $PAPERCLIP_API_KEY" -H "X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"channel":"<channel>","issueId":"'"$PAPERCLIP_TASK_ID"'","question":"Which login fix do we ship?","options":["Patch Safari only","Rewrite the cookie flow"],"mentionUserIds":["U0123ABCD"],"closesInMinutes":240}'
+```
+
+- `options`: 2 to 10 short labels. `multiSelect: true` lets people pick several.
+- `issueId` is required; `threadTs` posts the poll inside a thread; `mentionUserIds` tags who must vote.
+- `closesInMinutes` (or `closesAt`, ISO time) closes it automatically. Polls count toward the 20 messages per hour.
+- The response has `pollId`. Clicking again takes a vote back.
+
+**Getting the answer back:** every vote arrives as an issue comment (`From Slack user <name> (poll vote): ...` with the running tally) and wakes you. Do not poll for results. When a deadline passes, a final "Slack poll closed" comment wakes you with the result. You can also read results or close it yourself:
+- `GET $API/api/companies/$PAPERCLIP_COMPANY_ID/slack/polls/<pollId>` returns each option's `votes` and `voterIds`.
+- `POST $API/api/companies/$PAPERCLIP_COMPANY_ID/slack/polls/<pollId>/close` once you have the answer you need.
+- `GET $API/api/companies/$PAPERCLIP_COMPANY_ID/issues/$PAPERCLIP_TASK_ID/slack/polls` lists the issue's polls.
+
 ## Errors
 
 - `422 not_in_channel`: the bot is not in that private channel; pick another or ask a human to invite it.
 - `422 unknown_mention`: an id is not in the members list; re-read the list.
+- `422 not_in_channel` while reading: join the public channel (`POST .../slack/channels/<channel>/join`) and retry.
+- `422 missing_scope`: the Slack app needs a new permission (for example reactions or private-channel history). Say so on the issue; a human must reconnect Slack.
+- `422 cant_update_message` / `cant_delete_message`: you can only change messages the bot posted.
 - `429`: you hit the hourly limit; wait for `Retry-After` and batch your asks into one message.
 - `409 slack_not_connected`: Slack is not connected for this company; say so on the issue instead of retrying.

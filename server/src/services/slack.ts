@@ -608,3 +608,245 @@ export async function postSlackMessage(
     messageTs: readTrimmedString(response.ts),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Agent read / edit / react helpers. All calls go through the bot token of the
+// company that owns the channel (see resolveSlackTokenCompanyId).
+// ---------------------------------------------------------------------------
+
+async function callSlackApi<T>(
+  db: Db,
+  companyId: string,
+  channelId: string,
+  method: string,
+  params: Record<string, unknown>,
+  options: { httpMethod?: "GET" | "POST" } = {},
+): Promise<T> {
+  const accessToken = await getFreshSlackAccessToken(db, await resolveSlackTokenCompanyId(db, companyId, channelId));
+  const entries = Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== "");
+  if ((options.httpMethod ?? "GET") === "GET") {
+    const query = new URLSearchParams(entries.map(([key, value]) => [key, String(value)]));
+    return slackFetchJson<T>(`${SLACK_API_BASE_URL}/${method}?${query.toString()}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  }
+  return slackFetchJson<T>(`${SLACK_API_BASE_URL}/${method}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify(Object.fromEntries(entries)),
+  });
+}
+
+type SlackRawMessage = {
+  type?: string;
+  subtype?: string;
+  ts?: string;
+  thread_ts?: string;
+  user?: string;
+  bot_id?: string;
+  username?: string;
+  text?: string;
+  reply_count?: number;
+  latest_reply?: string;
+  edited?: { ts?: string };
+  files?: Array<{ id?: string; name?: string; title?: string; mimetype?: string; permalink?: string }>;
+  reactions?: Array<{ name?: string; count?: number; users?: string[] }>;
+};
+
+type SlackMessagesResponse = {
+  ok?: boolean;
+  messages?: SlackRawMessage[];
+  has_more?: boolean;
+  response_metadata?: { next_cursor?: string };
+};
+
+export interface SlackMessage {
+  ts: string;
+  threadTs: string | null;
+  userId: string | null;
+  botId: string | null;
+  subtype: string | null;
+  text: string;
+  replyCount: number;
+  latestReplyTs: string | null;
+  edited: boolean;
+  files: Array<{ id: string | null; name: string | null; mimetype: string | null; permalink: string | null }>;
+  reactions: Array<{ name: string; count: number; userIds: string[] }>;
+  /** Opens the message in Slack. */
+  link: string;
+}
+
+export interface SlackMessagePage {
+  messages: SlackMessage[];
+  hasMore: boolean;
+  nextCursor: string | null;
+}
+
+export function buildSlackMessageLink(channelId: string, ts: string, threadTs?: string | null): string {
+  const base = `https://slack.com/archives/${channelId}/p${ts.replace(".", "")}`;
+  return threadTs && threadTs !== ts ? `${base}?thread_ts=${threadTs}&cid=${channelId}` : base;
+}
+
+function normalizeSlackMessage(channelId: string, raw: SlackRawMessage): SlackMessage | null {
+  const ts = readTrimmedString(raw.ts);
+  if (!ts) return null;
+  const threadTs = readTrimmedString(raw.thread_ts);
+  return {
+    ts,
+    threadTs,
+    userId: readTrimmedString(raw.user),
+    botId: readTrimmedString(raw.bot_id),
+    subtype: readTrimmedString(raw.subtype),
+    text: typeof raw.text === "string" ? raw.text : "",
+    replyCount: typeof raw.reply_count === "number" ? raw.reply_count : 0,
+    latestReplyTs: readTrimmedString(raw.latest_reply),
+    edited: Boolean(raw.edited?.ts),
+    files: (raw.files ?? []).map((file) => ({
+      id: readTrimmedString(file.id),
+      name: readTrimmedString(file.name) ?? readTrimmedString(file.title),
+      mimetype: readTrimmedString(file.mimetype),
+      permalink: readTrimmedString(file.permalink),
+    })),
+    reactions: (raw.reactions ?? [])
+      .map((reaction) => ({
+        name: readTrimmedString(reaction.name) ?? "",
+        count: typeof reaction.count === "number" ? reaction.count : 0,
+        userIds: (reaction.users ?? []).filter((id): id is string => typeof id === "string"),
+      }))
+      .filter((reaction) => reaction.name),
+    link: buildSlackMessageLink(channelId, ts, threadTs),
+  };
+}
+
+function toMessagePage(channelId: string, response: SlackMessagesResponse): SlackMessagePage {
+  return {
+    messages: (response.messages ?? [])
+      .map((message) => normalizeSlackMessage(channelId, message))
+      .filter((message): message is SlackMessage => message !== null),
+    hasMore: response.has_more === true,
+    nextCursor: readTrimmedString(response.response_metadata?.next_cursor),
+  };
+}
+
+export interface SlackHistoryQuery {
+  limit?: number;
+  /** Only messages after this ts (exclusive). */
+  oldest?: string | null;
+  /** Only messages before this ts (exclusive). */
+  latest?: string | null;
+  cursor?: string | null;
+}
+
+/** Top-level messages in a channel, newest first (conversations.history). */
+export async function listSlackChannelMessages(
+  db: Db,
+  companyId: string,
+  channelId: string,
+  query: SlackHistoryQuery = {},
+): Promise<SlackMessagePage> {
+  const response = await callSlackApi<SlackMessagesResponse>(db, companyId, channelId, "conversations.history", {
+    channel: channelId,
+    limit: query.limit ?? 50,
+    oldest: query.oldest,
+    latest: query.latest,
+    cursor: query.cursor,
+    inclusive: false,
+  });
+  return toMessagePage(channelId, response);
+}
+
+/** The root message and its replies, oldest first (conversations.replies). */
+export async function listSlackThreadMessages(
+  db: Db,
+  companyId: string,
+  channelId: string,
+  threadTs: string,
+  query: Pick<SlackHistoryQuery, "limit" | "cursor"> = {},
+): Promise<SlackMessagePage> {
+  const response = await callSlackApi<SlackMessagesResponse>(db, companyId, channelId, "conversations.replies", {
+    channel: channelId,
+    ts: threadTs,
+    limit: query.limit ?? 200,
+    cursor: query.cursor,
+  });
+  return toMessagePage(channelId, response);
+}
+
+/** One message by ts, including a reply inside a thread. */
+export async function getSlackMessage(
+  db: Db,
+  companyId: string,
+  channelId: string,
+  ts: string,
+): Promise<SlackMessage | null> {
+  const response = await callSlackApi<SlackMessagesResponse>(db, companyId, channelId, "conversations.history", {
+    channel: channelId,
+    latest: ts,
+    oldest: ts,
+    inclusive: true,
+    limit: 1,
+  });
+  const top = toMessagePage(channelId, response).messages.find((message) => message.ts === ts);
+  if (top) return top;
+  // Thread replies are not in the channel history; conversations.replies with
+  // the reply's own ts returns its thread, from which we pick the reply.
+  const thread = await callSlackApi<SlackMessagesResponse>(db, companyId, channelId, "conversations.replies", {
+    channel: channelId,
+    ts,
+    latest: ts,
+    oldest: ts,
+    inclusive: true,
+    limit: 1,
+  }).catch((error) => {
+    if (error instanceof SlackApiError && error.code === "thread_not_found") return { messages: [] } as SlackMessagesResponse;
+    throw error;
+  });
+  return toMessagePage(channelId, thread).messages.find((message) => message.ts === ts) ?? null;
+}
+
+/** Edit a message the bot posted (chat.update). Slack rejects edits of other people's messages. */
+export async function updateSlackMessage(
+  db: Db,
+  companyId: string,
+  input: { channelId: string; ts: string; text: string; blocks?: Array<Record<string, unknown>> | null },
+): Promise<{ channelId: string; ts: string }> {
+  const response = await callSlackApi<{ channel?: string; ts?: string }>(db, companyId, input.channelId, "chat.update", {
+    channel: input.channelId,
+    ts: input.ts,
+    text: input.text,
+    ...(input.blocks ? { blocks: input.blocks } : {}),
+  }, { httpMethod: "POST" });
+  return { channelId: readTrimmedString(response.channel) ?? input.channelId, ts: readTrimmedString(response.ts) ?? input.ts };
+}
+
+/** Delete a message the bot posted (chat.delete). */
+export async function deleteSlackMessage(db: Db, companyId: string, input: { channelId: string; ts: string }): Promise<void> {
+  await callSlackApi(db, companyId, input.channelId, "chat.delete", { channel: input.channelId, ts: input.ts }, { httpMethod: "POST" });
+}
+
+/** Add or remove an emoji reaction as the bot (reactions.add / reactions.remove; needs reactions:write). */
+export async function setSlackReaction(
+  db: Db,
+  companyId: string,
+  input: { channelId: string; ts: string; name: string; remove?: boolean },
+): Promise<void> {
+  try {
+    await callSlackApi(db, companyId, input.channelId, input.remove ? "reactions.remove" : "reactions.add", {
+      channel: input.channelId,
+      timestamp: input.ts,
+      name: input.name,
+    }, { httpMethod: "POST" });
+  } catch (error) {
+    // Adding a reaction that is already there (or removing one that is not) is a no-op for callers.
+    if (error instanceof SlackApiError && (error.code === "already_reacted" || error.code === "no_reaction")) return;
+    throw error;
+  }
+}
+
+/** Join a public channel so the bot can read its history and receive its replies (needs channels:join). */
+export async function joinSlackChannel(db: Db, companyId: string, channelId: string): Promise<void> {
+  await callSlackApi(db, companyId, channelId, "conversations.join", { channel: channelId }, { httpMethod: "POST" });
+}
