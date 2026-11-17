@@ -1551,6 +1551,73 @@ describe("renderPaperclipWakePrompt", () => {
     expect(prompt).toContain("You are waking as the active reviewer for this issue.");
   });
 
+  it("puts a board comment first as an overriding instruction and demotes an older continuation summary", () => {
+    const prompt = renderPaperclipWakePrompt({
+      reason: "issue_commented",
+      issue: { id: "issue-454", identifier: "LCH-454", title: "Start investigating the issues Saksham pointed out", status: "in_progress" },
+      continuationSummary: {
+        key: "continuation-summary",
+        title: "Continuation Summary",
+        body: "# Continuation Summary\n\n- Current mode: implementation\n\n## Next Action\n\n- Inspect the failed run, fix the cause.",
+        updatedAt: "2026-11-17T15:31:39.040Z",
+      },
+      comments: [
+        {
+          id: "comment-agent",
+          issueId: "issue-454",
+          body: "Mapped item 3 to the tracker controller.",
+          createdAt: "2026-11-17T16:20:00.000Z",
+          author: { type: "agent", id: "agent-cto" },
+        },
+        {
+          id: "comment-board",
+          issueId: "issue-454",
+          body: "Stupid do you not know your instructions, your job is to plan and work with other agents not execute coding yourself",
+          createdAt: "2026-11-17T16:21:45.471Z",
+          author: { type: "user", id: "user-1" },
+        },
+      ],
+      commentIds: ["comment-agent", "comment-board"],
+      latestCommentId: "comment-board",
+      fallbackFetchNeeded: false,
+    });
+
+    const boardBlock = prompt.indexOf("## Board instruction (highest priority)");
+    expect(boardBlock).toBeGreaterThan(-1);
+    expect(boardBlock).toBeLessThan(prompt.indexOf("Issue continuation summary"));
+    expect(boardBlock).toBeLessThan(prompt.indexOf("New comments in order:"));
+    const block = prompt.slice(boardBlock, prompt.indexOf("Issue continuation summary"));
+    expect(block).toContain("Board comment comment-board");
+    expect(block).toContain("plan and work with other agents");
+    expect(block).not.toContain("Mapped item 3");
+    expect(block).toContain("overrides the issue title");
+    expect(block).toContain("Before any other tool call, post an issue comment");
+    expect(prompt).toContain("Issue continuation summary (background only, written before the board instruction above");
+    expect(prompt).toContain("by board user user-1");
+    expect(prompt).toContain("by agent agent-cto");
+  });
+
+  it("leaves agent-only comment wakes and newer continuation summaries unchanged", () => {
+    const prompt = renderPaperclipWakePrompt({
+      reason: "issue_commented",
+      issue: { id: "issue-1", identifier: "PAP-1", title: "Thing", status: "in_progress" },
+      continuationSummary: {
+        key: "continuation-summary",
+        title: "Continuation Summary",
+        body: "# Continuation Summary\n\n## Next Action\n\n- Ship it.",
+        updatedAt: "2026-11-17T17:00:00.000Z",
+      },
+      comments: [
+        { id: "c1", issueId: "issue-1", body: "Child finished.", createdAt: "2026-11-17T16:00:00.000Z", author: { type: "agent", id: "agent-2" } },
+      ],
+      commentIds: ["c1"],
+      latestCommentId: "c1",
+      fallbackFetchNeeded: false,
+    });
+    expect(prompt).not.toContain("## Board instruction");
+    expect(prompt).toContain("Issue continuation summary:\n");
+  });
+
   it("includes continuation and child issue summaries in structured wake context", () => {
     const payload = {
       reason: "issue_children_completed",
