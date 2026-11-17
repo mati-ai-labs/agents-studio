@@ -1352,6 +1352,12 @@ export function renderPaperclipWakePrompt(
   const includeExecutionContract = resumedSession || options.includeExecutionContract === true;
   const hasWakeCommentBatch =
     normalized.comments.length > 0 || normalized.includedCount > 0 || normalized.requestedCount > 0;
+  const boardComments = normalized.comments.filter((comment) => comment.authorType === "user" && comment.body.trim());
+  const latestBoardCommentAt = boardComments
+    .map((comment) => comment.createdAt)
+    .filter((value): value is string => Boolean(value))
+    .sort()
+    .at(-1) ?? null;
   const executionStage = normalized.executionStage;
   const hasIssueScope = Boolean(normalized.issue);
   const hasChatScope = Boolean(normalized.chat?.message);
@@ -1482,6 +1488,34 @@ export function renderPaperclipWakePrompt(
         ...executionContractLines,
         ...wakeSummaryLines,
       ];
+  // A human (board) comment is an instruction, not just more context. Put it
+  // first and say plainly that it overrides the title, the continuation
+  // summary and the agent's own plan; buried at the end of the payload,
+  // agents read past it and keep going on their previous track.
+  if (boardComments.length > 0) {
+    lines.push(
+      "",
+      "## Board instruction (highest priority)",
+      "",
+      boardComments.length === 1
+        ? "A human board member commented on this issue. This is a direct instruction to you."
+        : "Human board members commented on this issue. These are direct instructions to you; the latest one wins where they differ.",
+      "- It overrides the issue title and description, the continuation summary (including its Next Action), the execution contract's defaults and your own plan from earlier runs.",
+      "- Your first action in this run is to follow it. Before any other tool call, post an issue comment that quotes the instruction in one line and says exactly what you will now do differently, then do that.",
+      "- If it tells you to stop doing something (for example \"don't code yourself, delegate\"), stop immediately, even mid-task. Do not finish \"just this one step\" first.",
+      "- If it is blunt or angry, the content still applies; act on what it asks. If it is unclear, do the most reasonable reading of it and say which reading you took.",
+      "- It does not override safety rules or secrecy of credentials.",
+      "",
+    );
+    for (const comment of boardComments) {
+      lines.push(
+        `Board comment ${comment.id ?? "unknown"} at ${comment.createdAt ?? "unknown"}:`,
+        comment.body,
+        ...(comment.bodyTruncated ? ["[comment body truncated]"] : []),
+        "",
+      );
+    }
+  }
   if (normalized.issue) {
     lines.push(`- issue: ${normalized.issue.identifier ?? normalized.issue.id ?? "unknown"}${normalized.issue.title ? ` ${normalized.issue.title}` : ""}`);
   }
@@ -1770,9 +1804,14 @@ export function renderPaperclipWakePrompt(
   }
 
   if (normalized.continuationSummary) {
+    const summaryUpdatedAt = normalized.continuationSummary.updatedAt;
+    const supersededByBoard = boardComments.length > 0
+      && (!summaryUpdatedAt || !latestBoardCommentAt || summaryUpdatedAt <= latestBoardCommentAt);
     lines.push(
       "",
-      "Issue continuation summary:",
+      supersededByBoard
+        ? "Issue continuation summary (background only, written before the board instruction above; where it conflicts, including its Next Action and mode, the board instruction wins):"
+        : "Issue continuation summary:",
       normalized.continuationSummary.body,
     );
     if (normalized.continuationSummary.bodyTruncated) {
@@ -1832,9 +1871,8 @@ export function renderPaperclipWakePrompt(
   }
 
   for (const [index, comment] of normalized.comments.entries()) {
-    const authorLabel = comment.authorId
-      ? `${comment.authorType ?? "unknown"} ${comment.authorId}`
-      : comment.authorType ?? "unknown";
+    const authorType = comment.authorType === "user" ? "board user" : comment.authorType ?? "unknown";
+    const authorLabel = comment.authorId ? `${authorType} ${comment.authorId}` : authorType;
     lines.push(
       `${index + 1}. comment ${comment.id ?? "unknown"} at ${comment.createdAt ?? "unknown"} by ${authorLabel}`,
       comment.body,
