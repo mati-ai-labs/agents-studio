@@ -17,6 +17,23 @@ import {
 import type { PreviewLeaseWithRuntimeService } from "../services/previews.js";
 
 describe("preview proxy", () => {
+  it("does not hang on non-ASCII identifiers or characters in a bundle", () => {
+    const slug = "web-888991678affcb777d";
+    const source = [
+      'import { a } from "/src/a.js";',
+      "const café = 1, π = 3.14, ñandú = café + π;",
+      "const \u00e9t\u00e9 = 2; const 名前 = 'x';",
+      "label: for (const x of [1]) { break label; } ·",
+      'export default { café, ñandú, 名前 };',
+    ].join("\n");
+    const started = Date.now();
+    const rewritten = rewritePreviewModuleReferences(source, slug);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(rewritten).toContain("const café = 1, π = 3.14, ñandú = café + π;");
+    expect(rewritten).toContain("const 名前 = 'x';");
+    expect(rewritten).toContain(`/preview/${slug}/src/a.js`);
+  });
+
   let upstream: Server | null = null;
 
   afterEach(async () => {
