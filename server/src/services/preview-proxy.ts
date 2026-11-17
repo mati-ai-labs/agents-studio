@@ -318,6 +318,15 @@ function isRootRelativeAssetUrl(value: string, prefix: string): boolean {
 
 const HMR_LOOPBACK_RE = /^(?:127\.0\.0\.1|localhost):(\d+)\/?$/;
 
+const PREVIEW_JS_KEYWORDS = new Set([
+  "import", "from", "export", "new", "const", "let", "var", "function",
+  "return", "if", "else", "class", "async", "await", "of", "in",
+  "typeof", "instanceof", "throw", "try", "catch", "finally", "switch",
+  "case", "default", "break", "continue", "delete", "void", "this",
+  "super", "extends", "yield", "static", "get", "set", "do", "while",
+  "for", "with", "debugger", "true", "false", "null", "undefined",
+]);
+
 export function rewritePreviewModuleReferences(
   source: string,
   slug: string,
@@ -487,18 +496,15 @@ export function rewritePreviewModuleReferences(
     // Identifier / keyword
     if (/[A-Za-z_$]/.test(c) || c.charCodeAt(0) > 127) {
       let j = i;
-      while (j < n && /[A-Za-z0-9_$]/.test(source[j])) j++;
+      // Non-ASCII characters count as identifier characters too. Matching only
+      // ASCII here made a non-ASCII start char consume nothing, so the loop
+      // never advanced and pushed empty tokens until "Invalid array length",
+      // freezing the server's event loop on every request for that bundle.
+      while (j < n && (/[A-Za-z0-9_$]/.test(source[j]) || source.charCodeAt(j) > 127)) j++;
+      if (j === i) j = i + 1;
       const word = source.slice(i, j);
-      const keywords = new Set([
-        "import", "from", "export", "new", "const", "let", "var", "function",
-        "return", "if", "else", "class", "async", "await", "of", "in",
-        "typeof", "instanceof", "throw", "try", "catch", "finally", "switch",
-        "case", "default", "break", "continue", "delete", "void", "this",
-        "super", "extends", "yield", "static", "get", "set", "do", "while",
-        "for", "with", "debugger", "true", "false", "null", "undefined",
-      ]);
       out.push(word);
-      pushToken({ kind: keywords.has(word) ? "kw" : "id", value: word });
+      pushToken({ kind: PREVIEW_JS_KEYWORDS.has(word) ? "kw" : "id", value: word });
       i = j;
       continue;
     }
