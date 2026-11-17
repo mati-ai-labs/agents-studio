@@ -76,6 +76,13 @@ const SLACK_OAUTH_SCOPES = [
   "chat:write",
   "chat:write.public",
   "team:read",
+  // Agent Slack tool: tag members, read private channels the bot is in,
+  // join public channels to read them, and react to messages.
+  "users:read",
+  "groups:history",
+  "channels:join",
+  "reactions:read",
+  "reactions:write",
 ] as const;
 
 interface ConnectorOAuthConfig {

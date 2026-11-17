@@ -74,6 +74,7 @@ import { slackChannelRoutes } from "./routes/slack-channel-routes.js";
 import { instanceSlackRoutes } from "./routes/instance-slack.js";
 import { slackAgentRoutes } from "./routes/slack-agent.js";
 import { slackSlashCommandsRoute } from "./routes/slack-slash-commands.js";
+import { slackInteractionsRoute } from "./routes/slack-interactions.js";
 import { chatRoutes } from "./routes/chat.js";
 import { previewApiRoutes, previewAuthRoutes, previewHostMiddleware, previewProxyRoutes } from "./routes/previews.js";
 import { readBrandedStaticIndexHtml } from "./static-index-html.js";
@@ -433,6 +434,7 @@ export async function createApp(
   api.use("/connectors/slack", slackEventsRoute(db, slackWorker.kick));
   api.use("/connectors/slack", slackChannelRoutes(db));
   api.use("/connectors/slack", slackSlashCommandsRoute(db));
+  api.use("/connectors/slack", slackInteractionsRoute(db, { pluginWorkerManager: workerManager }));
   api.use("/connectors", connectorsRouter);
   // Second mount: agent-runtime credentials endpoint. `api` is itself mounted
   // at `/api`, so this resolves to /api/agents/:agentId/connector-credentials/:type.

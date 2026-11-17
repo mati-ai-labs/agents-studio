@@ -115,6 +115,7 @@ export { slackChannelRoutes } from "./slack_channel_routes.js";
 export { slackThreadBindings } from "./slack_thread_bindings.js";
 export { slackEventDeliveries } from "./slack_event_deliveries.js";
 export { slackOutboundDeliveries } from "./slack_outbound_deliveries.js";
+export { slackPolls, type SlackPoll, type SlackPollOption } from "./slack_polls.js";
 export { secretAccessEvents } from "./secret_access_events.js";
 export {
   toolApplications,
