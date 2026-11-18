@@ -146,6 +146,7 @@ import {
   SVG_CONTENT_TYPE,
 } from "../attachment-types.js";
 import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.js";
+import { resolveSubscriptionOwnerForNewIssue } from "./user-ai-subscriptions.js";
 import {
   ISSUE_BLOCKERS_RESOLVED_WAKE_REASON,
   buildIssueBlockersResolvedWakeIdempotencyKey,
@@ -295,6 +296,15 @@ type SuccessfulRunHandoffActivityRow = {
 };
 type TaskWatchdogService = ReturnType<typeof taskWatchdogService>;
 type TaskWatchdogServiceFactory = typeof taskWatchdogService;
+
+/** Pull the "Run with: My subscription" flag out before schema validation. */
+function extractUseMySubscriptionFlag(req: Request, res: Response, next: () => void) {
+  if (req.body && typeof req.body === "object" && !Array.isArray(req.body) && "useMySubscription" in req.body) {
+    res.locals.useMySubscription = (req.body as Record<string, unknown>).useMySubscription === true;
+    delete (req.body as Record<string, unknown>).useMySubscription;
+  }
+  next();
+}
 
 function applyCreateIssueStatusDefault(req: Request, res: Response, next: () => void) {
   if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
@@ -6957,7 +6967,7 @@ export function issueRoutes(
     res.json({ ok: true });
   });
 
-  router.post("/companies/:companyId/issues", applyCreateIssueStatusDefault, validate(createIssueSchema), async (req, res) => {
+  router.post("/companies/:companyId/issues", extractUseMySubscriptionFlag, applyCreateIssueStatusDefault, validate(createIssueSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
     if (isSkillTestScopedActor(req)) {
@@ -7085,8 +7095,12 @@ export function issueRoutes(
       executionPolicy,
     }, actor);
     let deduplicationReason: "idempotency_key" | "recent_open_title" | null = null;
+    const subscriptionOwnerUserId = res.locals.useMySubscription === true
+      ? await resolveSubscriptionOwnerForNewIssue(db, req, companyId, createBody.assigneeAgentId ?? null)
+      : null;
     const issue = await svc.create(companyId, {
       ...createBody,
+      ...(subscriptionOwnerUserId ? { subscriptionOwnerUserId } : {}),
       ...(taskBridgeOriginForActor(req) ?? {}),
       id: issueId,
       originRunId: createBody.originRunId ?? actor.runId,

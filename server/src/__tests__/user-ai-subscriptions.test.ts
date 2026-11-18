@@ -14,6 +14,7 @@ import {
   userAiSubscriptionService,
 } from "../services/user-ai-subscriptions.js";
 import { issueService } from "../services/issues.js";
+import { resolveSubscriptionOwnerForNewIssue } from "../routes/user-ai-subscriptions.js";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 
 const CLAUDE_TOKEN_A = `sk-ant-oat01-${"a".repeat(40)}`;
@@ -227,5 +228,39 @@ describeDb("user AI subscriptions (db)", () => {
     expect(ownerOf(byOtherUser.id)).toBeNull();
     expect(ownerOf(byAgentInTree.id)).toBe("owner");
     expect(ownerOf(byAgentOutside.id)).toBeNull();
+  }, 30_000);
+  it("attaches a subscription at create time only for the signed-in user with a matching connection", async () => {
+    const companyId = randomUUID();
+    const codexAgent = randomUUID();
+    const geminiAgent = randomUUID();
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Co2",
+      issuePrefix: `R${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values([
+      { id: codexAgent, companyId, name: "Codex", role: "engineer", adapterType: "codex_local", adapterConfig: {} },
+      { id: geminiAgent, companyId, name: "Gem", role: "engineer", adapterType: "gemini_local", adapterConfig: {} },
+    ]);
+    await userAiSubscriptionService(db).saveCodexAuthJson("creator", codexAuth("creator@example.com"));
+    const board = (userId: string) => ({ actor: { type: "board", userId } }) as never;
+
+    await expect(resolveSubscriptionOwnerForNewIssue(db, board("creator"), companyId, codexAgent)).resolves.toBe("creator");
+    await expect(resolveSubscriptionOwnerForNewIssue(db, board("no-sub-user"), companyId, codexAgent)).rejects.toThrow(/Connect your Codex/);
+    await expect(resolveSubscriptionOwnerForNewIssue(db, board("creator"), companyId, geminiAgent)).rejects.toThrow(/Claude Code or Codex/);
+    await expect(
+      resolveSubscriptionOwnerForNewIssue(db, { actor: { type: "agent", agentId: codexAgent } } as never, companyId, codexAgent),
+    ).rejects.toThrow(/signed-in user/);
+
+    const created = await issueService(db).create(companyId, {
+      title: "with sub",
+      assigneeAgentId: codexAgent,
+      status: "backlog",
+      createdByUserId: "creator",
+      subscriptionOwnerUserId: "creator",
+    } as never);
+    const row = await db.select({ owner: issues.subscriptionOwnerUserId }).from(issues).where(eq(issues.id, created.id)).then((r) => r[0]);
+    expect(row?.owner).toBe("creator");
   }, 30_000);
 });
