@@ -92,7 +92,7 @@ import { companySkillService } from "./company-skills.js";
 import { hasActiveRoutineContinuation } from "./routine-continuation-guard.js";
 import { budgetService, type BudgetEnforcementScope } from "./budgets.js";
 import { secretService, type MissingRuntimeBinding } from "./secrets.js";
-import { providerForAdapterType, userAiSubscriptionService } from "./user-ai-subscriptions.js";
+import { decideUserSubscriptionForRun, detectUserSubscriptionAuthFailure, providerForAdapterType, userAiSubscriptionService } from "./user-ai-subscriptions.js";
 import { resolveDefaultAgentWorkspaceDir, resolveManagedProjectWorkspaceDir } from "../home-paths.js";
 import {
   buildHeartbeatRunIssueComment,
@@ -6071,10 +6071,18 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         .then((rows) => rows[0] ?? null);
       if (wake?.requestedByActorType === "user") wakeUserId = readNonEmptyString(wake.requestedByActorId);
     }
-    if (wakeUserId && wakeUserId !== ownerUserId) {
+    const isAssigneeRun = issueContext.assigneeAgentId === agent.id;
+    const preDecision = decideUserSubscriptionForRun({
+      ownerUserId,
+      provider,
+      wakeUserId,
+      ownerHasActiveCredential: true,
+      isAssigneeRun,
+    });
+    if (preDecision.kind === "studio_default") {
       context.paperclipCredentialSource = {
         kind: "studio_default",
-        reason: "woken_by_other_user",
+        reason: preDecision.reason,
         subscriptionOwnerUserId: ownerUserId,
       };
       return;
@@ -6085,29 +6093,36 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       provider,
       adapterConfig: resolvedConfig,
     });
-    if (!prepared) {
-      if (issueContext.assigneeAgentId === agent.id) {
-        const providerName = provider === "claude" ? "Claude" : "Codex";
-        throw new ConfigurationIncompleteFailure(
-          `configuration incomplete: this issue is set to run on a personal ${providerName} subscription, ` +
-            `but that subscription is not connected or has expired. The subscription owner should reconnect it in ` +
-            `Settings → My AI subscriptions, or switch the issue back to Studio default.`,
-          {
-            configurationIncomplete: {
-              reason: "user_ai_subscription_unavailable",
-              companyId: agent.companyId,
-              agentId: agent.id,
-              issueId: issueContext.id,
-              subscriptionOwnerUserId: ownerUserId,
-              provider,
-              missingBindings: [],
-            },
+    const decision = decideUserSubscriptionForRun({
+      ownerUserId,
+      provider,
+      wakeUserId,
+      ownerHasActiveCredential: prepared !== null,
+      isAssigneeRun,
+    });
+    if (decision.kind === "block") {
+      const providerName = provider === "claude" ? "Claude" : "Codex";
+      throw new ConfigurationIncompleteFailure(
+        `configuration incomplete: this issue is set to run on a personal ${providerName} subscription, ` +
+          `but that subscription is not connected or has expired. The subscription owner should reconnect it in ` +
+          `Settings → AI subscriptions, or switch the issue back to Studio default.`,
+        {
+          configurationIncomplete: {
+            reason: "user_ai_subscription_unavailable",
+            companyId: agent.companyId,
+            agentId: agent.id,
+            issueId: issueContext.id,
+            subscriptionOwnerUserId: ownerUserId,
+            provider,
+            missingBindings: [],
           },
-        );
-      }
+        },
+      );
+    }
+    if (decision.kind !== "use_owner_subscription" || !prepared) {
       context.paperclipCredentialSource = {
         kind: "studio_default",
-        reason: `owner_has_no_${provider}_subscription`,
+        reason: "owner_has_no_subscription",
         subscriptionOwnerUserId: ownerUserId,
       };
       return;
@@ -13730,7 +13745,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
             "stdout",
             "[paperclip] This issue runs on another user's personal subscription, but this run was triggered by a different user, so Studio default credentials are used.\n",
           );
-        } else if (typeof credentialSource.reason === "string" && credentialSource.reason.startsWith("owner_has_no_")) {
+        } else if (credentialSource.reason === "owner_has_no_subscription") {
           await onLog(
             "stdout",
             "[paperclip] The issue owner has no personal subscription for this agent's provider; using Studio default credentials.\n",
@@ -14419,6 +14434,21 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         outcome = "succeeded";
       } else {
         outcome = "failed";
+      }
+      if (outcome === "failed") {
+        const credentialSource = parseObject(context.paperclipCredentialSource);
+        const ownerUserId = readNonEmptyString(credentialSource.subscriptionOwnerUserId);
+        const provider = credentialSource.provider === "claude" || credentialSource.provider === "codex"
+          ? credentialSource.provider
+          : null;
+        const authError = credentialSource.kind === "user_subscription" && ownerUserId && provider
+          ? detectUserSubscriptionAuthFailure(`${adapterResult.errorMessage ?? ""}\n${stderrExcerpt}\n${stdoutExcerpt}`)
+          : null;
+        if (authError && ownerUserId && provider) {
+          await userAiSubscriptionsSvc.markInvalid(ownerUserId, provider, authError).catch((err) => {
+            logger.warn({ err, runId: run.id }, "failed to mark user AI subscription invalid");
+          });
+        }
       }
 
       const nextSessionState = resolveNextSessionState({

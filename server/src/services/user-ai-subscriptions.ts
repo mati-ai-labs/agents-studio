@@ -480,3 +480,48 @@ export function assertProvider(value: unknown): UserAiSubscriptionProvider {
   if (value === "claude" || value === "codex") return value;
   throw badRequest("provider must be 'claude' or 'codex'");
 }
+
+export type UserSubscriptionRunDecision =
+  | { kind: "none" }
+  | { kind: "studio_default"; reason: "woken_by_other_user" | "owner_has_no_subscription" }
+  | { kind: "use_owner_subscription" }
+  | { kind: "block" };
+
+/**
+ * Pure policy: who pays for this run.
+ *  - no owner / unsupported adapter -> Studio default (unchanged behaviour)
+ *  - woken directly by a different human -> Studio default (never their quota)
+ *  - owner credential available -> owner's subscription
+ *  - otherwise: assignee run is blocked; other agents fall back to Studio default
+ */
+export function decideUserSubscriptionForRun(input: {
+  ownerUserId: string | null;
+  provider: UserAiSubscriptionProvider | null;
+  wakeUserId: string | null;
+  ownerHasActiveCredential: boolean;
+  isAssigneeRun: boolean;
+}): UserSubscriptionRunDecision {
+  if (!input.ownerUserId || !input.provider) return { kind: "none" };
+  if (input.wakeUserId && input.wakeUserId !== input.ownerUserId) {
+    return { kind: "studio_default", reason: "woken_by_other_user" };
+  }
+  if (input.ownerHasActiveCredential) return { kind: "use_owner_subscription" };
+  return input.isAssigneeRun ? { kind: "block" } : { kind: "studio_default", reason: "owner_has_no_subscription" };
+}
+
+const SUBSCRIPTION_AUTH_FAILURE_PATTERNS: Array<[RegExp, string]> = [
+  [/OAuth (access )?token (is invalid|has expired|has been revoked)/i, "Claude rejected the token (expired or revoked)"],
+  [/API Error: 401/i, "Claude returned 401 Unauthorized"],
+  [/invalid bearer token/i, "Claude rejected the token"],
+  [/refresh_token_(reused|expired|invalidated)|invalid_grant/i, "ChatGPT login expired; sign in again"],
+  [/access token could not be refreshed/i, "ChatGPT login expired; sign in again"],
+  [/status 401 Unauthorized/i, "Codex returned 401 Unauthorized"],
+];
+
+/** Recognise provider auth failures (not tool/MCP errors) so the UI can ask for a reconnect. */
+export function detectUserSubscriptionAuthFailure(text: string): string | null {
+  for (const [pattern, message] of SUBSCRIPTION_AUTH_FAILURE_PATTERNS) {
+    if (pattern.test(text)) return message;
+  }
+  return null;
+}
