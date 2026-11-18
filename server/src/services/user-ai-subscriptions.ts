@@ -57,6 +57,9 @@ export const CLAUDE_STUDIO_ENV_KEYS_TO_BLANK = [
   "CLAUDE_CODE_USE_VERTEX",
 ] as const;
 
+/** Default turn cap for personal-subscription Claude runs (one run can't drain a 5-hour window). */
+export const SUBSCRIPTION_DEFAULT_MAX_TURNS = 60;
+
 export const CODEX_STUDIO_ENV_KEYS_TO_BLANK = ["OPENAI_API_KEY", "OPENAI_BASE_URL"] as const;
 
 const CLAUDE_SETUP_TOKEN_RE = /^sk-ant-oat01-[A-Za-z0-9_-]{20,}$/;
@@ -535,6 +538,11 @@ async function seedClaudeConfigDir(dir: string): Promise<void> {
   for (const key of Object.keys(env)) {
     if (key.startsWith("ANTHROPIC_") || key.startsWith("CLAUDE_CODE_USE_") || key === "API_TIMEOUT_MS") delete env[key];
   }
+  // Personal-subscription runs go straight to Anthropic, so MCP tool search
+  // works: always defer MCP tool schemas instead of "auto", which sends every
+  // tool definition upfront on large-context models (measured: ~110K tokens per
+  // turn with GitHub + Google Workspace MCP vs ~35K).
+  env.ENABLE_TOOL_SEARCH = "true";
   settings.env = env;
   delete settings.apiKeyHelper;
   await writePrivateFile(path.join(dir, "settings.json"), JSON.stringify(settings, null, 2));

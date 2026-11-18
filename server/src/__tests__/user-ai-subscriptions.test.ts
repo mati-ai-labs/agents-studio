@@ -167,7 +167,8 @@ describeDb("user AI subscriptions (db)", () => {
     const configDir = prepared!.envOverrides.CLAUDE_CONFIG_DIR!;
     expect(configDir).not.toBe(process.env.CLAUDE_CONFIG_DIR);
     const settings = JSON.parse(await fs.readFile(path.join(configDir, "settings.json"), "utf8"));
-    expect(settings.env).toEqual({ ENABLE_TOOL_SEARCH: "1" });
+    // Studio routing stripped; MCP tool schemas always deferred on personal subscriptions.
+    expect(settings.env).toEqual({ ENABLE_TOOL_SEARCH: "true" });
     expect(settings.permissions).toEqual({ defaultMode: "bypassPermissions" });
     // Token never written to disk.
     const files = await fs.readdir(configDir);
