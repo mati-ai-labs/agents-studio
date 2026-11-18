@@ -135,6 +135,7 @@ import {
   Plus,
   Repeat,
   SlidersHorizontal,
+  ListChecks,
   UserRound,
   CalendarDays,
   XCircle,
@@ -1254,6 +1255,8 @@ export function IssueDetail() {
   const { pushToast } = useToastActions();
   const { isMobile } = useSidebar();
   const [moreOpen, setMoreOpen] = useState(false);
+  // Right panel choice from the header: null = automatic (Output once work started, else Properties).
+  const [panelChoice, setPanelChoice] = useState<{ issueId: string; panel: "properties" | "output" } | null>(null);
   const [copied, setCopied] = useState(false);
   const [mobilePropsOpen, setMobilePropsOpen] = useState(false);
   const [detailTab, setDetailTab] = useState("chat");
@@ -2679,8 +2682,9 @@ export function IssueDetail() {
       return;
     }
 
+    const chosenPanel = panelChoice?.issueId === issue.id ? panelChoice.panel : null;
     // When issue has left todo status (or was worked on before), show Output panel by default instead of Properties
-    if (issue.status !== "todo" || hasIssueWorkStarted(issue.id)) {
+    if (chosenPanel === "output" || (chosenPanel !== "properties" && (issue.status !== "todo" || hasIssueWorkStarted(issue.id)))) {
       openPanel(
         "Output",
         <IssueOutputPanel
@@ -2718,6 +2722,7 @@ export function IssueDetail() {
     panelIssue,
     attachments,
     attachmentsLoading,
+    panelChoice,
   ]);
 
   const goToInboxShortcutArmedRef = useRef(false);
@@ -3507,10 +3512,30 @@ export function IssueDetail() {
                 panelVisible ? "opacity-0 pointer-events-none w-0 overflow-hidden" : "opacity-100",
               )}
               onClick={() => setPanelVisible(true)}
-              title="Show properties"
+              title="Show panel"
             >
               <SlidersHorizontal className="h-4 w-4" />
             </Button>
+            {issue && detailTab !== "output" ? (() => {
+              const showingProperties = panelChoice?.issueId === issue.id
+                ? panelChoice.panel === "properties"
+                : !(issue.status !== "todo" || hasIssueWorkStarted(issue.id));
+              return (
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className={cn("shrink-0", panelVisible && showingProperties && "bg-accent text-foreground")}
+                  onClick={() => {
+                    setPanelChoice({ issueId: issue.id, panel: panelVisible && showingProperties ? "output" : "properties" });
+                    setPanelVisible(true);
+                  }}
+                  title={panelVisible && showingProperties ? "Show output" : "Show properties"}
+                  aria-label={panelVisible && showingProperties ? "Show output" : "Show properties"}
+                >
+                  <ListChecks className="h-4 w-4" />
+                </Button>
+              );
+            })() : null}
 
             <Popover open={moreOpen} onOpenChange={setMoreOpen}>
               <PopoverTrigger asChild>

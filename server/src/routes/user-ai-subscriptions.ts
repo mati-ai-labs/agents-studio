@@ -173,3 +173,35 @@ export function userAiSubscriptionRoutes(db: Db) {
 
   return router;
 }
+
+/**
+ * "Run with: My subscription" chosen in the new-issue dialog. The owner is always
+ * the acting board user — never a user id from the request body.
+ */
+export async function resolveSubscriptionOwnerForNewIssue(
+  db: Db,
+  req: Request,
+  companyId: string,
+  assigneeAgentId: string | null | undefined,
+): Promise<string> {
+  if (req.actor.type !== "board" || !req.actor.userId) {
+    throw forbidden("Only a signed-in user can attach their own subscription");
+  }
+  const userId = req.actor.userId;
+  const assignee = assigneeAgentId
+    ? await db
+        .select({ adapterType: agents.adapterType })
+        .from(agents)
+        .where(and(eq(agents.id, assigneeAgentId), eq(agents.companyId, companyId)))
+        .then((rows) => rows[0] ?? null)
+    : null;
+  const provider = providerForAdapterType(assignee?.adapterType);
+  if (!provider) {
+    throw badRequest("A personal subscription needs the issue to be assigned to a Claude Code or Codex agent.");
+  }
+  const mine = await userAiSubscriptionService(db).get(userId, provider);
+  if (!mine || mine.status !== "active") {
+    throw badRequest(`Connect your ${provider === "claude" ? "Claude" : "Codex"} subscription first (Settings → AI subscriptions).`);
+  }
+  return userId;
+}

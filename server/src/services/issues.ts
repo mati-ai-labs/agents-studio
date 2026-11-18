@@ -6477,7 +6477,8 @@ export function issueService(db: Db) {
           trustExplicitResponsibleUserId: trustExplicitResponsibleUserId === true,
         });
 
-        const subscriptionOwnerUserId = await resolveInheritedSubscriptionOwnerUserId(tx, companyId, {
+        // Explicit owner is only ever set by the create route, to the acting board user.
+        const subscriptionOwnerUserId = issueData.subscriptionOwnerUserId ?? await resolveInheritedSubscriptionOwnerUserId(tx, companyId, {
           parentId: issueData.parentId ?? null,
           createdByUserId: issueData.createdByUserId ?? null,
           createdByAgentId: issueData.createdByAgentId ?? null,
