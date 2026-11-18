@@ -598,14 +598,22 @@ export function NewIssueDialog() {
     [slackChannelsData?.channels, slackCompletion?.channelId],
   );
 
-  const { data: assigneeAdapterModels } = useQuery({
+  const { data: studioAdapterModels } = useQuery({
     queryKey:
       effectiveCompanyId && assigneeAdapterType
         ? queryKeys.agents.adapterModels(effectiveCompanyId, assigneeAdapterType)
         : ["agents", "none", "adapter-models", assigneeAdapterType ?? "none"],
     queryFn: () => agentsApi.adapterModels(effectiveCompanyId!, assigneeAdapterType!),
-    enabled: Boolean(effectiveCompanyId) && newIssueOpen && supportsAssigneeOverrides,
+    enabled: Boolean(effectiveCompanyId) && newIssueOpen && supportsAssigneeOverrides && !effectiveUseMySubscription,
   });
+  // On "My subscription", list the models that subscription actually has (fetched live server-side).
+  const { data: subscriptionModels } = useQuery({
+    queryKey: ["ai-subscriptions", "my-models", subscriptionProvider ?? "none"],
+    queryFn: () => aiSubscriptionsApi.myModels(subscriptionProvider!),
+    enabled: newIssueOpen && effectiveUseMySubscription && Boolean(subscriptionProvider),
+    staleTime: 5 * 60 * 1000,
+  });
+  const assigneeAdapterModels = effectiveUseMySubscription ? subscriptionModels : studioAdapterModels;
 
   const createIssue = useMutation({
     mutationFn: async ({

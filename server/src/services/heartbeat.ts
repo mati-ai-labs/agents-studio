@@ -10896,6 +10896,56 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     return Number(count ?? 0);
   }
 
+  /**
+   * Will this queued run execute on the issue owner's personal subscription?
+   * Mirrors applyUserAiSubscriptionToRun: owner set, matching provider, active
+   * credential, and not woken directly by a different human.
+   */
+  async function queuedRunUsesOwnerSubscription(
+    run: typeof heartbeatRuns.$inferSelect,
+    agent: typeof agents.$inferSelect,
+  ): Promise<boolean> {
+    const provider = providerForAdapterType(agent.adapterType);
+    const context = parseObject(run.contextSnapshot);
+    const issueId = readNonEmptyString(context.issueId);
+    if (!provider || !issueId) return false;
+    const issue = await db
+      .select({ subscriptionOwnerUserId: issues.subscriptionOwnerUserId, assigneeAgentId: issues.assigneeAgentId })
+      .from(issues)
+      .where(and(eq(issues.id, issueId), eq(issues.companyId, agent.companyId)))
+      .then((rows) => rows[0] ?? null);
+    const ownerUserId = issue?.subscriptionOwnerUserId ?? null;
+    if (!ownerUserId) return false;
+    let wakeUserId: string | null = null;
+    const wakeCommentId = deriveCommentId(context, null);
+    if (wakeCommentId) {
+      wakeUserId = await db
+        .select({ authorUserId: issueComments.authorUserId })
+        .from(issueComments)
+        .where(and(eq(issueComments.id, wakeCommentId), eq(issueComments.issueId, issueId)))
+        .then((rows) => rows[0]?.authorUserId ?? null);
+    }
+    if (!wakeUserId && run.wakeupRequestId) {
+      const wake = await db
+        .select({
+          requestedByActorType: agentWakeupRequests.requestedByActorType,
+          requestedByActorId: agentWakeupRequests.requestedByActorId,
+        })
+        .from(agentWakeupRequests)
+        .where(eq(agentWakeupRequests.id, run.wakeupRequestId))
+        .then((rows) => rows[0] ?? null);
+      if (wake?.requestedByActorType === "user") wakeUserId = readNonEmptyString(wake.requestedByActorId);
+    }
+    const subscription = await userAiSubscriptionsSvc.get(ownerUserId, provider);
+    return decideUserSubscriptionForRun({
+      ownerUserId,
+      provider,
+      wakeUserId,
+      ownerHasActiveCredential: subscription?.status === "active",
+      isAssigneeRun: issue?.assigneeAgentId === agent.id,
+    }).kind === "use_owner_subscription";
+  }
+
   // Provider plan quota gate (Instance Settings > General). For agents whose
   // CLI spends a metered plan (MiniMax Token Plan today), hold queued runs
   // while a usage window is at/below the reserve, instead of starting runs
@@ -12172,25 +12222,40 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         return left.createdAt.getTime() - right.createdAt.getTime();
       });
 
+      // The Studio plan quota only governs runs on Studio credentials. Runs on an
+      // issue owner's personal subscription spend the owner's quota, so they are
+      // exempt and may start while Studio runs stay held.
+      let startableRuns = prioritizedRuns;
       const quotaGate = await getProviderQuotaGateForAgent(agent);
       if (quotaGate?.blocked) {
-        const holdKey = quotaGate.resumeAt ?? "unknown";
-        if (globalRunSlotState.quotaHoldLoggedFor !== holdKey) {
-          globalRunSlotState.quotaHoldLoggedFor = holdKey;
-          logger.warn(
-            { reason: quotaGate.reason, resumeAt: quotaGate.resumeAt, agentId },
-            "provider plan quota used up; holding queued runs until reset",
-          );
+        const exemptRuns: Array<typeof heartbeatRuns.$inferSelect> = [];
+        for (const queuedRun of prioritizedRuns) {
+          if (await queuedRunUsesOwnerSubscription(queuedRun, agent)) exemptRuns.push(queuedRun);
         }
-        return [];
+        if (exemptRuns.length === 0) {
+          const holdKey = quotaGate.resumeAt ?? "unknown";
+          if (globalRunSlotState.quotaHoldLoggedFor !== holdKey) {
+            globalRunSlotState.quotaHoldLoggedFor = holdKey;
+            logger.warn(
+              { reason: quotaGate.reason, resumeAt: quotaGate.resumeAt, agentId },
+              "provider plan quota used up; holding queued runs until reset",
+            );
+          }
+          return [];
+        }
+        logger.info(
+          { agentId, exemptRunIds: exemptRuns.map((run) => run.id), reason: quotaGate.reason },
+          "provider plan quota used up; starting runs that use the issue owner's personal subscription",
+        );
+        startableRuns = exemptRuns;
       }
 
-      const globalSlots = await reserveGlobalRunSlots(Math.min(availableSlots, prioritizedRuns.length));
+      const globalSlots = await reserveGlobalRunSlots(Math.min(availableSlots, startableRuns.length));
       if (globalSlots <= 0) return [];
 
       const claimedRuns: Array<typeof heartbeatRuns.$inferSelect> = [];
       try {
-        for (const queuedRun of prioritizedRuns) {
+        for (const queuedRun of startableRuns) {
           if (claimedRuns.length >= globalSlots) break;
           const claimed = await claimQueuedRun(queuedRun, companyAgents);
           if (claimed) claimedRuns.push(claimed);

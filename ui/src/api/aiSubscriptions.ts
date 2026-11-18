@@ -43,6 +43,9 @@ export const aiSubscriptionsApi = {
   getCodexDeviceLogin: () => api.get<CodexDeviceLoginState>("/me/ai-subscriptions/codex/device-login"),
   cancelCodexDeviceLogin: () => api.delete<CodexDeviceLoginState>("/me/ai-subscriptions/codex/device-login"),
   disconnect: (provider: AiSubscriptionProvider) => api.delete<{ ok: true }>(`/me/ai-subscriptions/${provider}`),
+  myModels: (provider: AiSubscriptionProvider) =>
+    api.get<Array<{ id: string; label: string }>>(`/me/ai-subscriptions/${provider}/models`),
+  issueModels: (issueId: string) => api.get<Array<{ id: string; label: string }>>(`/issues/${issueId}/ai-subscription/models`),
   getForIssue: (issueId: string) => api.get<IssueAiSubscription>(`/issues/${issueId}/ai-subscription`),
   setForIssue: (issueId: string, enabled: boolean) =>
     api.put<IssueAiSubscription>(`/issues/${issueId}/ai-subscription`, { enabled }),

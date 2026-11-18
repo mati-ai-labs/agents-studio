@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pickTextColorForPillBg } from "@/lib/color-contrast";
 import { Link } from "@/lib/router";
 import { IssueRunWithRow } from "./IssueRunWithRow";
+import { aiSubscriptionsApi } from "@/api/aiSubscriptions";
 import type { Issue, IssueLabel, Project, WorkspaceRuntimeService } from "@paperclipai/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AdapterModel } from "../api/agents";
@@ -574,14 +575,28 @@ export function IssueProperties({
   );
   const assigneeOverrideChrome = assigneeAdapterType === "claude_local"
     && assigneeOverrideAdapterConfig.chrome === true;
-  const { data: assigneeAdapterModels } = useQuery({
+  const { data: issueSubscription } = useQuery({
+    queryKey: [...queryKeys.aiSubscriptions.issue(issue.id), issue.assigneeAgentId ?? null],
+    queryFn: () => aiSubscriptionsApi.getForIssue(issue.id),
+    enabled: Boolean(issue.assigneeAgentId),
+  });
+  const issueRunsOnSubscription = Boolean(issueSubscription?.ownerUserId && issueSubscription.provider);
+  const { data: studioAdapterModels } = useQuery({
     queryKey:
       companyId && assigneeAdapterType
         ? queryKeys.agents.adapterModels(companyId, assigneeAdapterType)
         : ["agents", "none", "adapter-models", assigneeAdapterType ?? "none"],
     queryFn: () => agentsApi.adapterModels(companyId!, assigneeAdapterType!),
-    enabled: Boolean(companyId) && showAssigneeAdapterOptions && supportsAssigneeOverrides,
+    enabled: Boolean(companyId) && showAssigneeAdapterOptions && supportsAssigneeOverrides && !issueRunsOnSubscription,
   });
+  // Issue runs on the owner's personal subscription: list that subscription's models (fetched live server-side).
+  const { data: subscriptionModels } = useQuery({
+    queryKey: [...queryKeys.aiSubscriptions.issue(issue.id), "models", issueSubscription?.ownerUserId ?? null],
+    queryFn: () => aiSubscriptionsApi.issueModels(issue.id),
+    enabled: showAssigneeAdapterOptions && issueRunsOnSubscription,
+    staleTime: 5 * 60 * 1000,
+  });
+  const assigneeAdapterModels = issueRunsOnSubscription ? subscriptionModels : studioAdapterModels;
   const { data: assigneeCheapProfiles } = useQuery({
     queryKey: companyId && assigneeAdapterType
       ? queryKeys.agents.adapterModelProfiles(companyId, assigneeAdapterType)

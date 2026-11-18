@@ -20,6 +20,7 @@ import { userAiSubscriptions } from "@paperclipai/db";
 import { decryptValue, encryptValue } from "../lib/encryption.js";
 import { badRequest } from "../errors.js";
 import { resolvePaperclipInstanceRoot } from "../home-paths.js";
+import { models as claudeBuiltinModels } from "@paperclipai/adapter-claude-local";
 
 export type UserAiSubscriptionProvider = "claude" | "codex";
 export const USER_AI_SUBSCRIPTION_PROVIDERS: UserAiSubscriptionProvider[] = ["claude", "codex"];
@@ -166,6 +167,59 @@ export interface PreparedUserSubscriptionRun {
   secretEnvKeys: string[];
   configPatch: Record<string, unknown>;
   accountLabel: string | null;
+}
+
+export interface SubscriptionModel {
+  id: string;
+  label: string;
+}
+
+const MODEL_LIST_TTL_MS = 10 * 60 * 1000;
+const modelListCache = new Map<string, { expiresAt: number; models: SubscriptionModel[] }>();
+
+async function fetchClaudeSubscriptionModels(token: string): Promise<SubscriptionModel[]> {
+  for (const beta of ["oauth-2025-04-20", null]) {
+    try {
+      const headers: Record<string, string> = {
+        authorization: `Bearer ${token}`,
+        "anthropic-version": "2023-06-01",
+      };
+      if (beta) headers["anthropic-beta"] = beta;
+      const response = await fetch("https://api.anthropic.com/v1/models?limit=100", {
+        headers,
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!response.ok) continue;
+      const payload = (await response.json()) as { data?: Array<{ id?: unknown; display_name?: unknown }> };
+      const models = (payload.data ?? [])
+        .filter((m): m is { id: string; display_name?: unknown } => typeof m.id === "string" && m.id.length > 0)
+        .map((m) => ({ id: m.id, label: typeof m.display_name === "string" && m.display_name ? m.display_name : m.id }));
+      if (models.length > 0) return models;
+    } catch {
+      // try next variant / fall back
+    }
+  }
+  return claudeBuiltinModels.map((m) => ({ id: m.id, label: m.label }));
+}
+
+async function fetchCodexSubscriptionModels(codexHomeDir: string, codexCommand = "codex"): Promise<SubscriptionModel[]> {
+  const env: NodeJS.ProcessEnv = { ...process.env, CODEX_HOME: codexHomeDir, NO_COLOR: "1" };
+  for (const key of CODEX_STUDIO_ENV_KEYS_TO_BLANK) delete env[key];
+  const stdout = await new Promise<string>((resolve, reject) => {
+    const child = spawn(codexCommand, ["debug", "models"], { env, cwd: codexHomeDir, stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    const timer = setTimeout(() => child.kill("SIGTERM"), 30_000);
+    child.stdout?.on("data", (chunk: Buffer) => { out += chunk.toString("utf8"); });
+    child.on("error", (err) => { clearTimeout(timer); reject(err); });
+    child.on("exit", (code) => { clearTimeout(timer); code === 0 ? resolve(out) : reject(new Error(`codex debug models exited ${code}`)); });
+  });
+  const parsed = JSON.parse(stdout) as { models?: Array<Record<string, unknown>> };
+  return (parsed.models ?? [])
+    .filter((m) => typeof m.slug === "string" && m.visibility !== "hide")
+    .map((m) => ({
+      id: m.slug as string,
+      label: typeof m.display_name === "string" && m.display_name ? m.display_name : (m.slug as string),
+    }));
 }
 
 export function userAiSubscriptionService(db: Db) {
@@ -361,6 +415,28 @@ export function userAiSubscriptionService(db: Db) {
         .where(and(eq(userAiSubscriptions.userId, userId), eq(userAiSubscriptions.provider, provider)));
       const dir = provider === "claude" ? claudeConfigDir(userId) : codexHome(userId);
       await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    },
+
+    /** Models available on `userId`'s own subscription, fetched live with their credential. */
+    async listModels(userId: string, provider: UserAiSubscriptionProvider): Promise<SubscriptionModel[] | null> {
+      const row = await getRow(userId, provider);
+      if (!row || row.status !== "active") return null;
+      const cacheKey = `${userId}:${provider}:${row.updatedAt.getTime()}`;
+      const cached = modelListCache.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) return cached.models;
+      let models: SubscriptionModel[];
+      if (provider === "claude") {
+        models = await fetchClaudeSubscriptionModels(decryptValue(row.credentialEncrypted));
+      } else {
+        const home = codexHome(userId);
+        await ensurePrivateDir(home);
+        const authPath = path.join(home, "auth.json");
+        const onDisk = await readFileOrNull(authPath);
+        if (!onDisk || !parseCodexAuthJson(onDisk).ok) await writePrivateFile(authPath, decryptValue(row.credentialEncrypted));
+        models = await fetchCodexSubscriptionModels(home);
+      }
+      modelListCache.set(cacheKey, { expiresAt: Date.now() + MODEL_LIST_TTL_MS, models });
+      return models;
     },
 
     async markInvalid(userId: string, provider: UserAiSubscriptionProvider, error: string) {

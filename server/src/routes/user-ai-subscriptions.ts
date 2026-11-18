@@ -79,6 +79,15 @@ export function userAiSubscriptionRoutes(db: Db) {
     res.json(svc.getCodexDeviceLoginState(userId));
   });
 
+  router.get("/me/ai-subscriptions/:provider/models", async (req, res) => {
+    const userId = requireBoardUserId(req, res);
+    if (!userId) return;
+    const provider = assertProvider(req.params.provider);
+    const models = await svc.listModels(userId, provider);
+    if (!models) throw badRequest(`Connect your ${provider === "claude" ? "Claude" : "Codex"} subscription first.`);
+    res.json(models);
+  });
+
   router.delete("/me/ai-subscriptions/:provider", async (req, res) => {
     const userId = requireBoardUserId(req, res);
     if (!userId) return;
@@ -123,6 +132,18 @@ export function userAiSubscriptionRoutes(db: Db) {
     const issue = await getAccessibleResource(req, res, issuesSvc.getById(req.params.id as string), "Issue not found");
     if (!issue) return;
     res.json(await describeIssue(req, issue));
+  });
+
+  // Model names on the issue owner's subscription (the credential itself never leaves the server).
+  router.get("/issues/:id/ai-subscription/models", async (req, res) => {
+    const issue = await getAccessibleResource(req, res, issuesSvc.getById(req.params.id as string), "Issue not found");
+    if (!issue) return;
+    const info = await describeIssue(req, issue);
+    if (!info.ownerUserId || !info.provider) {
+      res.json([]);
+      return;
+    }
+    res.json((await svc.listModels(info.ownerUserId, info.provider)) ?? []);
   });
 
   router.put("/issues/:id/ai-subscription", async (req, res) => {
