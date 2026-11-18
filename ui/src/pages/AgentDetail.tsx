@@ -3250,14 +3250,28 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
             {(() => {
               const displayProvider = metrics.provider
                 ?? asNonEmptyString(adapterConfig?.provider);
+              const credentialSource = asRecord(asRecord(run.contextSnapshot)?.paperclipCredentialSource);
+              const usesPersonalSubscription = credentialSource?.kind === "user_subscription";
+              const subscriptionLabel = credentialSource?.provider === "codex" ? "Codex (ChatGPT)" : "Claude";
+              // Personal-subscription runs don't use the agent's Studio model (e.g. MiniMax),
+              // so only show the model the run actually reported.
               const displayModel = metrics.model
-                ?? asNonEmptyString(adapterConfig?.model);
-              if (!adapterType && !displayProvider && !displayModel) return null;
+                ?? (usesPersonalSubscription ? null : asNonEmptyString(adapterConfig?.model));
+              if (!adapterType && !displayProvider && !displayModel && !usesPersonalSubscription) return null;
               return (
                 <div className="text-[11px] text-muted-foreground font-mono flex items-center gap-1.5 flex-wrap">
                   {adapterType && (
                     <span className="bg-muted rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide">{adapterType.replace(/_/g, " ")}</span>
                   )}
+                  {usesPersonalSubscription && (
+                    <span
+                      className="rounded px-1.5 py-0.5 text-[10px] font-medium font-sans bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                      title="This run uses the issue owner's personal subscription, not Studio credentials"
+                    >
+                      Personal {subscriptionLabel} subscription
+                    </span>
+                  )}
+                  {usesPersonalSubscription && !displayModel && <span>default model</span>}
                   {displayProvider && displayModel && (
                     <span>{displayProvider}/{displayModel}</span>
                   )}
