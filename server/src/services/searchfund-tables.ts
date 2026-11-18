@@ -91,13 +91,22 @@ export function colorScale(values: unknown[], colors: string[], withMid: boolean
   return { min: nums[0], max: nums[nums.length - 1], ...(withMid ? { mid } : {}), colors };
 }
 
+const RANGE_NOTE =
+  "Exact only when every criterion has evidence (Coverage 100%). Otherwise shown as a range: the lowest and highest " +
+  "the score could be once the missing evidence is in.";
+
+// Tables whose Opportunity / Decision are the overall scores (Layer Detail's are per-layer and never a range).
+const RANGE_TABLES = ["niche_summary", "cross_niche_summary", "cross_niche_comparison"];
+
 function withSheetScales(table: ScoringTable): ScoringTable {
-  const keys = SCORING_SCALED_COLUMNS[table.key];
-  if (!keys) return table;
+  const keys = SCORING_SCALED_COLUMNS[table.key] ?? [];
   return {
     ...table,
-    columns: table.columns.map((c, i) =>
-      keys.includes(c.key) ? { ...c, scale: colorScale(table.rows.map((r) => r[i]), SCORING_SCALE_COLORS, true) } : c),
+    columns: table.columns.map((c, i) => {
+      const out = keys.includes(c.key) ? { ...c, scale: colorScale(table.rows.map((r) => r[i]), SCORING_SCALE_COLORS, true) } : c;
+      // The overall scores can be a range (score.py's bounds); explain it on the column header.
+      return RANGE_TABLES.includes(table.key) && (c.key === "opportunity" || c.key === "decision") ? { ...out, note: RANGE_NOTE } : out;
+    }),
   };
 }
 
