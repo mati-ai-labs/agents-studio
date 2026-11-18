@@ -92,6 +92,7 @@ import { companySkillService } from "./company-skills.js";
 import { hasActiveRoutineContinuation } from "./routine-continuation-guard.js";
 import { budgetService, type BudgetEnforcementScope } from "./budgets.js";
 import { secretService, type MissingRuntimeBinding } from "./secrets.js";
+import { providerForAdapterType, userAiSubscriptionService } from "./user-ai-subscriptions.js";
 import { resolveDefaultAgentWorkspaceDir, resolveManagedProjectWorkspaceDir } from "../home-paths.js";
 import {
   buildHeartbeatRunIssueComment,
@@ -5588,6 +5589,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
 
   const runLogStore = getRunLogStore();
   const secretsSvc = secretService(db);
+  const userAiSubscriptionsSvc = userAiSubscriptionService(db);
   const companySkills = companySkillService(db);
   const issuesSvc = issueService(db);
   const treeControlSvc = issueTreeControlService(db);
@@ -6035,6 +6037,92 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       .then((rows) => rows[0] ?? null);
   }
 
+  /**
+   * Personal AI subscription for this run. Invariants:
+   *  - credentials are only ever loaded for issue.subscriptionOwnerUserId;
+   *  - a run woken directly by a different human uses the Studio default;
+   *  - an opted-in assignee run with no usable owner credential is blocked,
+   *    never silently moved onto Studio credentials.
+   */
+  async function applyUserAiSubscriptionToRun(input: {
+    run: typeof heartbeatRuns.$inferSelect;
+    agent: typeof agents.$inferSelect;
+    issueContext: { assigneeAgentId: string | null; subscriptionOwnerUserId: string | null; id: string } | null;
+    wakeCommentAuthorUserId: string | null;
+    resolvedConfig: Record<string, unknown>;
+    secretKeys: Set<string>;
+    context: Record<string, unknown>;
+  }) {
+    const { run, agent, issueContext, resolvedConfig, secretKeys, context } = input;
+    delete context.paperclipCredentialSource;
+    const ownerUserId = issueContext?.subscriptionOwnerUserId ?? null;
+    const provider = providerForAdapterType(agent.adapterType);
+    if (!issueContext || !ownerUserId || !provider) return;
+
+    let wakeUserId: string | null = input.wakeCommentAuthorUserId;
+    if (!wakeUserId && run.wakeupRequestId) {
+      const wake = await db
+        .select({
+          requestedByActorType: agentWakeupRequests.requestedByActorType,
+          requestedByActorId: agentWakeupRequests.requestedByActorId,
+        })
+        .from(agentWakeupRequests)
+        .where(eq(agentWakeupRequests.id, run.wakeupRequestId))
+        .then((rows) => rows[0] ?? null);
+      if (wake?.requestedByActorType === "user") wakeUserId = readNonEmptyString(wake.requestedByActorId);
+    }
+    if (wakeUserId && wakeUserId !== ownerUserId) {
+      context.paperclipCredentialSource = {
+        kind: "studio_default",
+        reason: "woken_by_other_user",
+        subscriptionOwnerUserId: ownerUserId,
+      };
+      return;
+    }
+
+    const prepared = await userAiSubscriptionsSvc.prepareRun({
+      ownerUserId,
+      provider,
+      adapterConfig: resolvedConfig,
+    });
+    if (!prepared) {
+      if (issueContext.assigneeAgentId === agent.id) {
+        const providerName = provider === "claude" ? "Claude" : "Codex";
+        throw new ConfigurationIncompleteFailure(
+          `configuration incomplete: this issue is set to run on a personal ${providerName} subscription, ` +
+            `but that subscription is not connected or has expired. The subscription owner should reconnect it in ` +
+            `Settings → My AI subscriptions, or switch the issue back to Studio default.`,
+          {
+            configurationIncomplete: {
+              reason: "user_ai_subscription_unavailable",
+              companyId: agent.companyId,
+              agentId: agent.id,
+              issueId: issueContext.id,
+              subscriptionOwnerUserId: ownerUserId,
+              provider,
+              missingBindings: [],
+            },
+          },
+        );
+      }
+      context.paperclipCredentialSource = {
+        kind: "studio_default",
+        reason: `owner_has_no_${provider}_subscription`,
+        subscriptionOwnerUserId: ownerUserId,
+      };
+      return;
+    }
+    resolvedConfig.env = { ...parseObject(resolvedConfig.env), ...prepared.envOverrides };
+    Object.assign(resolvedConfig, prepared.configPatch);
+    for (const key of prepared.secretEnvKeys) secretKeys.add(key);
+    context.paperclipCredentialSource = {
+      kind: "user_subscription",
+      provider,
+      subscriptionOwnerUserId: ownerUserId,
+      accountLabel: prepared.accountLabel,
+    };
+  }
+
   async function getIssueExecutionContext(companyId: string, issueId: string) {
     return db
       .select({
@@ -6055,6 +6143,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         executionState: issues.executionState,
         executionWorkspaceSettings: issues.executionWorkspaceSettings,
         parentId: issues.parentId,
+        subscriptionOwnerUserId: issues.subscriptionOwnerUserId,
         createdByUserId: issues.createdByUserId,
         responsibleUserId: issues.responsibleUserId,
         originKind: issues.originKind,
@@ -12666,6 +12755,15 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     } else {
       delete context.paperclipSecrets;
     }
+    await applyUserAiSubscriptionToRun({
+      run,
+      agent,
+      issueContext,
+      wakeCommentAuthorUserId: wakeCommentContext?.authorUserId ?? null,
+      resolvedConfig,
+      secretKeys,
+      context,
+    });
     const effectiveResolvedConfig = applyRunScopedMentionedSkillKeys(
       resolvedConfig,
       runScopedMentionedSkillKeys,
@@ -13617,6 +13715,27 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           "stdout",
           `[paperclip] Enabled run-scoped skills from issue mentions: ${runScopedMentionedSkillKeys.join(", ")}\n`,
         );
+      }
+      {
+        const credentialSource = parseObject(context.paperclipCredentialSource);
+        if (credentialSource.kind === "user_subscription") {
+          const providerName = credentialSource.provider === "codex" ? "Codex (ChatGPT)" : "Claude";
+          const label = readNonEmptyString(credentialSource.accountLabel);
+          await onLog(
+            "stdout",
+            `[paperclip] Using the issue owner's personal ${providerName} subscription${label ? ` (${label})` : ""} instead of Studio credentials.\n`,
+          );
+        } else if (credentialSource.reason === "woken_by_other_user") {
+          await onLog(
+            "stdout",
+            "[paperclip] This issue runs on another user's personal subscription, but this run was triggered by a different user, so Studio default credentials are used.\n",
+          );
+        } else if (typeof credentialSource.reason === "string" && credentialSource.reason.startsWith("owner_has_no_")) {
+          await onLog(
+            "stdout",
+            "[paperclip] The issue owner has no personal subscription for this agent's provider; using Studio default credentials.\n",
+          );
+        }
       }
       for (const warning of runtimeWorkspaceWarnings) {
         const logEntry = formatRuntimeWorkspaceWarningLog(warning);

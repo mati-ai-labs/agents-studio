@@ -46,6 +46,8 @@ export const issues = pgTable(
     createdByAgentId: uuid("created_by_agent_id").references(() => agents.id),
     createdByUserId: text("created_by_user_id"),
     responsibleUserId: text("responsible_user_id"),
+    /** User whose own AI subscription runs this issue; null = Studio default credentials. */
+    subscriptionOwnerUserId: text("subscription_owner_user_id"),
     issueNumber: integer("issue_number"),
     identifier: text("identifier"),
     originKind: text("origin_kind").notNull().default("manual"),

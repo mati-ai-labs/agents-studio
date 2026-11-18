@@ -39,6 +39,7 @@ import { CompanyImport } from "./pages/CompanyImport";
 import { RestrictedOperatorGate } from "./components/RestrictedOperatorGate";
 import { DesignGuide } from "./pages/DesignGuide";
 import { InstanceGeneralSettings } from "./pages/InstanceGeneralSettings";
+import { AiSubscriptionsSettings } from "./pages/AiSubscriptionsSettings";
 import { InstanceAccess } from "./pages/InstanceAccess";
 import { InstanceSettings } from "./pages/InstanceSettings";
 import { InstanceExperimentalSettings } from "./pages/InstanceExperimentalSettings";
@@ -295,6 +296,7 @@ export function App() {
           <Route path="instance/settings" element={<Layout />}>
             <Route index element={<Navigate to="general" replace />} />
             <Route path="profile" element={<ProfileSettings />} />
+            <Route path="ai-subscriptions" element={<AiSubscriptionsSettings />} />
             <Route path="general" element={<RestrictedOperatorGate><InstanceGeneralSettings /></RestrictedOperatorGate>} />
             <Route path="access" element={<RestrictedOperatorGate><InstanceAccess /></RestrictedOperatorGate>} />
             <Route path="heartbeats" element={<RestrictedOperatorGate><InstanceSettings /></RestrictedOperatorGate>} />

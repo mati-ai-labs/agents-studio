@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pickTextColorForPillBg } from "@/lib/color-contrast";
 import { Link } from "@/lib/router";
+import { IssueRunWithRow } from "./IssueRunWithRow";
 import type { Issue, IssueLabel, Project, WorkspaceRuntimeService } from "@paperclipai/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AdapterModel } from "../api/agents";
@@ -1803,6 +1804,8 @@ export function IssueProperties({
             {assigneeOptionsContent}
           </PropertyPicker>
         ) : null}
+
+        <IssueRunWithRow issueId={issue.id} assigneeAgentId={issue.assigneeAgentId ?? null} />
 
         <PropertyPicker
           inline={inline}

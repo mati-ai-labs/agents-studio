@@ -165,3 +165,4 @@ export { pluginLogs } from "./plugin_logs.js";
 export { searchfundNiches, searchfundScores, searchfundFiles, searchfundSheets, searchfundLayerDocs } from "./searchfund.js";
 export { guardrailPolicies } from "./guardrail_policies.js";
 export { guardrailViolations } from "./guardrail_violations.js";
+export { userAiSubscriptions } from "./user_ai_subscriptions.js";

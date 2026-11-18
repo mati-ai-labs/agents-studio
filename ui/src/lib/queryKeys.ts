@@ -126,6 +126,10 @@ export const queryKeys = {
   auth: {
     session: ["auth", "session"] as const,
   },
+  aiSubscriptions: {
+    mine: ["ai-subscriptions", "me"] as const,
+    issue: (issueId: string) => ["ai-subscriptions", "issue", issueId] as const,
+  },
   sidebarPreferences: {
     companyOrder: (userId: string) => ["sidebar-preferences", "company-order", userId] as const,
     projectOrder: (companyId: string, userId: string) =>
