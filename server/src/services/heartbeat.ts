@@ -92,7 +92,16 @@ import { companySkillService } from "./company-skills.js";
 import { hasActiveRoutineContinuation } from "./routine-continuation-guard.js";
 import { budgetService, type BudgetEnforcementScope } from "./budgets.js";
 import { secretService, type MissingRuntimeBinding } from "./secrets.js";
-import { decideUserSubscriptionForRun, detectUserSubscriptionAuthFailure, providerForAdapterType, userAiSubscriptionService } from "./user-ai-subscriptions.js";
+import {
+  adapterTypeForProvider,
+  buildSwappedAdapterConfig,
+  decideUserSubscriptionForRun,
+  detectUserSubscriptionAuthFailure,
+  parseSubscriptionProvider,
+  providerForAdapterType,
+  userAiSubscriptionService,
+  type UserSubscriptionRunDecision,
+} from "./user-ai-subscriptions.js";
 import { resolveDefaultAgentWorkspaceDir, resolveManagedProjectWorkspaceDir } from "../home-paths.js";
 import {
   buildHeartbeatRunIssueComment,
@@ -6047,7 +6056,13 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
   async function applyUserAiSubscriptionToRun(input: {
     run: typeof heartbeatRuns.$inferSelect;
     agent: typeof agents.$inferSelect;
-    issueContext: { assigneeAgentId: string | null; subscriptionOwnerUserId: string | null; id: string } | null;
+    issueContext: {
+      assigneeAgentId: string | null;
+      subscriptionOwnerUserId: string | null;
+      subscriptionProvider?: string | null;
+      subscriptionModel?: string | null;
+      id: string;
+    } | null;
     wakeCommentAuthorUserId: string | null;
     resolvedConfig: Record<string, unknown>;
     secretKeys: Set<string>;
@@ -6056,8 +6071,38 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     const { run, agent, issueContext, resolvedConfig, secretKeys, context } = input;
     delete context.paperclipCredentialSource;
     const ownerUserId = issueContext?.subscriptionOwnerUserId ?? null;
-    const provider = providerForAdapterType(agent.adapterType);
+    const provider = parseSubscriptionProvider(issueContext?.subscriptionProvider) ?? providerForAdapterType(agent.adapterType);
     if (!issueContext || !ownerUserId || !provider) return;
+    // The subscription's provider must match the CLI actually running (a swap
+    // happens earlier when it differs); otherwise this run stays on Studio credentials.
+    if (provider !== providerForAdapterType(agent.adapterType)) {
+      const plan = await resolveRunSubscriptionPlan({ run, agent, issue: issueContext, wakeCommentAuthorUserId: input.wakeCommentAuthorUserId });
+      if (plan.decision.kind === "block") {
+        const providerName = provider === "claude" ? "Claude" : "Codex";
+        throw new ConfigurationIncompleteFailure(
+          `configuration incomplete: this issue is set to run on a personal ${providerName} subscription, ` +
+            `but that subscription is not connected or has expired. The subscription owner should reconnect it in ` +
+            `Settings → AI subscriptions, or switch the issue back to Studio default.`,
+          {
+            configurationIncomplete: {
+              reason: "user_ai_subscription_unavailable",
+              companyId: agent.companyId,
+              agentId: agent.id,
+              issueId: issueContext.id,
+              subscriptionOwnerUserId: ownerUserId,
+              provider,
+              missingBindings: [],
+            },
+          },
+        );
+      }
+      context.paperclipCredentialSource = {
+        kind: "studio_default",
+        reason: plan.decision.kind === "studio_default" ? plan.decision.reason : "owner_has_no_subscription",
+        subscriptionOwnerUserId: ownerUserId,
+      };
+      return;
+    }
 
     let wakeUserId: string | null = input.wakeCommentAuthorUserId;
     if (!wakeUserId && run.wakeupRequestId) {
@@ -6129,6 +6174,8 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     }
     resolvedConfig.env = { ...parseObject(resolvedConfig.env), ...prepared.envOverrides };
     Object.assign(resolvedConfig, prepared.configPatch);
+    const subscriptionModel = readNonEmptyString(issueContext.subscriptionModel);
+    if (subscriptionModel) resolvedConfig.model = subscriptionModel;
     for (const key of prepared.secretEnvKeys) secretKeys.add(key);
     context.paperclipCredentialSource = {
       kind: "user_subscription",
@@ -6159,6 +6206,8 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         executionWorkspaceSettings: issues.executionWorkspaceSettings,
         parentId: issues.parentId,
         subscriptionOwnerUserId: issues.subscriptionOwnerUserId,
+        subscriptionProvider: issues.subscriptionProvider,
+        subscriptionModel: issues.subscriptionModel,
         createdByUserId: issues.createdByUserId,
         responsibleUserId: issues.responsibleUserId,
         originKind: issues.originKind,
@@ -10897,32 +10946,35 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
   }
 
   /**
-   * Will this queued run execute on the issue owner's personal subscription?
-   * Mirrors applyUserAiSubscriptionToRun: owner set, matching provider, active
-   * credential, and not woken directly by a different human.
+   * Who pays for a run on an issue: the owner's personal subscription (for the
+   * issue's chosen provider, defaulting to the agent's own CLI provider) or the
+   * Studio. Same policy at queue-gate time and at execution time.
    */
-  async function queuedRunUsesOwnerSubscription(
-    run: typeof heartbeatRuns.$inferSelect,
-    agent: typeof agents.$inferSelect,
-  ): Promise<boolean> {
-    const provider = providerForAdapterType(agent.adapterType);
+  async function resolveRunSubscriptionPlan(input: {
+    run: typeof heartbeatRuns.$inferSelect;
+    agent: typeof agents.$inferSelect;
+    issue: {
+      id: string;
+      assigneeAgentId: string | null;
+      subscriptionOwnerUserId: string | null;
+      subscriptionProvider?: string | null;
+    };
+    wakeCommentAuthorUserId?: string | null;
+  }) {
+    const { run, agent, issue } = input;
+    const ownerUserId = issue.subscriptionOwnerUserId ?? null;
+    const provider = parseSubscriptionProvider(issue.subscriptionProvider) ?? providerForAdapterType(agent.adapterType);
+    if (!ownerUserId || !provider) {
+      return { ownerUserId, provider, decision: { kind: "none" } as UserSubscriptionRunDecision };
+    }
     const context = parseObject(run.contextSnapshot);
-    const issueId = readNonEmptyString(context.issueId);
-    if (!provider || !issueId) return false;
-    const issue = await db
-      .select({ subscriptionOwnerUserId: issues.subscriptionOwnerUserId, assigneeAgentId: issues.assigneeAgentId })
-      .from(issues)
-      .where(and(eq(issues.id, issueId), eq(issues.companyId, agent.companyId)))
-      .then((rows) => rows[0] ?? null);
-    const ownerUserId = issue?.subscriptionOwnerUserId ?? null;
-    if (!ownerUserId) return false;
-    let wakeUserId: string | null = null;
+    let wakeUserId: string | null = input.wakeCommentAuthorUserId ?? null;
     const wakeCommentId = deriveCommentId(context, null);
-    if (wakeCommentId) {
+    if (!wakeUserId && wakeCommentId && input.wakeCommentAuthorUserId === undefined) {
       wakeUserId = await db
         .select({ authorUserId: issueComments.authorUserId })
         .from(issueComments)
-        .where(and(eq(issueComments.id, wakeCommentId), eq(issueComments.issueId, issueId)))
+        .where(and(eq(issueComments.id, wakeCommentId), eq(issueComments.issueId, issue.id)))
         .then((rows) => rows[0]?.authorUserId ?? null);
     }
     if (!wakeUserId && run.wakeupRequestId) {
@@ -10937,13 +10989,36 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       if (wake?.requestedByActorType === "user") wakeUserId = readNonEmptyString(wake.requestedByActorId);
     }
     const subscription = await userAiSubscriptionsSvc.get(ownerUserId, provider);
-    return decideUserSubscriptionForRun({
+    const decision = decideUserSubscriptionForRun({
       ownerUserId,
       provider,
       wakeUserId,
       ownerHasActiveCredential: subscription?.status === "active",
-      isAssigneeRun: issue?.assigneeAgentId === agent.id,
-    }).kind === "use_owner_subscription";
+      isAssigneeRun: issue.assigneeAgentId === agent.id,
+    });
+    return { ownerUserId, provider, decision };
+  }
+
+  /** Will this queued run execute on the issue owner's personal subscription? */
+  async function queuedRunUsesOwnerSubscription(
+    run: typeof heartbeatRuns.$inferSelect,
+    agent: typeof agents.$inferSelect,
+  ): Promise<boolean> {
+    const issueId = readNonEmptyString(parseObject(run.contextSnapshot).issueId);
+    if (!issueId) return false;
+    const issue = await db
+      .select({
+        id: issues.id,
+        subscriptionOwnerUserId: issues.subscriptionOwnerUserId,
+        subscriptionProvider: issues.subscriptionProvider,
+        assigneeAgentId: issues.assigneeAgentId,
+      })
+      .from(issues)
+      .where(and(eq(issues.id, issueId), eq(issues.companyId, agent.companyId)))
+      .then((rows) => rows[0] ?? null);
+    if (!issue) return false;
+    const plan = await resolveRunSubscriptionPlan({ run, agent, issue });
+    return plan.decision.kind === "use_owner_subscription";
   }
 
   // Provider plan quota gate (Instance Settings > General). For agents whose
@@ -12317,7 +12392,9 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     let runScratch: HeartbeatRunScratch | null = null;
 
     try {
-    const agent = await getAgent(run.agentId);
+    // `let`: an issue running on its owner's personal subscription for another
+    // provider swaps the CLI for this run (see runSubscriptionPlan below).
+    let agent = await getAgent(run.agentId);
     if (!agent) {
       await setRunStatus(runId, "failed", {
         error: "Agent not found",
@@ -12336,7 +12413,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     const runtime = await ensureRuntimeState(agent);
     const context = parseObject(run.contextSnapshot);
     const taskKey = deriveTaskKeyWithHeartbeatFallback(context, null);
-    const sessionCodec = getAdapterSessionCodec(agent.adapterType);
+    let sessionCodec = getAdapterSessionCodec(agent.adapterType);
     const issueId = readNonEmptyString(context.issueId);
     let issueContext = issueId ? await getIssueExecutionContext(agent.companyId, issueId) : null;
     const issueDependencyReadiness = issueId
@@ -12400,8 +12477,36 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
                 : row;
             })
         : null;
+    const runSubscriptionPlan = issueContext
+      ? await resolveRunSubscriptionPlan({
+          run,
+          agent,
+          issue: issueContext,
+          wakeCommentAuthorUserId: wakeCommentContext?.authorUserId ?? null,
+        })
+      : null;
+    let swappedCliForSubscription = false;
+    delete context.paperclipCliSwap;
+    if (issueContext && runSubscriptionPlan?.decision.kind === "use_owner_subscription" && runSubscriptionPlan.provider) {
+      const targetAdapterType = adapterTypeForProvider(runSubscriptionPlan.provider);
+      if (targetAdapterType !== agent.adapterType) {
+        context.paperclipCliSwap = { from: agent.adapterType, to: targetAdapterType };
+        agent = {
+          ...agent,
+          adapterType: targetAdapterType,
+          adapterConfig: buildSwappedAdapterConfig(
+            parseObject(agent.adapterConfig),
+            runSubscriptionPlan.provider,
+            issueContext.subscriptionModel ?? null,
+          ),
+        };
+        sessionCodec = getAdapterSessionCodec(agent.adapterType);
+        swappedCliForSubscription = true;
+      }
+    }
+    // Issue-level Studio model overrides target the agent's own CLI; ignore them after a CLI swap.
     const issueAssigneeOverrides =
-      issueContext && issueContext.assigneeAgentId === agent.id
+      !swappedCliForSubscription && issueContext && issueContext.assigneeAgentId === agent.id
         ? parseIssueAssigneeAdapterOverrides(
             issueContext.assigneeAdapterOverrides,
           )
@@ -13798,6 +13903,13 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       }
       {
         const credentialSource = parseObject(context.paperclipCredentialSource);
+        const cliSwap = parseObject(context.paperclipCliSwap);
+        if (typeof cliSwap.from === "string" && typeof cliSwap.to === "string") {
+          await onLog(
+            "stdout",
+            `[paperclip] This issue runs on a personal subscription for a different CLI: using ${cliSwap.to === "codex_local" ? "Codex" : "Claude Code"} instead of this agent's ${cliSwap.from === "codex_local" ? "Codex" : cliSwap.from === "claude_local" ? "Claude Code" : cliSwap.from} (same instructions, skills and workspace).\n`,
+          );
+        }
         if (credentialSource.kind === "user_subscription") {
           const providerName = credentialSource.provider === "codex" ? "Codex (ChatGPT)" : "Claude";
           const label = readNonEmptyString(credentialSource.accountLabel);

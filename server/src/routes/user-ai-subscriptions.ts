@@ -5,6 +5,7 @@ import { agents, authUsers, issues } from "@paperclipai/db";
 import { issueService, logActivity } from "../services/index.js";
 import {
   assertProvider,
+  parseSubscriptionProvider,
   providerForAdapterType,
   userAiSubscriptionService,
 } from "../services/user-ai-subscriptions.js";
@@ -98,7 +99,17 @@ export function userAiSubscriptionRoutes(db: Db) {
 
   // ---- Per-issue selection ----
 
-  async function describeIssue(req: Request, issue: { id: string; companyId: string; assigneeAgentId: string | null; subscriptionOwnerUserId?: string | null }) {
+  async function describeIssue(
+    req: Request,
+    issue: {
+      id: string;
+      companyId: string;
+      assigneeAgentId: string | null;
+      subscriptionOwnerUserId?: string | null;
+      subscriptionProvider?: string | null;
+      subscriptionModel?: string | null;
+    },
+  ) {
     const userId = req.actor.type === "board" ? req.actor.userId ?? null : null;
     const assignee = issue.assigneeAgentId
       ? await db
@@ -107,8 +118,9 @@ export function userAiSubscriptionRoutes(db: Db) {
           .where(and(eq(agents.id, issue.assigneeAgentId), eq(agents.companyId, issue.companyId)))
           .then((rows) => rows[0] ?? null)
       : null;
-    const provider = providerForAdapterType(assignee?.adapterType);
+    const agentProvider = providerForAdapterType(assignee?.adapterType);
     const ownerUserId = issue.subscriptionOwnerUserId ?? null;
+    const provider = ownerUserId ? parseSubscriptionProvider(issue.subscriptionProvider) ?? agentProvider : null;
     const owner = ownerUserId
       ? await db
           .select({ name: authUsers.name })
@@ -116,15 +128,21 @@ export function userAiSubscriptionRoutes(db: Db) {
           .where(eq(authUsers.id, ownerUserId))
           .then((rows) => rows[0] ?? null)
       : null;
-    const mine = userId && provider ? await svc.get(userId, provider) : null;
+    const mySubscriptions = userId ? await svc.list(userId) : [];
     return {
       issueId: issue.id,
+      /** Provider of the assignee agent's own CLI (null for non Claude/Codex agents). */
+      agentProvider,
+      /** Provider the issue runs on when a personal subscription is attached. */
       provider,
+      model: ownerUserId ? issue.subscriptionModel ?? null : null,
       ownerUserId,
       ownerName: owner?.name ?? null,
       isMine: Boolean(userId && ownerUserId === userId),
       canClear: Boolean(ownerUserId && (ownerUserId === userId || isInstanceAdmin(req))),
-      mySubscription: mine,
+      mySubscriptions,
+      /** Back-compat: my subscription for the issue's (or agent's) provider. */
+      mySubscription: mySubscriptions.find((sub) => sub.provider === (provider ?? agentProvider)) ?? null,
     };
   }
 
@@ -155,26 +173,36 @@ export function userAiSubscriptionRoutes(db: Db) {
     if (typeof enabled !== "boolean") throw badRequest("enabled must be a boolean");
     const currentOwner = (issue as { subscriptionOwnerUserId?: string | null }).subscriptionOwnerUserId ?? null;
 
+    const requestedProvider = req.body?.provider === undefined ? null : assertProvider(req.body.provider);
+    const requestedModel = typeof req.body?.model === "string" && req.body.model.trim() ? req.body.model.trim().slice(0, 200) : null;
+    let nextProvider: string | null = null;
     if (enabled) {
       // You can only ever attach YOUR OWN subscription.
       if (currentOwner && currentOwner !== userId) {
         throw conflict("Another user's subscription is attached to this issue. They (or an instance admin) must switch it back to Studio default first.");
       }
       const info = await describeIssue(req, issue);
-      if (!info.provider) {
-        throw badRequest("This issue's assignee doesn't run on Claude Code or Codex, so a personal subscription can't be used.");
+      const provider = requestedProvider ?? info.agentProvider ?? null;
+      if (!provider) throw badRequest("Pick which subscription to use: claude or codex.");
+      const mine = info.mySubscriptions.find((sub) => sub.provider === provider);
+      if (!mine || mine.status !== "active") {
+        throw badRequest(`Connect your ${provider === "claude" ? "Claude" : "Codex"} subscription first (Settings → AI subscriptions).`);
       }
-      if (!info.mySubscription || info.mySubscription.status !== "active") {
-        throw badRequest(`Connect your ${info.provider === "claude" ? "Claude" : "Codex"} subscription first (Settings → My AI subscriptions).`);
-      }
+      nextProvider = provider;
     } else if (currentOwner && currentOwner !== userId && !isInstanceAdmin(req)) {
       throw forbidden("Only the user whose subscription is attached (or an instance admin) can switch this issue back.");
     }
 
     const nextOwner = enabled ? userId : null;
+    const nextModel = enabled ? requestedModel : null;
     await db
       .update(issues)
-      .set({ subscriptionOwnerUserId: nextOwner, updatedAt: new Date() })
+      .set({
+        subscriptionOwnerUserId: nextOwner,
+        subscriptionProvider: nextProvider,
+        subscriptionModel: nextModel,
+        updatedAt: new Date(),
+      })
       .where(and(eq(issues.id, issue.id), eq(issues.companyId, issue.companyId)));
     const actor = getActorInfo(req);
     await logActivity(db, {
@@ -187,9 +215,14 @@ export function userAiSubscriptionRoutes(db: Db) {
       action: enabled ? "issue.ai_subscription_attached" : "issue.ai_subscription_detached",
       entityType: "issue",
       entityId: issue.id,
-      details: { previousOwnerUserId: currentOwner, ownerUserId: nextOwner },
+      details: { previousOwnerUserId: currentOwner, ownerUserId: nextOwner, provider: nextProvider, model: nextModel },
     });
-    res.json(await describeIssue(req, { ...issue, subscriptionOwnerUserId: nextOwner }));
+    res.json(await describeIssue(req, {
+      ...issue,
+      subscriptionOwnerUserId: nextOwner,
+      subscriptionProvider: nextProvider,
+      subscriptionModel: nextModel,
+    }));
   });
 
   return router;
@@ -204,25 +237,27 @@ export async function resolveSubscriptionOwnerForNewIssue(
   req: Request,
   companyId: string,
   assigneeAgentId: string | null | undefined,
-): Promise<string> {
+  requested?: { provider?: unknown; model?: unknown },
+): Promise<{ subscriptionOwnerUserId: string; subscriptionProvider: string; subscriptionModel: string | null }> {
   if (req.actor.type !== "board" || !req.actor.userId) {
     throw forbidden("Only a signed-in user can attach their own subscription");
   }
   const userId = req.actor.userId;
-  const assignee = assigneeAgentId
-    ? await db
-        .select({ adapterType: agents.adapterType })
-        .from(agents)
-        .where(and(eq(agents.id, assigneeAgentId), eq(agents.companyId, companyId)))
-        .then((rows) => rows[0] ?? null)
-    : null;
-  const provider = providerForAdapterType(assignee?.adapterType);
-  if (!provider) {
-    throw badRequest("A personal subscription needs the issue to be assigned to a Claude Code or Codex agent.");
-  }
+  if (!assigneeAgentId) throw badRequest("A personal subscription needs the issue to be assigned to an agent.");
+  const assignee = await db
+    .select({ adapterType: agents.adapterType })
+    .from(agents)
+    .where(and(eq(agents.id, assigneeAgentId), eq(agents.companyId, companyId)))
+    .then((rows) => rows[0] ?? null);
+  if (!assignee) throw badRequest("Assignee agent not found.");
+  const provider = (requested?.provider === undefined || requested?.provider === null
+    ? null
+    : assertProvider(requested.provider)) ?? providerForAdapterType(assignee.adapterType);
+  if (!provider) throw badRequest("Pick which subscription to use: claude or codex.");
   const mine = await userAiSubscriptionService(db).get(userId, provider);
   if (!mine || mine.status !== "active") {
     throw badRequest(`Connect your ${provider === "claude" ? "Claude" : "Codex"} subscription first (Settings → AI subscriptions).`);
   }
-  return userId;
+  const model = typeof requested?.model === "string" && requested.model.trim() ? requested.model.trim().slice(0, 200) : null;
+  return { subscriptionOwnerUserId: userId, subscriptionProvider: provider, subscriptionModel: model };
 }

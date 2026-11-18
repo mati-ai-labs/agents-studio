@@ -1,6 +1,7 @@
 import { memo, useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent, type DragEvent, type RefObject } from "react";
 import { aiSubscriptionsApi, type AiSubscriptionProvider } from "@/api/aiSubscriptions";
 import { Link } from "@/lib/router";
+import { SubscriptionModelSelect } from "./SubscriptionModelSelect";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { IssueWorkMode } from "@paperclipai/shared";
 import { pickTextColorForSolidBg } from "@/lib/color-contrast";
@@ -436,7 +437,8 @@ export function NewIssueDialog() {
   const [projectId, setProjectId] = useState("");
   const [projectWorkspaceId, setProjectWorkspaceId] = useState("");
   const [assigneeOptionsOpen, setAssigneeOptionsOpen] = useState(false);
-  const [useMySubscription, setUseMySubscription] = useState(false);
+  const [mySubscriptionProvider, setMySubscriptionProvider] = useState<AiSubscriptionProvider | null>(null);
+  const [mySubscriptionModel, setMySubscriptionModel] = useState<string | null>(null);
   const [assigneeModelLane, setAssigneeModelLane] = useState<IssueModelLane>("primary");
   const [assigneeModelOverride, setAssigneeModelOverride] = useState("");
   const [assigneeThinkingEffort, setAssigneeThinkingEffort] = useState("");
@@ -549,18 +551,15 @@ export function NewIssueDialog() {
   const supportsAssigneeOverrides = Boolean(
     assigneeAdapterType && ISSUE_OVERRIDE_ADAPTER_TYPES.has(assigneeAdapterType),
   );
-  const subscriptionProvider: AiSubscriptionProvider | null =
-    assigneeAdapterType === "claude_local" ? "claude" : assigneeAdapterType === "codex_local" ? "codex" : null;
   const mySubscriptionsQuery = useQuery({
     queryKey: queryKeys.aiSubscriptions.mine,
     queryFn: () => aiSubscriptionsApi.listMine(),
-    enabled: newIssueOpen && Boolean(subscriptionProvider),
+    enabled: newIssueOpen && Boolean(selectedAssigneeAgentId),
   });
-  const mySubscriptionActive = Boolean(
-    subscriptionProvider &&
-      mySubscriptionsQuery.data?.subscriptions.some((sub) => sub.provider === subscriptionProvider && sub.status === "active"),
-  );
-  const effectiveUseMySubscription = useMySubscription && mySubscriptionActive;
+  const isSubscriptionConnected = (provider: AiSubscriptionProvider) =>
+    Boolean(mySubscriptionsQuery.data?.subscriptions.some((sub) => sub.provider === provider && sub.status === "active"));
+  const effectiveSubscriptionProvider =
+    mySubscriptionProvider && isSubscriptionConnected(mySubscriptionProvider) ? mySubscriptionProvider : null;
   const getAdapterCapabilities = useAdapterCapabilities();
   const assigneeAdapterCapabilities = assigneeAdapterType
     ? getAdapterCapabilities(assigneeAdapterType)
@@ -598,22 +597,14 @@ export function NewIssueDialog() {
     [slackChannelsData?.channels, slackCompletion?.channelId],
   );
 
-  const { data: studioAdapterModels } = useQuery({
+  const { data: assigneeAdapterModels } = useQuery({
     queryKey:
       effectiveCompanyId && assigneeAdapterType
         ? queryKeys.agents.adapterModels(effectiveCompanyId, assigneeAdapterType)
         : ["agents", "none", "adapter-models", assigneeAdapterType ?? "none"],
     queryFn: () => agentsApi.adapterModels(effectiveCompanyId!, assigneeAdapterType!),
-    enabled: Boolean(effectiveCompanyId) && newIssueOpen && supportsAssigneeOverrides && !effectiveUseMySubscription,
+    enabled: Boolean(effectiveCompanyId) && newIssueOpen && supportsAssigneeOverrides,
   });
-  // On "My subscription", list the models that subscription actually has (fetched live server-side).
-  const { data: subscriptionModels } = useQuery({
-    queryKey: ["ai-subscriptions", "my-models", subscriptionProvider ?? "none"],
-    queryFn: () => aiSubscriptionsApi.myModels(subscriptionProvider!),
-    enabled: newIssueOpen && effectiveUseMySubscription && Boolean(subscriptionProvider),
-    staleTime: 5 * 60 * 1000,
-  });
-  const assigneeAdapterModels = effectiveUseMySubscription ? subscriptionModels : studioAdapterModels;
 
   const createIssue = useMutation({
     mutationFn: async ({
@@ -980,7 +971,8 @@ export function NewIssueDialog() {
     setStatus("todo");
     setPriority("");
     setAssigneeValue("");
-    setUseMySubscription(false);
+    setMySubscriptionProvider(null);
+    setMySubscriptionModel(null);
     setReviewerValue("");
     setApproverValue("");
     setShowReviewerRow(false);
@@ -1012,7 +1004,8 @@ export function NewIssueDialog() {
     if (companyId === effectiveCompanyId) return;
     setDialogCompanyId(companyId);
     setAssigneeValue("");
-    setUseMySubscription(false);
+    setMySubscriptionProvider(null);
+    setMySubscriptionModel(null);
     setReviewerValue("");
     setApproverValue("");
     setShowReviewerRow(false);
@@ -1097,7 +1090,13 @@ export function NewIssueDialog() {
       workMode,
       ...(selectedAssigneeAgentId ? { assigneeAgentId: selectedAssigneeAgentId } : {}),
       ...(selectedAssigneeUserId ? { assigneeUserId: selectedAssigneeUserId } : {}),
-      ...(selectedAssigneeAgentId && effectiveUseMySubscription ? { useMySubscription: true } : {}),
+      ...(selectedAssigneeAgentId && effectiveSubscriptionProvider
+        ? {
+            useMySubscription: true,
+            mySubscriptionProvider: effectiveSubscriptionProvider,
+            ...(mySubscriptionModel ? { mySubscriptionModel } : {}),
+          }
+        : {}),
       ...(newIssueDefaults.parentId ? { parentId: newIssueDefaults.parentId } : {}),
       ...(newIssueDefaults.goalId ? { goalId: newIssueDefaults.goalId } : {}),
       ...(projectId ? { projectId } : {}),
@@ -1760,35 +1759,44 @@ export function NewIssueDialog() {
             </div>
           )}
 
-          {subscriptionProvider && selectedAssigneeAgentId ? (
-            <div className="px-4 pb-2 flex flex-wrap items-center gap-1.5 text-xs">
-              <span className="text-muted-foreground mr-1">Run with</span>
-              <button
-                type="button"
-                className={cn(
-                  "rounded px-2 py-0.5 border transition-colors",
-                  !effectiveUseMySubscription ? "border-primary bg-primary/10 text-foreground" : "border-border text-muted-foreground hover:bg-accent/50",
-                )}
-                onClick={() => setUseMySubscription(false)}
-              >
-                Studio default
-              </button>
-              <button
-                type="button"
-                disabled={!mySubscriptionActive}
-                title={!mySubscriptionActive ? `Connect your ${subscriptionProvider === "codex" ? "Codex" : "Claude"} subscription first` : undefined}
-                className={cn(
-                  "rounded px-2 py-0.5 border transition-colors disabled:opacity-50",
-                  effectiveUseMySubscription ? "border-primary bg-primary/10 text-foreground" : "border-border text-muted-foreground hover:bg-accent/50",
-                )}
-                onClick={() => setUseMySubscription(true)}
-              >
-                My {subscriptionProvider === "codex" ? "Codex" : "Claude"} subscription
-              </button>
-              {!mySubscriptionActive && !mySubscriptionsQuery.isLoading ? (
-                <Link to="/instance/settings/ai-subscriptions" className="text-muted-foreground underline" onClick={() => closeNewIssue()}>
-                  Connect
-                </Link>
+          {selectedAssigneeAgentId ? (
+            <div className="px-4 pb-2 flex flex-col gap-1.5 text-xs">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-muted-foreground mr-1">Run with</span>
+                {([null, "claude", "codex"] as const).map((provider) => {
+                  const active = effectiveSubscriptionProvider === provider;
+                  const connected = provider === null || isSubscriptionConnected(provider);
+                  return (
+                    <button
+                      key={provider ?? "studio"}
+                      type="button"
+                      disabled={!connected}
+                      title={!connected ? `Connect your ${provider === "codex" ? "Codex" : "Claude"} subscription first` : undefined}
+                      className={cn(
+                        "rounded px-2 py-0.5 border transition-colors disabled:opacity-50",
+                        active ? "border-primary bg-primary/10 text-foreground" : "border-border text-muted-foreground hover:bg-accent/50",
+                      )}
+                      onClick={() => {
+                        setMySubscriptionProvider(provider);
+                        setMySubscriptionModel(null);
+                      }}
+                    >
+                      {provider === null ? "Studio default" : provider === "claude" ? "My Claude subscription" : "My Codex subscription"}
+                    </button>
+                  );
+                })}
+                {!mySubscriptionsQuery.isLoading && !isSubscriptionConnected("claude") && !isSubscriptionConnected("codex") ? (
+                  <Link to="/instance/settings/ai-subscriptions" className="text-muted-foreground underline" onClick={() => closeNewIssue()}>
+                    Connect
+                  </Link>
+                ) : null}
+              </div>
+              {effectiveSubscriptionProvider ? (
+                <SubscriptionModelSelect
+                  provider={effectiveSubscriptionProvider}
+                  value={mySubscriptionModel}
+                  onChange={setMySubscriptionModel}
+                />
               ) : null}
             </div>
           ) : null}

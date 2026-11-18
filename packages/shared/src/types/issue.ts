@@ -760,6 +760,8 @@ export interface Issue {
   responsibleUserId: string | null;
   /** User whose personal AI subscription runs this issue; null = Studio default. */
   subscriptionOwnerUserId?: string | null;
+  subscriptionProvider?: "claude" | "codex" | null;
+  subscriptionModel?: string | null;
   issueNumber: number | null;
   identifier: string | null;
   originKind?: IssueOriginKind;

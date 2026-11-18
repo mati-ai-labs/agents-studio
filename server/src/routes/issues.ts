@@ -299,9 +299,14 @@ type TaskWatchdogServiceFactory = typeof taskWatchdogService;
 
 /** Pull the "Run with: My subscription" flag out before schema validation. */
 function extractUseMySubscriptionFlag(req: Request, res: Response, next: () => void) {
-  if (req.body && typeof req.body === "object" && !Array.isArray(req.body) && "useMySubscription" in req.body) {
-    res.locals.useMySubscription = (req.body as Record<string, unknown>).useMySubscription === true;
-    delete (req.body as Record<string, unknown>).useMySubscription;
+  if (req.body && typeof req.body === "object" && !Array.isArray(req.body) && ("useMySubscription" in req.body || "mySubscriptionProvider" in req.body || "mySubscriptionModel" in req.body)) {
+    const body = req.body as Record<string, unknown>;
+    res.locals.useMySubscription = body.useMySubscription === true;
+    res.locals.mySubscriptionProvider = body.mySubscriptionProvider;
+    res.locals.mySubscriptionModel = body.mySubscriptionModel;
+    delete body.useMySubscription;
+    delete body.mySubscriptionProvider;
+    delete body.mySubscriptionModel;
   }
   next();
 }
@@ -7095,12 +7100,15 @@ export function issueRoutes(
       executionPolicy,
     }, actor);
     let deduplicationReason: "idempotency_key" | "recent_open_title" | null = null;
-    const subscriptionOwnerUserId = res.locals.useMySubscription === true
-      ? await resolveSubscriptionOwnerForNewIssue(db, req, companyId, createBody.assigneeAgentId ?? null)
+    const subscriptionSelection = res.locals.useMySubscription === true
+      ? await resolveSubscriptionOwnerForNewIssue(db, req, companyId, createBody.assigneeAgentId ?? null, {
+          provider: res.locals.mySubscriptionProvider,
+          model: res.locals.mySubscriptionModel,
+        })
       : null;
     const issue = await svc.create(companyId, {
       ...createBody,
-      ...(subscriptionOwnerUserId ? { subscriptionOwnerUserId } : {}),
+      ...(subscriptionSelection ?? {}),
       ...(taskBridgeOriginForActor(req) ?? {}),
       id: issueId,
       originRunId: createBody.originRunId ?? actor.runId,
