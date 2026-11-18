@@ -292,6 +292,47 @@ async function resolveResponsibleUserIdForIssueCreate(
   return input.createdByUserId ?? null;
 }
 
+/**
+ * Sub-issues inherit the parent's personal AI subscription only when the
+ * creator is that same user, or an agent whose current run is on an issue
+ * owned by that same user. Another human creating a child never inherits
+ * someone else's subscription.
+ */
+async function resolveInheritedSubscriptionOwnerUserId(
+  reader: DbReader,
+  companyId: string,
+  input: {
+    parentId?: string | null;
+    createdByUserId?: string | null;
+    createdByAgentId?: string | null;
+    actorRunId?: string | null;
+  },
+): Promise<string | null> {
+  if (!input.parentId) return null;
+  const parent = await reader
+    .select({ subscriptionOwnerUserId: issues.subscriptionOwnerUserId })
+    .from(issues)
+    .where(and(eq(issues.companyId, companyId), eq(issues.id, input.parentId)))
+    .then((rows) => rows[0] ?? null);
+  const owner = parent?.subscriptionOwnerUserId ?? null;
+  if (!owner) return null;
+  if (input.createdByUserId) return input.createdByUserId === owner ? owner : null;
+  if (!input.createdByAgentId || !input.actorRunId) return null;
+  const run = await reader
+    .select({ contextSnapshot: heartbeatRuns.contextSnapshot })
+    .from(heartbeatRuns)
+    .where(and(eq(heartbeatRuns.companyId, companyId), eq(heartbeatRuns.id, input.actorRunId)))
+    .then((rows) => rows[0] ?? null);
+  const runIssueId = readStringFromRecord((run?.contextSnapshot ?? {}) as Record<string, unknown>, "issueId");
+  if (!runIssueId) return null;
+  const runIssue = await reader
+    .select({ subscriptionOwnerUserId: issues.subscriptionOwnerUserId })
+    .from(issues)
+    .where(and(eq(issues.companyId, companyId), eq(issues.id, runIssueId)))
+    .then((rows) => rows[0] ?? null);
+  return runIssue?.subscriptionOwnerUserId === owner ? owner : null;
+}
+
 function buildReusedExecutionWorkspaceConfigPatchFromIssueSettings(
   settings: ReturnType<typeof parseIssueExecutionWorkspaceSettings>,
 ) {
@@ -2541,6 +2582,7 @@ const issueListSelect = {
   createdByAgentId: issues.createdByAgentId,
   createdByUserId: issues.createdByUserId,
   responsibleUserId: issues.responsibleUserId,
+  subscriptionOwnerUserId: issues.subscriptionOwnerUserId,
   issueNumber: issues.issueNumber,
   identifier: issues.identifier,
   originKind: issues.originKind,
@@ -6435,9 +6477,17 @@ export function issueService(db: Db) {
           trustExplicitResponsibleUserId: trustExplicitResponsibleUserId === true,
         });
 
+        const subscriptionOwnerUserId = await resolveInheritedSubscriptionOwnerUserId(tx, companyId, {
+          parentId: issueData.parentId ?? null,
+          createdByUserId: issueData.createdByUserId ?? null,
+          createdByAgentId: issueData.createdByAgentId ?? null,
+          actorRunId: actorRunId ?? null,
+        });
+
         const values = {
           ...issueData,
           responsibleUserId,
+          subscriptionOwnerUserId,
           requestDepth: clampIssueRequestDepth(issueData.requestDepth),
           originKind: issueData.originKind ?? "manual",
           goalId: resolveIssueGoalId({

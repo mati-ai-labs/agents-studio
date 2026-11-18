@@ -758,6 +758,8 @@ export interface Issue {
   createdByAgentId: string | null;
   createdByUserId: string | null;
   responsibleUserId: string | null;
+  /** User whose personal AI subscription runs this issue; null = Studio default. */
+  subscriptionOwnerUserId?: string | null;
   issueNumber: number | null;
   identifier: string | null;
   originKind?: IssueOriginKind;
