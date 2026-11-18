@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 import { agents, companies, createDb, heartbeatRuns, issues, userAiSubscriptions } from "@paperclipai/db";
 import {
   CLAUDE_STUDIO_ENV_KEYS_TO_BLANK,
+  buildSwappedAdapterConfig,
   decideUserSubscriptionForRun,
   detectUserSubscriptionAuthFailure,
   parseCodexAuthJson,
@@ -48,6 +49,33 @@ describe("user AI subscription helpers", () => {
     const base = { wakeUserId: null, ownerHasActiveCredential: true, isAssigneeRun: true };
     expect(decideUserSubscriptionForRun({ ...base, ownerUserId: null, provider: "claude" })).toEqual({ kind: "none" });
     expect(decideUserSubscriptionForRun({ ...base, ownerUserId: "a", provider: null })).toEqual({ kind: "none" });
+  });
+
+  it("translates an agent's config to another CLI, keeping only portable settings", () => {
+    const claudeConfig = {
+      model: "MiniMax-M3",
+      effort: "high",
+      engine: "cli",
+      maxTurnsPerRun: 50,
+      dangerouslySkipPermissions: true,
+      instructionsFilePath: "/a/AGENTS.md",
+      instructionsRootPath: "/a",
+      paperclipSkillSync: { desiredSkills: ["x"] },
+      env: { FOO: "1" },
+      timeoutSec: 900,
+    };
+    expect(buildSwappedAdapterConfig(claudeConfig, "codex", "gpt-5.6-sol")).toEqual({
+      instructionsFilePath: "/a/AGENTS.md",
+      instructionsRootPath: "/a",
+      paperclipSkillSync: { desiredSkills: ["x"] },
+      env: { FOO: "1" },
+      timeoutSec: 900,
+      dangerouslyBypassApprovalsAndSandbox: true,
+      search: true,
+      model: "gpt-5.6-sol",
+    });
+    const toClaude = buildSwappedAdapterConfig({ model: "gpt-5.6-luna", search: true, cwd: "/w" }, "claude", null);
+    expect(toClaude).toEqual({ cwd: "/w", dangerouslySkipPermissions: true });
   });
 
   it("detects provider auth failures", () => {
@@ -204,7 +232,10 @@ describeDb("user AI subscriptions (db)", () => {
     const svc = issueService(db);
     const parent = await svc.create(companyId, { title: "Parent", createdByUserId: "owner" } as never);
     const other = await svc.create(companyId, { title: "Other", createdByUserId: "someone" } as never);
-    await db.update(issues).set({ subscriptionOwnerUserId: "owner" }).where(eq(issues.id, parent.id));
+    await db
+      .update(issues)
+      .set({ subscriptionOwnerUserId: "owner", subscriptionProvider: "codex", subscriptionModel: "gpt-5.6-sol" })
+      .where(eq(issues.id, parent.id));
 
     const byOwner = await svc.create(companyId, { title: "c1", parentId: parent.id, createdByUserId: "owner" } as never);
     const byOtherUser = await svc.create(companyId, { title: "c2", parentId: parent.id, createdByUserId: "intruder" } as never);
@@ -228,6 +259,18 @@ describeDb("user AI subscriptions (db)", () => {
     expect(ownerOf(byOtherUser.id)).toBeNull();
     expect(ownerOf(byAgentInTree.id)).toBe("owner");
     expect(ownerOf(byAgentOutside.id)).toBeNull();
+    const inherited = await db
+      .select({ provider: issues.subscriptionProvider, model: issues.subscriptionModel })
+      .from(issues)
+      .where(eq(issues.id, byAgentInTree.id))
+      .then((r) => r[0]);
+    expect(inherited).toEqual({ provider: "codex", model: "gpt-5.6-sol" });
+    const notInherited = await db
+      .select({ provider: issues.subscriptionProvider })
+      .from(issues)
+      .where(eq(issues.id, byOtherUser.id))
+      .then((r) => r[0]);
+    expect(notInherited?.provider).toBeNull();
   }, 30_000);
   it("attaches a subscription at create time only for the signed-in user with a matching connection", async () => {
     const companyId = randomUUID();
@@ -246,9 +289,20 @@ describeDb("user AI subscriptions (db)", () => {
     await userAiSubscriptionService(db).saveCodexAuthJson("creator", codexAuth("creator@example.com"));
     const board = (userId: string) => ({ actor: { type: "board", userId } }) as never;
 
-    await expect(resolveSubscriptionOwnerForNewIssue(db, board("creator"), companyId, codexAgent)).resolves.toBe("creator");
+    await expect(resolveSubscriptionOwnerForNewIssue(db, board("creator"), companyId, codexAgent)).resolves.toEqual({
+      subscriptionOwnerUserId: "creator",
+      subscriptionProvider: "codex",
+      subscriptionModel: null,
+    });
     await expect(resolveSubscriptionOwnerForNewIssue(db, board("no-sub-user"), companyId, codexAgent)).rejects.toThrow(/Connect your Codex/);
-    await expect(resolveSubscriptionOwnerForNewIssue(db, board("creator"), companyId, geminiAgent)).rejects.toThrow(/Claude Code or Codex/);
+    // Any agent can run on any connected subscription when the provider is chosen explicitly.
+    await expect(resolveSubscriptionOwnerForNewIssue(db, board("creator"), companyId, geminiAgent)).rejects.toThrow(/Pick which subscription/);
+    await expect(
+      resolveSubscriptionOwnerForNewIssue(db, board("creator"), companyId, geminiAgent, { provider: "codex", model: "gpt-5.6-sol" }),
+    ).resolves.toEqual({ subscriptionOwnerUserId: "creator", subscriptionProvider: "codex", subscriptionModel: "gpt-5.6-sol" });
+    await expect(
+      resolveSubscriptionOwnerForNewIssue(db, board("creator"), companyId, codexAgent, { provider: "claude" }),
+    ).rejects.toThrow(/Connect your Claude/);
     await expect(
       resolveSubscriptionOwnerForNewIssue(db, { actor: { type: "agent", agentId: codexAgent } } as never, companyId, codexAgent),
     ).rejects.toThrow(/signed-in user/);

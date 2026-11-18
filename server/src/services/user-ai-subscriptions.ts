@@ -601,3 +601,58 @@ export function detectUserSubscriptionAuthFailure(text: string): string | null {
   }
   return null;
 }
+
+export function adapterTypeForProvider(provider: UserAiSubscriptionProvider): "claude_local" | "codex_local" {
+  return provider === "claude" ? "claude_local" : "codex_local";
+}
+
+export function parseSubscriptionProvider(value: unknown): UserAiSubscriptionProvider | null {
+  return value === "claude" || value === "codex" ? value : null;
+}
+
+/** Settings that mean the same thing for every local CLI adapter. */
+const PORTABLE_ADAPTER_CONFIG_KEYS = [
+  "cwd",
+  "env",
+  "instructionsFilePath",
+  "instructionsEntryFile",
+  "instructionsRootPath",
+  "instructionsBundleMode",
+  "paperclipSkillSync",
+  "paperclipRuntimeSkills",
+  "promptTemplate",
+  "bootstrapPromptTemplate",
+  "timeoutSec",
+  "graceSec",
+  "filesystemScope",
+  "filesystemExtraPaths",
+  "networkScope",
+  "networkAllowlist",
+  "workspaceStrategy",
+  "workspaceRuntime",
+] as const;
+
+/**
+ * Translate an agent's adapter config for a run that must use a different CLI
+ * (the issue owner picked a subscription for another provider). Keeps the
+ * agent's instructions, skills, workspace and env; drops CLI-specific knobs
+ * and applies the target CLI's unattended defaults.
+ */
+export function buildSwappedAdapterConfig(
+  config: Record<string, unknown>,
+  targetProvider: UserAiSubscriptionProvider,
+  model: string | null,
+): Record<string, unknown> {
+  const next: Record<string, unknown> = {};
+  for (const key of PORTABLE_ADAPTER_CONFIG_KEYS) {
+    if (config[key] !== undefined) next[key] = config[key];
+  }
+  if (targetProvider === "codex") {
+    next.dangerouslyBypassApprovalsAndSandbox = true;
+    next.search = true;
+  } else {
+    next.dangerouslySkipPermissions = true;
+  }
+  if (model) next.model = model;
+  return next;
+}

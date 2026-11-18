@@ -48,6 +48,10 @@ export const issues = pgTable(
     responsibleUserId: text("responsible_user_id"),
     /** User whose own AI subscription runs this issue; null = Studio default credentials. */
     subscriptionOwnerUserId: text("subscription_owner_user_id"),
+    /** "claude" | "codex"; null = the assignee agent's own CLI provider. */
+    subscriptionProvider: text("subscription_provider"),
+    /** Model on the personal subscription; null = CLI default. */
+    subscriptionModel: text("subscription_model"),
     issueNumber: integer("issue_number"),
     identifier: text("identifier"),
     originKind: text("origin_kind").notNull().default("manual"),

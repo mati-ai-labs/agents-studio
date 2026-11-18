@@ -26,11 +26,14 @@ export interface MyAiSubscriptions {
 
 export interface IssueAiSubscription {
   issueId: string;
+  agentProvider: AiSubscriptionProvider | null;
   provider: AiSubscriptionProvider | null;
+  model: string | null;
   ownerUserId: string | null;
   ownerName: string | null;
   isMine: boolean;
   canClear: boolean;
+  mySubscriptions: AiSubscriptionSummary[];
   mySubscription: AiSubscriptionSummary | null;
 }
 
@@ -47,6 +50,10 @@ export const aiSubscriptionsApi = {
     api.get<Array<{ id: string; label: string }>>(`/me/ai-subscriptions/${provider}/models`),
   issueModels: (issueId: string) => api.get<Array<{ id: string; label: string }>>(`/issues/${issueId}/ai-subscription/models`),
   getForIssue: (issueId: string) => api.get<IssueAiSubscription>(`/issues/${issueId}/ai-subscription`),
-  setForIssue: (issueId: string, enabled: boolean) =>
-    api.put<IssueAiSubscription>(`/issues/${issueId}/ai-subscription`, { enabled }),
+  setForIssue: (issueId: string, enabled: boolean, options?: { provider?: AiSubscriptionProvider; model?: string | null }) =>
+    api.put<IssueAiSubscription>(`/issues/${issueId}/ai-subscription`, {
+      enabled,
+      ...(options?.provider ? { provider: options.provider } : {}),
+      ...(options?.model ? { model: options.model } : {}),
+    }),
 };

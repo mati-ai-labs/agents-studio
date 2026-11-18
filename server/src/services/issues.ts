@@ -307,16 +307,25 @@ async function resolveInheritedSubscriptionOwnerUserId(
     createdByAgentId?: string | null;
     actorRunId?: string | null;
   },
-): Promise<string | null> {
+): Promise<{ subscriptionOwnerUserId: string; subscriptionProvider: string | null; subscriptionModel: string | null } | null> {
   if (!input.parentId) return null;
   const parent = await reader
-    .select({ subscriptionOwnerUserId: issues.subscriptionOwnerUserId })
+    .select({
+      subscriptionOwnerUserId: issues.subscriptionOwnerUserId,
+      subscriptionProvider: issues.subscriptionProvider,
+      subscriptionModel: issues.subscriptionModel,
+    })
     .from(issues)
     .where(and(eq(issues.companyId, companyId), eq(issues.id, input.parentId)))
     .then((rows) => rows[0] ?? null);
   const owner = parent?.subscriptionOwnerUserId ?? null;
   if (!owner) return null;
-  if (input.createdByUserId) return input.createdByUserId === owner ? owner : null;
+  const inherited = {
+    subscriptionOwnerUserId: owner,
+    subscriptionProvider: parent?.subscriptionProvider ?? null,
+    subscriptionModel: parent?.subscriptionModel ?? null,
+  };
+  if (input.createdByUserId) return input.createdByUserId === owner ? inherited : null;
   if (!input.createdByAgentId || !input.actorRunId) return null;
   const run = await reader
     .select({ contextSnapshot: heartbeatRuns.contextSnapshot })
@@ -330,7 +339,7 @@ async function resolveInheritedSubscriptionOwnerUserId(
     .from(issues)
     .where(and(eq(issues.companyId, companyId), eq(issues.id, runIssueId)))
     .then((rows) => rows[0] ?? null);
-  return runIssue?.subscriptionOwnerUserId === owner ? owner : null;
+  return runIssue?.subscriptionOwnerUserId === owner ? inherited : null;
 }
 
 function buildReusedExecutionWorkspaceConfigPatchFromIssueSettings(
@@ -2583,6 +2592,8 @@ const issueListSelect = {
   createdByUserId: issues.createdByUserId,
   responsibleUserId: issues.responsibleUserId,
   subscriptionOwnerUserId: issues.subscriptionOwnerUserId,
+  subscriptionProvider: issues.subscriptionProvider,
+  subscriptionModel: issues.subscriptionModel,
   issueNumber: issues.issueNumber,
   identifier: issues.identifier,
   originKind: issues.originKind,
@@ -6478,17 +6489,25 @@ export function issueService(db: Db) {
         });
 
         // Explicit owner is only ever set by the create route, to the acting board user.
-        const subscriptionOwnerUserId = issueData.subscriptionOwnerUserId ?? await resolveInheritedSubscriptionOwnerUserId(tx, companyId, {
-          parentId: issueData.parentId ?? null,
-          createdByUserId: issueData.createdByUserId ?? null,
-          createdByAgentId: issueData.createdByAgentId ?? null,
-          actorRunId: actorRunId ?? null,
-        });
+        const subscriptionSelection = issueData.subscriptionOwnerUserId
+          ? {
+              subscriptionOwnerUserId: issueData.subscriptionOwnerUserId,
+              subscriptionProvider: issueData.subscriptionProvider ?? null,
+              subscriptionModel: issueData.subscriptionModel ?? null,
+            }
+          : await resolveInheritedSubscriptionOwnerUserId(tx, companyId, {
+              parentId: issueData.parentId ?? null,
+              createdByUserId: issueData.createdByUserId ?? null,
+              createdByAgentId: issueData.createdByAgentId ?? null,
+              actorRunId: actorRunId ?? null,
+            });
 
         const values = {
           ...issueData,
           responsibleUserId,
-          subscriptionOwnerUserId,
+          subscriptionOwnerUserId: subscriptionSelection?.subscriptionOwnerUserId ?? null,
+          subscriptionProvider: subscriptionSelection?.subscriptionProvider ?? null,
+          subscriptionModel: subscriptionSelection?.subscriptionModel ?? null,
           requestDepth: clampIssueRequestDepth(issueData.requestDepth),
           originKind: issueData.originKind ?? "manual",
           goalId: resolveIssueGoalId({
