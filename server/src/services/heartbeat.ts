@@ -100,6 +100,7 @@ import {
   parseSubscriptionProvider,
   providerForAdapterType,
   userAiSubscriptionService,
+  SUBSCRIPTION_DEFAULT_MAX_TURNS,
   type UserSubscriptionRunDecision,
 } from "./user-ai-subscriptions.js";
 import { resolveDefaultAgentWorkspaceDir, resolveManagedProjectWorkspaceDir } from "../home-paths.js";
@@ -6176,6 +6177,13 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     Object.assign(resolvedConfig, prepared.configPatch);
     const subscriptionModel = readNonEmptyString(issueContext.subscriptionModel);
     if (subscriptionModel) resolvedConfig.model = subscriptionModel;
+    if (provider === "claude") {
+      // Cap runaway runs on personal plans. --max-turns is a CLI-engine flag
+      // (ACP ignores it), so use the CLI lane unless the agent pins an engine.
+      const maxTurns = Number(resolvedConfig.maxTurnsPerRun);
+      if (!Number.isFinite(maxTurns) || maxTurns <= 0) resolvedConfig.maxTurnsPerRun = SUBSCRIPTION_DEFAULT_MAX_TURNS;
+      if (!readNonEmptyString(resolvedConfig.engine)) resolvedConfig.engine = "cli";
+    }
     for (const key of prepared.secretEnvKeys) secretKeys.add(key);
     context.paperclipCredentialSource = {
       kind: "user_subscription",
