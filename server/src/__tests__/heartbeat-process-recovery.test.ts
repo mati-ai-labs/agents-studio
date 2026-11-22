@@ -110,6 +110,7 @@ import {
   resolveHotRestartReportPath,
   writeHotRestartIntent,
 } from "../services/hot-restart.ts";
+import { setHostMemoryReaderForTests } from "../services/memory-gate.ts";
 import { secretService } from "../services/secrets.ts";
 import {
   SUCCESSFUL_RUN_HANDOFF_EXHAUSTED_NOTICE_BODY,
@@ -306,6 +307,14 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     db = createDb(tempDb.connectionString);
   }, 20_000);
 
+  // Plenty of memory by default, so the instance-wide memory gate never binds.
+  // The gate reserves 600 MB of headroom for every run started in the last 90s;
+  // this suite starts dozens of runs, which would otherwise hold the queue and
+  // leave the later tests without a started run.
+  beforeEach(() => {
+    setHostMemoryReaderForTests(async () => ({ availableMb: 1_000_000, totalMb: 1_000_000 }));
+  });
+
   afterEach(async () => {
     vi.clearAllMocks();
     const localServiceSupervisor = await vi.importActual<typeof import("../services/local-service-supervisor.js")>(
@@ -443,6 +452,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
   });
 
   afterAll(async () => {
+    setHostMemoryReaderForTests(null);
     for (const child of childProcesses) {
       child.kill("SIGKILL");
     }
@@ -2602,10 +2612,16 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       status: "failed",
       errorCode: "workspace_validation_failed",
     });
-    expect(failedRun?.error).toContain("linked to a project workspace but has no project id");
+    // The project id is now resolved from the linked project workspace, so the
+    // missing issue project id is not the blocker: the run is blocked because
+    // the linked workspace path is unavailable and the adapter would fall back
+    // to the agent home cwd.
+    expect(failedRun?.error).toContain(
+      "expected a project workspace, but codex_local would launch from agent fallback cwd",
+    );
     expect(failedRun?.resultJson).toMatchObject({
       workspaceValidation: {
-        reason: "missing_project_id",
+        reason: "fallback_agent_home_cwd",
         adapterType: "codex_local",
         issueId,
         issueProjectId: null,

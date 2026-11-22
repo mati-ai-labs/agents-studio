@@ -92,6 +92,7 @@ describe("actorMiddleware authenticated session profile", () => {
         };
         return chain;
       }),
+      delete: vi.fn(() => ({ where: () => Promise.resolve(undefined) })),
       select: vi.fn(),
     } as any;
     const app = express();
@@ -122,7 +123,9 @@ describe("actorMiddleware authenticated session profile", () => {
       userName: "Stack Owner",
       userEmail: "owner@example.com",
       source: "cloud_tenant",
-      isInstanceAdmin: true,
+      // Cloud tenants are company-scoped and are never instance admins; the
+      // middleware also purges any stale instance_admin row for the user.
+      isInstanceAdmin: false,
       memberships: [expect.objectContaining({ membershipRole: "owner", status: "active" })],
     });
     expect(res.body.companyIds[0]).toMatch(/^[0-9a-f-]{36}$/);

@@ -2,7 +2,7 @@ import { Router } from "express";
 import type { Db } from "@paperclipai/db";
 import { chatSessions, chatMessages } from "@paperclipai/db";
 import { and, desc, eq } from "drizzle-orm";
-import { assertCompanyAccess } from "./authz.js";
+import { assertCompanyAccess, hasCompanyAccess } from "./authz.js";
 import { logger } from "../middleware/logger.js";
 
 export function chatRoutes(db: Db) {
@@ -84,6 +84,13 @@ export function chatRoutes(db: Db) {
       return;
     }
 
+    // Same 404 for "no such session" and "session in another tenant", so this
+    // endpoint cannot be used to enumerate other tenants' session ids.
+    if (!hasCompanyAccess(req, session.companyId)) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
+
     assertCompanyAccess(req, session.companyId);
     const full = await buildChatSession(session);
     res.json(full);
@@ -100,6 +107,13 @@ export function chatRoutes(db: Db) {
       .limit(1);
 
     if (!session) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
+
+    // Same 404 for "no such session" and "session in another tenant", so this
+    // endpoint cannot be used to enumerate other tenants' session ids.
+    if (!hasCompanyAccess(req, session.companyId)) {
       res.status(404).json({ error: "Session not found" });
       return;
     }
@@ -122,6 +136,13 @@ export function chatRoutes(db: Db) {
       .limit(1);
 
     if (!session) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
+
+    // Same 404 for "no such session" and "session in another tenant", so this
+    // endpoint cannot be used to enumerate other tenants' session ids.
+    if (!hasCompanyAccess(req, session.companyId)) {
       res.status(404).json({ error: "Session not found" });
       return;
     }
@@ -325,6 +346,12 @@ export function chatRoutes(db: Db) {
       res.status(404).json({ error: "Session not found" });
       return;
     }
+    // Same 404 for "no such session" and "session in another tenant", so this
+    // endpoint cannot be used to enumerate other tenants' session ids.
+    if (!hasCompanyAccess(req, session.companyId)) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
     assertCompanyAccess(req, session.companyId);
 
     const context = session.metadata ? JSON.parse(session.metadata) : {};
@@ -342,6 +369,12 @@ export function chatRoutes(db: Db) {
       .limit(1);
 
     if (!session) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
+    // Same 404 for "no such session" and "session in another tenant", so this
+    // endpoint cannot be used to enumerate other tenants' session ids.
+    if (!hasCompanyAccess(req, session.companyId)) {
       res.status(404).json({ error: "Session not found" });
       return;
     }
@@ -368,6 +401,13 @@ export function chatRoutes(db: Db) {
       .limit(1);
 
     if (!session) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
+
+    // Same 404 for "no such session" and "session in another tenant", so this
+    // endpoint cannot be used to enumerate other tenants' session ids.
+    if (!hasCompanyAccess(req, session.companyId)) {
       res.status(404).json({ error: "Session not found" });
       return;
     }

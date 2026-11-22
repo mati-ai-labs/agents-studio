@@ -26,6 +26,17 @@ const BASE_URL = `http://127.0.0.1:${PORT}`;
 const COMPANY_NAME_PREFIX = "E2E-SidebarTakeover";
 const COLLAPSED_STORAGE_KEY = "paperclip.sidebar.collapsed";
 
+// The sidebar takeover model is not part of the deployment baseline UI any
+// more: commit 43d81e50c "fix: restore exact production UI source" (merged
+// through PR #10 "codex/restore-exact-production-ui") replaced the collapsible
+// app rail + secondary pane with a single sidebar pane in
+// `ui/src/components/Layout.tsx`. There is no `[data-secondary-sidebar]`
+// element, no 64px rail, no `paperclip.sidebar.collapsed` pin and no
+// "Open search" header control any more, so every assertion below targets
+// markup the product no longer renders. Tracked by LCH-534.
+const SIDEBAR_TAKEOVER_REMOVED =
+  "sidebar takeover (secondary pane + collapsible rail) removed from the deployment baseline UI by 43d81e50c (LCH-534)";
+
 // The sidebar header's "Open search" control only renders when the app sidebar
 // is expanded (pinned or peeking); in the collapsed rail it is hidden to fit
 // the 64px width. Its presence/absence is therefore a stable proxy for the
@@ -52,6 +63,7 @@ async function createCompany(board: APIRequestContext): Promise<{ id: string; pr
 }
 
 test.describe("Sidebar takeover (collapse + secondary pane)", () => {
+  test.skip(true, SIDEBAR_TAKEOVER_REMOVED);
   let board: APIRequestContext;
   let companyId: string;
   let prefix: string;

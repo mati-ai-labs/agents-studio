@@ -9,6 +9,15 @@ import { listenOnFetchAllowedPort } from "./fetch-allowed-port";
 
 const SCREENSHOT_DIR = "test-results";
 
+// The Apps UI is not part of the deployment baseline UI any more: commit
+// 43d81e50c "fix: restore exact production UI source" (merged through PR #10
+// "codex/restore-exact-production-ui") dropped `ui/src/pages/apps/**` and the
+// `/apps` routes from `ui/src/App.tsx`. Every assertion below targets the Apps
+// connection list / app detail pages the product no longer serves, so this
+// spec cannot pass until the Apps UI is restored. Tracked by LCH-534.
+const APPS_UI_REMOVED =
+  "Apps UI removed from the deployment baseline UI by 43d81e50c (LCH-534)";
+
 type Seed = { companyId: string; prefix: string };
 
 async function newCompany(request: APIRequestContext, label: string): Promise<Seed> {
@@ -66,6 +75,7 @@ async function startMockMcp(): Promise<MockMcpServer> {
 }
 
 test.describe.serial("not-connected app page", () => {
+  test.skip(true, APPS_UI_REMOVED);
   test.setTimeout(240_000);
 
   let mock: MockMcpServer;

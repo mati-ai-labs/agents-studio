@@ -1,11 +1,36 @@
 import { expect, test } from "@playwright/test";
 
-const AGENT_NAME = "Chief of staff";
-const TASK_TITLE = "Hire your first engineer and create a hiring plan";
+const AGENT_NAME = "CEO";
+
+/**
+ * Open the wizard.
+ *
+ * The /onboarding route renders a launcher card, but the app layout also
+ * auto-opens the wizard when the instance has no companies yet — in that case
+ * the wizard is already on screen and the launcher button sits behind the
+ * full-screen wizard overlay, so it must not be clicked.
+ */
+async function openWizard(page: import("@playwright/test").Page) {
+  const step1Heading = page.getByRole("heading", { name: "Name your company" });
+  if ((await step1Heading.count()) === 0) {
+    const launcher = page.getByRole("button", {
+      name: /Start Onboarding|New Company|Add Agent/,
+    });
+    if (await launcher.count()) {
+      // A click that lands on the already-open wizard overlay is harmless.
+      await launcher.first().click({ timeout: 10_000 }).catch(() => undefined);
+    }
+  }
+  await expect(step1Heading).toBeVisible({ timeout: 15_000 });
+}
 
 test("captures planning mode UI for desktop and mobile", async ({ page }) => {
+  // The wizard creates a company, an agent, a project and the starter issue
+  // before it navigates — give the flow more than the 60s default.
+  test.setTimeout(180_000);
   const timestamp = Date.now();
   const companyName = `PAP-3413-${timestamp}`;
+  const taskTitle = `${companyName} Innovation Intelligence Report`;
   const screenshotDir = "test-results/planning-mode";
 
   await page.route("**/test-environment", (route) =>
@@ -19,7 +44,7 @@ test("captures planning mode UI for desktop and mobile", async ({ page }) => {
     const req = route.request();
     const body = JSON.parse(req.postData() || "{}");
     const auth = req.headers().authorization;
-    const real = await fetch(new URL(req.url()).toString(), {
+    const real = await fetch(new URL(req.url(), page.url()).toString(), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -41,32 +66,21 @@ test("captures planning mode UI for desktop and mobile", async ({ page }) => {
   });
 
   await page.goto("/onboarding");
-  const startBtn = page.getByRole("button", { name: /Start Onboarding|New Company|Add Agent/ });
-  if (await startBtn.count()) await startBtn.first().click();
-
-  const createCard = page.getByRole("button", { name: /Build a new company/ });
-  if (await createCard.count()) await createCard.first().click();
-
-  await expect(page.getByRole("heading", { name: "Name your company" })).toBeVisible({ timeout: 15_000 });
+  await openWizard(page);
 
   await page.locator('input[placeholder="Acme Corp"]').fill(companyName);
   await page.getByRole("button", { name: /^Next/ }).click();
 
-  await expect(page.getByRole("heading", { name: "Define your mission" })).toBeVisible({ timeout: 30_000 });
-  await page
-    .getByPlaceholder("What is your team trying to achieve?")
-    .fill("Capture planning mode visual evidence for the graduated task UI.");
-  await page.getByRole("button", { name: /Confirm mission/ }).click();
-
-  await page.waitForSelector('input[placeholder="Chief of staff"]', { timeout: 30_000 });
-  await expect(page.locator('input[placeholder="Chief of staff"]')).toHaveValue(AGENT_NAME);
-
+  await expect(page.getByRole("heading", { name: "Create your first agent" })).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('input[placeholder="CEO"]')).toHaveValue(AGENT_NAME);
   await page.getByRole("button", { name: /^Next/ }).click();
-  await page.getByRole("button", { name: /Give it a heartbeat/ }).click();
 
-  await expect(page.getByRole("heading", { name: "Review" })).toBeVisible({ timeout: 30_000 });
-  await page.getByRole("button", { name: /Get started/ }).click();
-  await expect(page).toHaveURL(/\/dashboard$/, { timeout: 30_000 });
+  await expect(page.getByRole("heading", { name: "Give it something to do" })).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("button", { name: /^Next/ }).click();
+
+  await expect(page.getByRole("heading", { name: "Ready to launch" })).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("button", { name: /Create & Open Issue/ }).click();
+  await expect(page).toHaveURL(/\/issues\/[^/]+$/, { timeout: 60_000 });
 
   const baseOrigin = new URL(page.url()).origin;
   const companyRes = await page.request.get(`${baseOrigin}/api/companies`);
@@ -79,7 +93,7 @@ test("captures planning mode UI for desktop and mobile", async ({ page }) => {
   const issues = await issueRes.json();
   const planningSeedIssue = issues.find(
     (candidate: { id: string; identifier?: string; title: string }) =>
-      candidate.title === TASK_TITLE,
+      candidate.title === taskTitle,
   );
   expect(planningSeedIssue).toBeTruthy();
 
@@ -107,7 +121,8 @@ test("captures planning mode UI for desktop and mobile", async ({ page }) => {
   await setMode("planning");
 
   await page.goto(issuePath);
-  await expect(page.getByText("Plan mode").first()).toBeVisible();
+  // The planning badge on the issue header reads "Planning".
+  await expect(page.getByText("Planning").first()).toBeVisible();
   await expect(page.getByTestId("issue-chat-composer")).toHaveAttribute("data-pending-work-mode", "planning");
   const desktopPlanningToggle = page.getByTestId("issue-chat-composer-work-mode-toggle");
   await expect(desktopPlanningToggle).toBeVisible();
@@ -121,18 +136,19 @@ test("captures planning mode UI for desktop and mobile", async ({ page }) => {
 
   await page.goto(`/${companyPrefix}/issues`);
   await expect(page.locator(issueLinkSelector)).toBeVisible();
-  await expect(page.locator(issueLinkSelector)).not.toContainText("Plan mode");
+  // The issues list row carries the same "Planning" indicator.
+  await expect(page.locator(issueLinkSelector)).toContainText("Planning");
   await page.screenshot({
     path: `${screenshotDir}/desktop-planning-row-${timestamp}.png`,
     fullPage: true,
   });
 
   await page.goto(issuePath);
+  // The planning chip switches the pending submission back to standard mode;
+  // it only renders while planning is on.
   await page.getByTestId("issue-chat-composer-work-mode-toggle").click();
-  await page.getByTestId("issue-chat-composer-work-mode-menu-standard").click();
   await expect(page.getByTestId("issue-chat-composer")).toHaveAttribute("data-pending-work-mode", "standard");
-  await expect(page.getByTestId("issue-chat-composer-work-mode-toggle")).toHaveAttribute("data-pending-work-mode", "standard");
-  await expect(page.getByTestId("issue-chat-composer-work-mode-toggle")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByTestId("issue-chat-composer-work-mode-toggle")).toHaveCount(0);
   await page.screenshot({
     path: `${screenshotDir}/desktop-standard-toggle-${timestamp}.png`,
     fullPage: true,
@@ -141,7 +157,7 @@ test("captures planning mode UI for desktop and mobile", async ({ page }) => {
   await setMode("planning");
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(issuePath);
-  await expect(page.getByText("Plan mode").first()).toBeVisible();
+  await expect(page.getByText("Planning").first()).toBeVisible();
   const mobilePlanningToggle = page.getByTestId("issue-chat-composer-work-mode-toggle");
   await expect(mobilePlanningToggle).toBeVisible();
   await expect(mobilePlanningToggle).toHaveAttribute("data-pending-work-mode", "planning");
@@ -153,7 +169,7 @@ test("captures planning mode UI for desktop and mobile", async ({ page }) => {
 
   await page.goto(`/${companyPrefix}/issues`);
   await expect(page.locator(issueLinkSelector)).toBeVisible();
-  await expect(page.locator(issueLinkSelector)).not.toContainText("Plan mode");
+  await expect(page.locator(issueLinkSelector)).toContainText("Planning");
   await page.screenshot({
     path: `${screenshotDir}/mobile-planning-row-${timestamp}.png`,
     fullPage: true,

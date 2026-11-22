@@ -3,7 +3,17 @@ import { expect, test } from "@playwright/test";
 // One-off visual capture for PAP-10817. The retired Tools -> Applications
 // table now redirects into Apps, so capture the current app removal
 // confirmation on the app Advanced tab instead.
+//
+// The Apps UI is not part of the deployment baseline UI any more: commit
+// 43d81e50c "fix: restore exact production UI source" (merged through PR #10
+// "codex/restore-exact-production-ui") dropped `ui/src/pages/apps/**` and the
+// `/apps` routes from `ui/src/App.tsx`, so the app detail / Advanced tab this
+// capture drives no longer exists. Tracked by LCH-534.
+const APPS_UI_REMOVED =
+  "Apps UI removed from the deployment baseline UI by 43d81e50c (LCH-534)";
+
 test("captures the current app removal confirmations", async ({ page }) => {
+  test.skip(true, APPS_UI_REMOVED);
   const flags = await page.request.patch("/api/instance/settings/experimental", { data: { enableApps: true } });
   expect(flags.ok(), `enable apps failed ${flags.status()}: ${await flags.text()}`).toBe(true);
 

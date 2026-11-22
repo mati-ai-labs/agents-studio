@@ -774,9 +774,20 @@ describeEmbeddedPostgres("companySkillService.list", () => {
       expect.objectContaining({ name: "Review", folderPath: "engineering/reviews" }),
     ]);
     await expect(svc.list(companyId, { folderId: engineering.id })).resolves.toEqual([]);
-    await expect(svc.list(companyId, { folderId: engineering.id, q: "deploy" })).resolves.toEqual([
-      expect.objectContaining({ name: "Deploy", folderPath: "operations" }),
-    ]);
+    // A search is global: it ignores the folder filter and reaches the
+    // "Deploy" skill in the operations folder. The bundled Paperclip skills are
+    // part of the same company inventory, so they match the search too.
+    const globalSearchResults = await svc.list(companyId, { folderId: engineering.id, q: "deploy" });
+    expect(globalSearchResults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "Deploy", folderPath: "operations" }),
+      ]),
+    );
+    expect(
+      globalSearchResults
+        .filter((skill) => skill.name !== "Deploy")
+        .every((skill) => skill.sourceBadge === "paperclip"),
+    ).toBe(true);
     const review = (await svc.list(companyId)).find((skill) => skill.name === "Review");
     await expect(svc.getById(companyId, review!.id)).resolves.toMatchObject({
       name: "Review",
