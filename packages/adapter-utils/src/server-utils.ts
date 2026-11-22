@@ -1522,11 +1522,16 @@ export function renderPaperclipWakePrompt(
   if (normalized.chat) {
     lines.push(`- chat session: ${normalized.chat.sessionId ?? "unknown"}`);
   }
-  lines.push(
-    `- pending comments: ${normalized.includedCount}/${normalized.requestedCount}`,
-    `- latest comment id: ${normalized.latestCommentId ?? "unknown"}`,
-    `- fallback fetch needed: ${normalized.fallbackFetchNeeded ? "yes" : "no"}`,
-  );
+  // The comment-batch boilerplate only belongs in the payload when there is a
+  // batch; on a fresh wake with nothing pending it would say "0/0" and
+  // "latest comment id: unknown" for no reason.
+  if (hasWakeCommentBatch) {
+    lines.push(
+      `- pending comments: ${normalized.includedCount}/${normalized.requestedCount}`,
+      `- latest comment id: ${normalized.latestCommentId ?? "unknown"}`,
+    );
+  }
+  lines.push(`- fallback fetch needed: ${normalized.fallbackFetchNeeded ? "yes" : "no"}`);
 
   if (normalized.chat?.message) {
     lines.push(
