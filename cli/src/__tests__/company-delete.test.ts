@@ -7,6 +7,8 @@ function makeCompany(overrides: Partial<Company>): Company {
     id: "11111111-1111-1111-1111-111111111111",
     name: "Alpha",
     description: null,
+    website: null,
+    importantLinks: [],
     status: "active",
     pauseReason: null,
     pausedAt: null,

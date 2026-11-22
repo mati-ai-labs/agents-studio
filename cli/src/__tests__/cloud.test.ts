@@ -212,6 +212,8 @@ function portabilityExport(): CompanyPortabilityExportResult {
         path: "company.json",
         name: "Local Company",
         description: null,
+        website: null,
+        importantLinks: [],
         brandColor: null,
         logoPath: null,
         attachmentMaxBytes: null,
