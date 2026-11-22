@@ -5,12 +5,12 @@ describe("codex local adapter metadata", () => {
   it("advertises current GPT-5.6 Codex-capable OpenAI models by default", () => {
     const modelIds = models.map((model) => model.id);
 
-    expect(DEFAULT_CODEX_LOCAL_MODEL).toBe("gpt-5.6");
+    expect(DEFAULT_CODEX_LOCAL_MODEL).toBe("gpt-5.6-luna");
     expect(modelIds.slice(0, 4)).toEqual([
-      "gpt-5.6",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
+      "gpt-5.5",
     ]);
     expect(isCodexLocalFastModeSupported(DEFAULT_CODEX_LOCAL_MODEL)).toBe(true);
     expect(modelIds).not.toContain("gpt-5.3-codex");
