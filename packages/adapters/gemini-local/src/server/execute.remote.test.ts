@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -246,15 +247,56 @@ describe("gemini remote execution", () => {
         stats: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 },
       }),
     ].join("\n");
-    const runnerExecute = vi.fn(async (input: { command: string; args?: string[] }) => ({
-      exitCode: 0,
-      signal: null,
-      timedOut: false,
-      stdout: input.command === "gemini" ? geminiOutput : "",
-      stderr: "",
-      pid: 321,
-      startedAt: new Date().toISOString(),
-    }));
+    const runnerExecute = vi.fn(async (input: {
+      command: string;
+      args?: string[];
+      cwd?: string;
+      env?: Record<string, string>;
+      stdin?: string;
+    }) => {
+      if (input.command === "gemini") {
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          stdout: geminiOutput,
+          stderr: "",
+          pid: 321,
+          startedAt: new Date().toISOString(),
+        };
+      }
+      // The sandbox shell drives the remote-side workspace archive, so it has
+      // to actually run against the (local) fake remote. The fake remote lives
+      // at an absolute /remote/workspace path, so map it onto a local root.
+      const remoteRoot = path.join(rootDir, "remote-workspace");
+      const remoteBinDir = path.join(remoteRoot, ".local", "bin");
+      await mkdir(remoteBinDir, { recursive: true });
+      // The fake remote has the agent CLI installed, so the adapter does not
+      // try to install it.
+      const stubCommand = path.join(remoteBinDir, "gemini");
+      await writeFile(stubCommand, "#!/bin/sh\nexit 0\n", "utf8");
+      await chmod(stubCommand, 0o755);
+      const mapRemote = (value: string) => value.replaceAll("/remote/workspace", remoteRoot);
+      const args = (input.args ?? []).map(mapRemote);
+      const result = spawnSync(input.command, args, {
+        cwd: input.cwd ? mapRemote(input.cwd) : remoteRoot,
+        env: {
+          ...input.env,
+          PATH: `${remoteBinDir}${path.delimiter}${input.env?.PATH ?? process.env.PATH ?? ""}`,
+        },
+        input: input.stdin,
+        encoding: "utf8",
+      });
+      return {
+        exitCode: result.status ?? 0,
+        signal: null,
+        timedOut: false,
+        stdout: result.stdout ?? "",
+        stderr: result.stderr ?? "",
+        pid: 321,
+        startedAt: new Date().toISOString(),
+      };
+    });
 
     await execute({
       runId: "run-sandbox-1",
