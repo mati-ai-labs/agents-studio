@@ -12,7 +12,8 @@ describe("codex local adapter metadata", () => {
       "gpt-5.6-luna",
       "gpt-5.5",
     ]);
-    expect(isCodexLocalFastModeSupported(DEFAULT_CODEX_LOCAL_MODEL)).toBe(true);
+    expect(isCodexLocalFastModeSupported(DEFAULT_CODEX_LOCAL_MODEL)).toBe(false);
+    expect(isCodexLocalFastModeSupported("gpt-5.4")).toBe(true);
     expect(modelIds).not.toContain("gpt-5.3-codex");
   });
 });
