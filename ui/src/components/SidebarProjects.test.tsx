@@ -107,6 +107,7 @@ if (!globalThis.PointerEvent) {
 
 function makeProject(overrides: Partial<Project>): Project {
   return {
+    icon: null,
     id: "project-a",
     companyId: "company-1",
     urlKey: "alpha",

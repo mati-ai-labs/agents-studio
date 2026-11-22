@@ -128,6 +128,9 @@ function toDocumentSummary(document: IssueDocument) {
     createdByUserId: document.createdByUserId,
     updatedByAgentId: document.updatedByAgentId,
     updatedByUserId: document.updatedByUserId,
+    lockedAt: document.lockedAt,
+    lockedByAgentId: document.lockedByAgentId,
+    lockedByUserId: document.lockedByUserId,
     createdAt: document.createdAt,
     updatedAt: document.updatedAt,
   };

@@ -123,6 +123,8 @@ async function flush() {
 
 function createIssue(overrides: Partial<Issue> = {}): Issue {
   return {
+    responsibleUserId: null,
+    completionDestination: null,
     id: "issue-1",
     companyId: "company-1",
     projectId: null,
@@ -266,6 +268,7 @@ function createProject(overrides: Partial<Project> = {}): Project {
     updatedAt: new Date("2026-04-06T12:00:00.000Z"),
   };
   return {
+    icon: null,
     id: "project-1",
     companyId: "company-1",
     urlKey: "project-1",

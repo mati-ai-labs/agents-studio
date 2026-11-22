@@ -45,6 +45,8 @@ export interface IssueRecoveryActionCardProps {
 const KIND_LABEL: Record<IssueRecoveryActionKind, string> = {
   missing_disposition: "Missing Disposition",
   stranded_assigned_issue: "Stranded Issue",
+  workspace_validation: "Workspace Validation",
+  configuration_validation: "Configuration Validation",
   active_run_watchdog: "Active Watchdog",
   issue_graph_liveness: "Graph Liveness",
 };
@@ -53,6 +55,10 @@ const KIND_HEADLINE: Record<IssueRecoveryActionKind, string> = {
   missing_disposition: "This issue's run finished, but no next step was chosen.",
   stranded_assigned_issue:
     "Agent Studio retried this issue's last run and it still has no live execution path.",
+  workspace_validation:
+    "Agent Studio stopped this run because the issue's git workspace could not be validated.",
+  configuration_validation:
+    "Agent Studio stopped before dispatching this run because required secret/env bindings are missing.",
   active_run_watchdog:
     "The active run has been silent. Recovery is observing without interrupting it.",
   issue_graph_liveness:
@@ -122,6 +128,8 @@ const STATE_TONE: Record<RecoveryCardCardState, {
 
 const OUTCOME_LABEL: Record<IssueRecoveryActionOutcome, string> = {
   restored: "restored",
+  handed_back: "handed back to original owner",
+  owner_completed: "completed by recovery owner",
   delegated: "delegated to follow-up",
   false_positive: "false positive",
   blocked: "blocked",

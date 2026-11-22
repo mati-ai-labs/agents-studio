@@ -442,6 +442,7 @@ describe("IssueChatThread system notice routing", () => {
     renderThread([comment], {
       issueStatus: "done",
       successfulRunHandoff: {
+        hasLiveContinuation: false,
         state: "resolved",
         required: false,
         sourceRunId: "run-stale",

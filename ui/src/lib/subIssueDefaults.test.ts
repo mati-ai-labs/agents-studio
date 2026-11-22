@@ -35,6 +35,8 @@ function makeExecutionWorkspace(overrides: Partial<ExecutionWorkspace> = {}): Ex
 
 function makeIssue(overrides: Partial<Issue> = {}): Issue {
   return {
+    responsibleUserId: null,
+    completionDestination: null,
     id: "issue-1",
     identifier: "PAP-1",
     companyId: "company-1",

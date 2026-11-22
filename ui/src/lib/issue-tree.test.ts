@@ -4,6 +4,8 @@ import { buildIssueTree, countDescendants, filterIssueDescendants } from "./issu
 
 function makeIssue(id: string, parentId: string | null = null): Issue {
   return {
+    responsibleUserId: null,
+    completionDestination: null,
     id,
     identifier: id.toUpperCase(),
     companyId: "company-1",

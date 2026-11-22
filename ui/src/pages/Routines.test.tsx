@@ -239,6 +239,7 @@ vi.mock("../components/AgentIconPicker", () => ({
 
 function createRoutine(overrides: Partial<RoutineListItem>): RoutineListItem {
   return {
+    responsibleUserId: null,
     id: "routine-1",
     companyId: "company-1",
     projectId: "project-1",
@@ -271,6 +272,8 @@ function createRoutine(overrides: Partial<RoutineListItem>): RoutineListItem {
 
 function createIssue(overrides: Partial<Issue> = {}): Issue {
   return {
+    responsibleUserId: null,
+    completionDestination: null,
     id: "issue-1",
     identifier: "PAP-1000",
     companyId: "company-1",

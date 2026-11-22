@@ -228,7 +228,7 @@ describe("MarkdownEditor", () => {
 
   it("keeps the external value when the unfocused editor emits an empty mount reset", async () => {
     mdxEditorMockState.emitMountEmptyReset = true;
-    const handleChange = vi.fn();
+    const handleChange = vi.fn<(value: string) => void>();
     const root = createRoot(container);
 
     await act(async () => {
@@ -326,7 +326,7 @@ describe("MarkdownEditor", () => {
 
   it("falls back to a raw textarea when the rich parser rejects the markdown", async () => {
     mdxEditorMockState.emitMountParseError = true;
-    const handleChange = vi.fn();
+    const handleChange = vi.fn<(value: string) => void>();
     const root = createRoot(container);
 
     await act(async () => {
@@ -356,7 +356,7 @@ describe("MarkdownEditor", () => {
 
   it("falls back to a raw textarea when the rich editor mounts into the placeholder without callbacks", async () => {
     mdxEditorMockState.emitMountSilentEmptyState = true;
-    const handleChange = vi.fn();
+    const handleChange = vi.fn<(value: string) => void>();
     const root = createRoot(container);
 
     await act(async () => {
@@ -655,7 +655,7 @@ describe("MarkdownEditor", () => {
   }
 
   async function openMentionMenuFor(
-    handleChange: ReturnType<typeof vi.fn>,
+    handleChange: ReturnType<typeof vi.fn<(value: string) => void>>,
   ): Promise<{ option: HTMLButtonElement; root: ReturnType<typeof createRoot> }> {
     const root = createRoot(container);
 
@@ -703,7 +703,7 @@ describe("MarkdownEditor", () => {
   }
 
   it("accepts mention selection from a touch tap", async () => {
-    const handleChange = vi.fn();
+    const handleChange = vi.fn<(value: string) => void>();
     const { option, root } = await openMentionMenuFor(handleChange);
     const point = { clientX: 100, clientY: 50 };
 
@@ -724,7 +724,7 @@ describe("MarkdownEditor", () => {
   });
 
   it("does not preventDefault on touchstart so the mention menu can scroll on mobile", async () => {
-    const handleChange = vi.fn();
+    const handleChange = vi.fn<(value: string) => void>();
     const { option, root } = await openMentionMenuFor(handleChange);
 
     const touchstart = createTouchEvent("touchstart", [{ clientX: 100, clientY: 50 }]);
@@ -741,7 +741,7 @@ describe("MarkdownEditor", () => {
   });
 
   it("does not select when the touch moves like a scroll", async () => {
-    const handleChange = vi.fn();
+    const handleChange = vi.fn<(value: string) => void>();
     const { option, root } = await openMentionMenuFor(handleChange);
     const start = { clientX: 100, clientY: 50 };
     const moved = { clientX: 100, clientY: 90 };

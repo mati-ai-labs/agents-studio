@@ -81,6 +81,8 @@ function createActivity(overrides: Partial<ActivityEvent> = {}): ActivityEvent {
 
 function createIssue(overrides: Partial<Issue> = {}): Issue {
   return {
+    responsibleUserId: null,
+    completionDestination: null,
     id: "issue-1",
     companyId: "company-1",
     projectId: null,

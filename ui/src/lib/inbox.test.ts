@@ -129,6 +129,7 @@ function makeJoinRequest(id: string): JoinRequest {
 
 function makeRun(id: string, status: HeartbeatRun["status"], createdAt: string, agentId = "agent-1"): HeartbeatRun {
   return {
+    responsibleUserId: null,
     id,
     companyId: "company-1",
     agentId,
@@ -176,6 +177,8 @@ function makeRun(id: string, status: HeartbeatRun["status"], createdAt: string, 
 
 function makeIssue(id: string, isUnreadForMe: boolean): Issue {
   return {
+    responsibleUserId: null,
+    completionDestination: null,
     id,
     companyId: "company-1",
     projectId: null,
@@ -380,6 +383,8 @@ describe("inbox helpers", () => {
   it("resurfaces non-issue items when they change after dismissal", () => {
     const dismissedAtByKey = buildInboxDismissedAtByKey([
       {
+        kind: "dismiss",
+        snoozedUntil: null,
         id: "dismissal-1",
         companyId: "company-1",
         userId: "user-1",

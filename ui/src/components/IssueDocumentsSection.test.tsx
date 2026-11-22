@@ -165,6 +165,9 @@ async function flush() {
 
 function createIssueDocument(overrides: Partial<IssueDocument> = {}): IssueDocument {
   return {
+    lockedAt: null,
+    lockedByAgentId: null,
+    lockedByUserId: null,
     id: "document-1",
     companyId: "company-1",
     issueId: "issue-1",
@@ -205,6 +208,8 @@ function createRevision(overrides: Partial<DocumentRevision> = {}): DocumentRevi
 
 function createIssue(): Issue {
   return {
+    responsibleUserId: null,
+    completionDestination: null,
     id: "issue-1",
     identifier: "PAP-807",
     companyId: "company-1",

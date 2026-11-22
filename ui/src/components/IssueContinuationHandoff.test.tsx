@@ -25,6 +25,9 @@ vi.mock("@/components/ui/button", () => ({
 
 function createHandoffDocument(): IssueDocument {
   return {
+    lockedAt: null,
+    lockedByAgentId: null,
+    lockedByUserId: null,
     id: "document-handoff",
     companyId: "company-1",
     issueId: "issue-1",

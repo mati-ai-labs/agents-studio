@@ -34,6 +34,8 @@ Object.defineProperty(globalThis, "window", {
 describe("issueDetailBreadcrumb", () => {
   function createIssue(overrides: Partial<Issue> = {}): Issue {
     return {
+      responsibleUserId: null,
+      completionDestination: null,
       id: "11111111-1111-4111-8111-111111111111",
       companyId: "company-1",
       projectId: "project-1",
@@ -70,6 +72,7 @@ describe("issueDetailBreadcrumb", () => {
       cancelledAt: null,
       hiddenAt: null,
       project: {
+        icon: null,
         id: "project-1",
         companyId: "company-1",
         urlKey: "paperclip-app",

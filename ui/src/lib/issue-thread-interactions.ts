@@ -83,14 +83,22 @@ export function buildIssueThreadInteractionSummary(
     return "Requested confirmation";
   }
 
-  const count = interaction.payload.questions.length;
-  if (interaction.status === "answered") {
-    return count === 1 ? "Answered 1 question" : `Answered ${count} questions`;
+  if (interaction.kind === "ask_user_questions") {
+    const count = interaction.payload.questions.length;
+    if (interaction.status === "answered") {
+      return count === 1 ? "Answered 1 question" : `Answered ${count} questions`;
+    }
+    if (interaction.status === "cancelled") {
+      return count === 1 ? "Cancelled 1 question" : `Cancelled ${count} questions`;
+    }
+    return count === 1 ? "Asked 1 question" : `Asked ${count} questions`;
   }
-  if (interaction.status === "cancelled") {
-    return count === 1 ? "Cancelled 1 question" : `Cancelled ${count} questions`;
-  }
-  return count === 1 ? "Asked 1 question" : `Asked ${count} questions`;
+
+  // The issue thread renders suggest-tasks, ask-user-questions and
+  // request-confirmation interactions only. The checkbox-confirmation and
+  // item-verdict kinds have no card here, so they get a neutral summary
+  // instead of reaching for a payload shape they do not have.
+  return "Requested interaction";
 }
 
 export function buildSuggestedTaskTree(

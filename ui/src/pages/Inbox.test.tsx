@@ -27,6 +27,8 @@ vi.mock("@/lib/router", () => ({
 
 function createIssue(overrides: Partial<Issue> = {}): Issue {
   return {
+    responsibleUserId: null,
+    completionDestination: null,
     id: "issue-1",
     identifier: "PAP-904",
     companyId: "company-1",
@@ -126,6 +128,7 @@ describe("FailedRunInboxRow", () => {
       id: "run-1",
       companyId: "company-1",
       agentId: "agent-1",
+      responsibleUserId: null,
       invocationSource: "assignment",
       triggerDetail: null,
       status: "failed",

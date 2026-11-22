@@ -82,6 +82,8 @@ function snapshotV1(overrides?: Partial<RoutineRevisionSnapshotV1["routine"]>): 
   return {
     version: 1,
     routine: {
+      responsibleUserId: null,
+      env: null,
       id: "routine-1",
       companyId: "company-1",
       projectId: null,
@@ -122,6 +124,7 @@ function createRevision(overrides: Partial<RoutineRevision> = {}): RoutineRevisi
 
 function createRoutine(overrides: Partial<Routine> = {}): Routine {
   return {
+    responsibleUserId: null,
     id: "routine-1",
     companyId: "company-1",
     projectId: null,

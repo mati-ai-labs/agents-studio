@@ -65,7 +65,9 @@ type RunChartProps =
 function aggregateRuns(runs: readonly HeartbeatRun[] = []): DashboardRunActivityDay[] {
   const days = getLast14Days();
   const grouped = new Map<string, DashboardRunActivityDay>();
-  for (const day of days) grouped.set(day, { date: day, succeeded: 0, failed: 0, other: 0, total: 0 });
+  for (const day of days) {
+    grouped.set(day, { date: day, succeeded: 0, failed: 0, recovered: 0, other: 0, total: 0, failedByErrorCode: {} });
+  }
   for (const run of runs) {
     const day = new Date(run.createdAt).toISOString().slice(0, 10);
     const entry = grouped.get(day);

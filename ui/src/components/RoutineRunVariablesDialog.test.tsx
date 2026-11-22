@@ -58,6 +58,7 @@ vi.mock("./IssueWorkspaceCard", async () => {
 
 function createProject(): Project {
   return {
+    icon: null,
     id: "project-1",
     companyId: "company-1",
     urlKey: "workspace-project",

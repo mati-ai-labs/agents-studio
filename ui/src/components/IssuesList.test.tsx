@@ -140,6 +140,8 @@ vi.mock("./KanbanBoard", () => ({
 
 function createIssue(overrides: Partial<Issue> = {}): Issue {
   return {
+    responsibleUserId: null,
+    completionDestination: null,
     id: "issue-1",
     identifier: "PAP-1",
     companyId: "company-1",

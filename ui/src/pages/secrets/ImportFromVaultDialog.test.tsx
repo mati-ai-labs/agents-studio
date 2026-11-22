@@ -284,6 +284,9 @@ describe("ImportFromVaultDialog", () => {
 
     const existing: CompanySecret[] = [
       {
+        scope: "company",
+        ownerUserId: null,
+        userSecretDefinitionId: null,
         id: "secret-existing",
         companyId: "company-1",
         key: "openai_api_key",

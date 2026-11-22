@@ -54,6 +54,7 @@ describe("IssueBlockedNotice", () => {
         blockers={[]}
         agentName="CodexCoder"
         successfulRunHandoff={{
+          hasLiveContinuation: false,
           state: "required",
           required: true,
           sourceRunId: "12345678-aaaa-bbbb-cccc-123456789abc",
@@ -79,6 +80,7 @@ describe("IssueBlockedNotice", () => {
         blockers={[]}
         agentName="CodexCoder"
         successfulRunHandoff={{
+          hasLiveContinuation: false,
           state: "required",
           required: true,
           sourceRunId: "12345678-aaaa-bbbb-cccc-123456789abc",

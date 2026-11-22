@@ -32,6 +32,7 @@ export function successfulRunHandoffFromActivity(event: ActivityEvent): Successf
       : "escalated";
 
   return {
+    hasLiveContinuation: false,
     state,
     required: state === "required",
     sourceRunId:

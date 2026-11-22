@@ -36,6 +36,7 @@ function makeAgent(id: string, name: string): Agent {
 
 function makeProject(id: string, name: string): Project {
   return {
+    icon: null,
     id,
     companyId: "company-1",
     goalId: null,

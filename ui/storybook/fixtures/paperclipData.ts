@@ -726,6 +726,7 @@ export function createIssue(overrides: Partial<Issue> = {}): Issue {
     createdByAgentId: null,
     createdByUserId: "user-board",
     responsibleUserId: "user-board",
+    completionDestination: null,
     issueNumber: 1641,
     identifier: "PAP-1641",
     requestDepth: 0,
@@ -758,8 +759,6 @@ export function createIssue(overrides: Partial<Issue> = {}): Issue {
     updatedAt: recent(3),
     ...overrides,
     workMode: overrides.workMode ?? "standard",
-    responsibleUserId: overrides.responsibleUserId ?? "user-board",
-    completionDestination: overrides.completionDestination ?? null,
   };
 }
 

@@ -7,6 +7,7 @@ import {
 
 function createRoutine(overrides: Partial<RoutineListItem> = {}): RoutineListItem {
   return {
+    responsibleUserId: null,
     id: "routine-1",
     companyId: "company-1",
     projectId: "project-1",

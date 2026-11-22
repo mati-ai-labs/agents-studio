@@ -28,6 +28,7 @@ const archivedCompany = { id: "archived-company" };
 
 function makeCompany(id: string): Company {
   return {
+    defaultResponsibleUserId: null,
     id,
     name: "Paperclip",
     description: null,

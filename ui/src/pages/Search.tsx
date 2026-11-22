@@ -37,6 +37,7 @@ const SCOPE_LABELS: Record<CompanySearchScope, string> = {
   documents: "Documents",
   agents: "Agents",
   projects: "Projects",
+  artifacts: "Artifacts",
 };
 
 type SubGroupKey = "issues" | "comments" | "documents" | "agents" | "projects";
