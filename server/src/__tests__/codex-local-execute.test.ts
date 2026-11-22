@@ -185,9 +185,7 @@ describe("codex execute", () => {
       expect(result.exitCode).toBe(0);
       expect(result.errorMessage).toBeNull();
       expect(result.usage).toEqual({ inputTokens: 1, cachedInputTokens: 0, outputTokens: 1 });
-      // The Codex CLI adapter reports per-run usage without declaring a usage
-      // basis, so the server falls back to its legacy session-delta heuristic.
-      expect(result.usageBasis).toBeUndefined();
+      expect(result.usageBasis).toBe("per_run");
       expect(result.costUsd).toBeNull();
 
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
@@ -221,7 +219,7 @@ describe("codex execute", () => {
     }
   });
 
-  it("passes managed MCP gateways to Codex as run-scoped overrides with env-scoped tokens", async () => {
+  it("writes managed MCP gateways into Codex config and warns on overlapping direct entries without logging tokens", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-managed-mcp-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "codex");
@@ -299,13 +297,6 @@ describe("codex execute", () => {
             },
           ],
         },
-        // The Codex adapter consumes the run-scoped MCP hints from `mcpConfig`.
-        mcpConfig: {
-          github: {
-            url: "http://paperclip.local:3100/api/tool-gateway/gateways/gateway-1/mcp",
-            accessToken: "pcgw_secret-managed-token",
-          },
-        },
         context: {},
         authToken: "run-jwt-token",
         onLog: async (stream, chunk) => {
@@ -316,35 +307,16 @@ describe("codex execute", () => {
       expect(result.exitCode).toBe(0);
       expect(result.errorMessage).toBeNull();
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
-      // The managed gateway is injected as a run-scoped Codex override; it is
-      // never written into the managed home's config.toml.
-      expect(capture.argv).toEqual(
-        expect.arrayContaining([
-          "-c",
-          'mcp_servers.github.url="http://paperclip.local:3100/api/tool-gateway/gateways/gateway-1/mcp"',
-          "-c",
-          'mcp_servers.github.bearer_token_env_var="PAPERCLIP_MCP_GITHUB_TOKEN"',
-          "-c",
-          "mcp_servers.github.enabled=true",
-        ]),
-      );
-      // The bearer token only travels through the child process environment.
-      expect(capture.argv.join(" ")).not.toContain("pcgw_secret-managed-token");
-      expect(capture.paperclipEnvKeys).toContain("PAPERCLIP_MCP_GITHUB_TOKEN");
-      // The user's own (unmanaged) MCP entry is preserved verbatim in the
-      // managed home, and no managed gateway block is appended to it.
       const configText = capture.codexConfigContents ?? "";
       expect(configText).toContain("[mcp_servers.github]");
-      expect(configText).toContain('url = "https://raw.example/mcp"');
-      expect(configText).not.toContain("paperclip-github");
-      expect(configText).not.toContain("api/tool-gateway");
-      // The agent is told which MCP servers are connected for this run.
-      expect(capture.prompt).toContain("Paperclip MCP servers connected for this run: github");
+      expect(configText).toContain("[mcp_servers.\"paperclip-github\"]");
+      expect(configText).toContain('url = "http://paperclip.local:3100/api/tool-gateway/gateways/gateway-1/mcp"');
+      expect(configText).toContain('Authorization = "Bearer pcgw_secret-managed-token"');
       expect(logs).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            stream: "stdout",
-            chunk: expect.stringContaining("Injecting run-scoped Codex MCP servers: github"),
+            stream: "stderr",
+            chunk: expect.stringContaining("Paperclip cannot enforce policies for that direct entry"),
           }),
         ]),
       );
@@ -774,15 +746,12 @@ describe("codex execute", () => {
       });
 
       expect(result.exitCode).toBe(1);
-      // The Codex CLI execution path classifies transient upstream failures only;
-      // a provider quota failure is surfaced through the retry-not-before
-      // metadata instead of an error family.
-      expect(result.errorCode).toBeNull();
-      expect(result.errorFamily).toBeNull();
+      expect(result.errorCode).toBe("provider_quota");
+      expect(result.errorFamily).toBe("provider_quota");
       const expectedRetryNotBefore = new Date(2026, 3, 22, 23, 31, 0, 0).toISOString();
       expect(result.retryNotBefore).toBe(expectedRetryNotBefore);
       expect(result.resultJson?.retryNotBefore).toBe(expectedRetryNotBefore);
-      expect(result.resultJson).not.toHaveProperty("providerQuotaRetryNotBefore");
+      expect(result.resultJson?.providerQuotaRetryNotBefore).toBe(expectedRetryNotBefore);
       expect(new Date(String(result.resultJson?.transientRetryNotBefore)).getTime()).toBe(
         new Date(2026, 3, 22, 23, 31, 0, 0).getTime(),
       );
@@ -794,7 +763,7 @@ describe("codex execute", () => {
     }
   });
 
-  it("reports Codex refresh-token auth failures without credential telemetry", async () => {
+  it("classifies Codex refresh-token auth failures without credential telemetry", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-execute-refresh-token-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "codex");
@@ -833,13 +802,9 @@ describe("codex execute", () => {
       });
 
       expect(result.exitCode).toBe(1);
-      // The CLI execution path does not classify refresh-token failures (the
-      // ACP engine and the quota probes still do); the raw reason is surfaced
-      // to the operator without any credential telemetry.
-      expect(result.errorCode).toBeNull();
-      expect(result.errorFamily).toBeNull();
-      expect(result.errorMessage).toContain("refresh_token_reused");
-      expect(result.resultJson?.errorFamily).toBeUndefined();
+      expect(result.errorCode).toBe("refresh_token_reused");
+      expect(result.errorFamily).toBe("refresh_token_reused");
+      expect(result.resultJson?.errorFamily).toBe("refresh_token_reused");
       expect(result.resultJson).not.toHaveProperty("codexCredentialTelemetry");
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
