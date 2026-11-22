@@ -5,6 +5,16 @@ import { storyById } from "./mcp-user-stories.catalog";
 
 const SCREENSHOT_DIR = "test-results/mcp-user-stories";
 
+// The Apps UI is not part of the deployment baseline UI any more: commit
+// 43d81e50c "fix: restore exact production UI source" (merged through PR #10
+// "codex/restore-exact-production-ui") dropped `ui/src/pages/apps/**` and the
+// `/apps` routes from `ui/src/App.tsx`. Every story in this harness captures
+// its evidence on an Apps page (app detail, review queue, activity feed, the
+// connections list, the Connect wizard), so the harness has nothing to
+// screenshot until the Apps UI is restored. Tracked by LCH-534.
+const APPS_UI_REMOVED =
+  "Apps UI removed from the deployment baseline UI by 43d81e50c (LCH-534)";
+
 type Seed = { companyId: string; prefix: string };
 type Scout = { id: string; name: string };
 type Json = Record<string, unknown>;
@@ -282,6 +292,7 @@ async function expectAuditEvent(
 }
 
 test.describe.serial("MCP prod Phase 5a user-story harness", () => {
+  test.skip(true, APPS_UI_REMOVED);
   test.setTimeout(180_000);
 
   test(`${storyById("US-1").id} ${storyById("US-1").title} @mcp-runnable @mcp-us1`, async ({ page, request }) => {

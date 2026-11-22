@@ -1,6 +1,6 @@
 ---
 name: granola
-description: Access Granola AI meeting notes via MCP (mcporter). Query meetings, list by date range, get full details, and pull verbatim transcripts. Use when the user asks about meeting notes, what was discussed, action items, decisions, or anything from their meetings. Also handles OAuth token refresh when calls fail with auth errors.
+description: Access Granola AI meeting notes via MCP (mcporter). Query meetings, list by date range, get full details and pull verbatim transcripts. Use when the user asks about meeting notes, what was discussed, action items or decisions. Also refreshes the OAuth token when calls fail with auth errors.
 metadata:
   openclaw:
     requires:

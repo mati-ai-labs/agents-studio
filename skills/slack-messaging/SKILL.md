@@ -1,6 +1,6 @@
 ---
 name: slack-messaging
-description: Read, post, react, and run polls in the company's Slack. Use when an issue points at Slack messages or threads ("check the messages on the group"), when work needs a human's decision, review, access or action and an issue comment alone won't reach them, when you need a quick choice from people (poll), or when the user asks you to notify someone on Slack.
+description: Read, post, react and run polls in the company Slack. Use when an issue points at Slack messages or threads, when work needs a human decision or approval that an issue comment alone will not reach, when you need a quick choice from people, or when asked to notify someone on Slack.
 ---
 
 # Slack messaging

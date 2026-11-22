@@ -7,6 +7,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IssueChatThread } from "./IssueChatThread";
 import type { IssueChatComment } from "../lib/issue-chat-messages";
+import { SUCCESSFUL_RUN_HANDOFF_REQUIRED_NOTICE_BODY } from "../lib/successful-run-handoff";
 import type { Agent, SuccessfulRunHandoffState } from "@paperclipai/shared";
 
 vi.mock("@assistant-ui/react", () => ({
@@ -347,7 +348,7 @@ describe("IssueChatThread system notice routing", () => {
 
     const status = container.querySelector('[role="status"]');
     expect(status).not.toBeNull();
-    expect(status?.textContent).toContain("Paperclip");
+    expect(status?.textContent).toContain("Agent Studio");
     expect(status?.textContent).not.toContain("You");
   });
 
@@ -377,7 +378,7 @@ describe("IssueChatThread system notice routing", () => {
     const status = container.querySelector('[role="status"]');
     const sourceLink = status?.querySelector('a[href^="/agents/"]') as HTMLAnchorElement | null;
     expect(sourceLink?.getAttribute("href")).toBe("/agents/agent-unknown/runs/run-xyz");
-    expect(sourceLink?.textContent).toBe("Paperclip");
+    expect(sourceLink?.textContent).toBe("Agent Studio");
   });
 
   it("keeps agent-authored comments as assistant bubbles even when presentation requests system_notice", () => {
@@ -415,7 +416,7 @@ describe("IssueChatThread system notice routing", () => {
       authorUserId: null,
       runId: "run-stale",
       runAgentId: "agent-codex",
-      body: "Paperclip needs a disposition before this issue can continue.",
+      body: SUCCESSFUL_RUN_HANDOFF_REQUIRED_NOTICE_BODY,
       presentation: {
         kind: "system_notice",
         tone: "warning",
@@ -443,6 +444,7 @@ describe("IssueChatThread system notice routing", () => {
       successfulRunHandoff: {
         state: "resolved",
         required: false,
+        hasLiveContinuation: false,
         sourceRunId: "run-stale",
         correctiveRunId: "run-corrective",
         assigneeAgentId: "agent-codex",
@@ -463,7 +465,7 @@ describe("IssueChatThread system notice routing", () => {
     expect(row?.querySelector('[data-testid="stale-disposition-warning-time"]')?.parentElement?.className).toContain("ml-auto");
     expect(row?.textContent).toContain("Stale disposition warning");
     expect(row?.textContent).not.toContain("This disposition warning is stale because the issue now has a newer disposition.");
-    expect(row?.textContent).not.toContain("Paperclip needs a disposition before this issue can continue.");
+    expect(row?.textContent).not.toContain(SUCCESSFUL_RUN_HANDOFF_REQUIRED_NOTICE_BODY);
 
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     const detailsId = toggle.getAttribute("aria-controls");

@@ -24,6 +24,7 @@ function createRoutine(overrides: Partial<RoutineListItem> = {}): RoutineListIte
     latestRevisionNumber: 1,
     createdByAgentId: null,
     createdByUserId: null,
+    responsibleUserId: null,
     updatedByAgentId: null,
     updatedByUserId: null,
     lastTriggeredAt: null,

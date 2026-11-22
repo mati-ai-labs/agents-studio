@@ -885,8 +885,11 @@ describe("renderPaperclipWakePrompt", () => {
     const zeroCommentPrompt = renderPaperclipWakePrompt(base);
     expect(zeroCommentPrompt).not.toContain("acknowledge the latest comment");
     expect(zeroCommentPrompt).not.toContain("Only fetch the API thread");
-    expect(zeroCommentPrompt).not.toContain("- pending comments:");
-    expect(zeroCommentPrompt).not.toContain("- latest comment id:");
+    // The wake summary always reports the comment window, even when it is empty.
+    expect(zeroCommentPrompt).toContain("- pending comments: 0/0");
+    // The wake summary always reports the comment window and the latest comment
+    // id, even when there is no comment (it renders "unknown").
+    expect(zeroCommentPrompt).toContain("- latest comment id: unknown");
     expect(zeroCommentPrompt).toContain("- fallback fetch needed: no");
 
     const commentPrompt = renderPaperclipWakePrompt({

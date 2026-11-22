@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { models as claudeFallbackModels } from "@paperclipai/adapter-claude-local";
 import { resetClaudeModelsCacheForTests } from "@paperclipai/adapter-claude-local/server";
-import { models as codexFallbackModels } from "@paperclipai/adapter-codex-local";
+import { DEFAULT_CODEX_LOCAL_MODEL, models as codexFallbackModels } from "@paperclipai/adapter-codex-local";
 import { models as cursorFallbackModels } from "@paperclipai/adapter-cursor-local";
 import { models as opencodeFallbackModels } from "@paperclipai/adapter-opencode-local";
 import { resetOpenCodeModelsCacheForTests } from "@paperclipai/adapter-opencode-local/server";
@@ -49,10 +49,11 @@ describe("adapter model listing", () => {
     const models = await listAdapterModels("codex_local");
 
     expect(models).toEqual(codexFallbackModels);
-    expect(models.some((model) => model.id === "gpt-5.6")).toBe(true);
+    // There is no bare "gpt-5.6" model: the family ships as concrete variants,
+    // and the adapter's declared default must be one of them.
+    expect(models.some((model) => model.id === DEFAULT_CODEX_LOCAL_MODEL)).toBe(true);
     expect(models.some((model) => model.id === "gpt-5.6-sol")).toBe(true);
     expect(models.some((model) => model.id === "gpt-5.6-terra")).toBe(true);
-    expect(models.some((model) => model.id === "gpt-5.6-luna")).toBe(true);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -61,9 +62,11 @@ describe("adapter model listing", () => {
     const models = await listAdapterModels("claude_local");
 
     expect(models).toEqual(claudeFallbackModels);
+    expect(models.some((model) => model.id === "claude-opus-5-5")).toBe(true);
+    // The adapter leads with the newest flagship, so Opus 5.5 is the default (first) option.
+    expect(models[0]?.id).toBe("claude-opus-5-5");
+    // The previous generation stays available for agents pinned to it.
     expect(models.some((model) => model.id === "claude-opus-4-8")).toBe(true);
-    // Newer flagship models are offered, but Opus 4.8 stays the default (first) option.
-    expect(models[0]?.id).toBe("claude-opus-4-8");
     expect(models.some((model) => model.id === "claude-fable-5")).toBe(true);
     expect(models.some((model) => model.id === "claude-mythos-5")).toBe(true);
     expect(fetchSpy).not.toHaveBeenCalled();

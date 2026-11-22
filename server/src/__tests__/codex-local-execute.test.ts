@@ -1135,7 +1135,8 @@ describe("codex execute", () => {
       expect(capture.prompt).toContain("## Paperclip Wake Payload");
       expect(capture.prompt).toContain("Do not switch to another issue until you have handled this wake.");
       expect(capture.prompt).toContain("- issue: PAP-1201 Fix gallery opening for inline images");
-      expect(capture.prompt).not.toContain("- pending comments:");
+      // The wake payload always reports the comment window, even when it is empty.
+      expect(capture.prompt).toContain("- pending comments: 0/0");
       expect(capture.prompt).not.toContain("acknowledge the latest comment");
       expect(capture.prompt).not.toContain("Execution contract:");
       expect(capture.prompt).toContain("- issue status: in_progress");

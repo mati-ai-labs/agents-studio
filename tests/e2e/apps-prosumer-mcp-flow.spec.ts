@@ -15,6 +15,15 @@ import { listenOnFetchAllowedPort } from "./fetch-allowed-port";
 
 const SCREENSHOT_DIR = "test-results";
 
+// The Apps UI is not part of the deployment baseline UI any more: commit
+// 43d81e50c "fix: restore exact production UI source" (merged through PR #10
+// "codex/restore-exact-production-ui") dropped `ui/src/pages/apps/**` and the
+// `/apps` routes from `ui/src/App.tsx`, so the Connect wizard, the
+// Needs-attention surface and `/apps/advanced` this spec drives are gone.
+// Tracked by LCH-534.
+const APPS_UI_REMOVED =
+  "Apps UI removed from the deployment baseline UI by 43d81e50c (LCH-534)";
+
 type Seed = { companyId: string; prefix: string };
 
 async function newCompany(request: APIRequestContext, label: string): Promise<Seed> {
@@ -133,6 +142,7 @@ async function gotoNeedsAttention(page: Page, prefix: string) {
 // ---- Tests ------------------------------------------------------------------
 
 test.describe.serial("prosumer MCP flow prosumer MCP flow", () => {
+  test.skip(true, APPS_UI_REMOVED);
   test.setTimeout(180_000); // vite-dev cold bundling is slow on first hit
 
   let mock: MockMcpServer;

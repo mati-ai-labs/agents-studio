@@ -140,6 +140,7 @@ function makeHeartbeatRun(overrides: Partial<HeartbeatRun>): HeartbeatRun {
     ...overrides,
     createdAt,
     updatedAt: overrides.updatedAt ?? createdAt,
+    responsibleUserId: overrides.responsibleUserId ?? null,
   };
   return run;
 }

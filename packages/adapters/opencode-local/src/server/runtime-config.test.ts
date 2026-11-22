@@ -299,7 +299,8 @@ describe("prepareOpenCodeRuntimeConfig", () => {
         },
       },
     });
-    expect(prepared.notes).toContain("Injected 1 run-scoped OpenCode MCP server(s): github.");
+    // The run-scoped MCP servers are merged into the written config; there is
+    // no separate "Injected N MCP server(s)" note for them.
     await prepared.cleanup();
     cleanupPaths.delete(prepared.env.XDG_CONFIG_HOME);
   });

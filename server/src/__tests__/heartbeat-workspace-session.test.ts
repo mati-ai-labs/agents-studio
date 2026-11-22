@@ -262,6 +262,11 @@ function buildIssueAncestryDb(rows: Array<{ id: string; companyId: string; paren
 
 describe("assertGitSensitiveAdapterWorkspaceValid", () => {
   it("rejects a project-workspace-linked issue that is missing its project id before adapter launch", async () => {
+    const input = buildWorkspaceValidationInput();
+
+    // The guard only fires when no project id can be resolved anywhere: the
+    // issue row, the linked project workspace, the realized execution workspace
+    // or the persisted execution workspace.
     await expectWorkspaceValidationFailure(
       buildWorkspaceValidationInput({
         issue: {
@@ -270,9 +275,48 @@ describe("assertGitSensitiveAdapterWorkspaceValid", () => {
           projectId: null,
           projectWorkspaceId: "workspace-1",
         },
+        resolvedWorkspace: buildResolvedWorkspace({ projectId: null }),
+        executionWorkspace: {
+          ...input.executionWorkspace,
+          projectId: null,
+        },
+        persistedExecutionWorkspace: {
+          ...input.persistedExecutionWorkspace!,
+          projectId: null,
+        },
       }),
       "missing_project_id",
       "linked to a project workspace but has no project id",
+    );
+  });
+
+  it("tolerates a missing issue project id when the linked project workspace supplies one", async () => {
+    const input = buildWorkspaceValidationInput();
+    const missingGitCheckout = "/tmp/paperclip-workspace-session-missing-git-checkout";
+
+    // The linked project workspace supplies the project id, so the missing
+    // issue project id is not a launch blocker on its own; the run is blocked
+    // later because the resolved workspace is not a git checkout.
+    await expectWorkspaceValidationFailure(
+      buildWorkspaceValidationInput({
+        issue: {
+          id: "issue-1",
+          identifier: "PAP-1",
+          projectId: null,
+          projectWorkspaceId: "workspace-1",
+        },
+        resolvedWorkspace: buildResolvedWorkspace({ cwd: missingGitCheckout }),
+        executionWorkspace: {
+          ...input.executionWorkspace,
+          cwd: missingGitCheckout,
+        },
+        persistedExecutionWorkspace: {
+          ...input.persistedExecutionWorkspace!,
+          cwd: missingGitCheckout,
+        },
+      }),
+      "missing_git_metadata",
+      "expected a git workspace",
     );
   });
 

@@ -187,6 +187,17 @@ const fixtureResponse: CompanySearchResponse = {
   query: "auth flake",
   normalizedQuery: "auth flake",
   scope: "all",
+  sort: "relevance",
+  filterOptionCounts: {
+    status: {},
+    priority: {},
+    assigneeAgentId: {},
+    assigneeUserId: {},
+    projectId: {},
+    labelId: {},
+    updatedWithin: {},
+  },
+  zeroResults: null,
   limit: 20,
   offset: 0,
   results: [...fixtureResults, ...fixtureAgents, ...fixtureProjects],
@@ -194,6 +205,9 @@ const fixtureResponse: CompanySearchResponse = {
     issue: fixtureResults.length,
     agent: fixtureAgents.length,
     project: fixtureProjects.length,
+    comment: 0,
+    document: 0,
+    artifact: 0,
   },
   hasMore: false,
 };
@@ -534,7 +548,7 @@ function SearchStories() {
             <div className="paperclip-story__label">/search</div>
             <h2 className="mt-1 text-lg font-semibold">No results state</h2>
           </div>
-          <SearchPagePreview response={{ ...fixtureResponse, results: [], countsByType: { issue: 0, agent: 0, project: 0 } }} state="empty" query="ghostbuster" />
+          <SearchPagePreview response={{ ...fixtureResponse, results: [], countsByType: { issue: 0, agent: 0, project: 0, comment: 0, document: 0, artifact: 0 } }} state="empty" query="ghostbuster" />
         </section>
 
         <section className="paperclip-story__frame overflow-hidden p-4">

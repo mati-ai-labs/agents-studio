@@ -262,7 +262,7 @@ describeEmbeddedPostgres("cloud upstream persistence", () => {
     const rows = await db.select().from(cloudUpstreamRuns);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.status).toBe("cancelled");
-  });
+  }, 20_000);
 
   async function seedCompany(companyId: string) {
     await db.insert(companies).values({

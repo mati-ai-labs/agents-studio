@@ -2,7 +2,7 @@
 
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { type Mock, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildProjectMentionHref, buildSkillMentionHref } from "@paperclipai/shared";
 import {
   computeMentionMenuPosition,
@@ -655,7 +655,7 @@ describe("MarkdownEditor", () => {
   }
 
   async function openMentionMenuFor(
-    handleChange: ReturnType<typeof vi.fn>,
+    handleChange: Mock<(value: string) => void>,
   ): Promise<{ option: HTMLButtonElement; root: ReturnType<typeof createRoot> }> {
     const root = createRoot(container);
 
@@ -703,7 +703,7 @@ describe("MarkdownEditor", () => {
   }
 
   it("accepts mention selection from a touch tap", async () => {
-    const handleChange = vi.fn();
+    const handleChange = vi.fn<(value: string) => void>();
     const { option, root } = await openMentionMenuFor(handleChange);
     const point = { clientX: 100, clientY: 50 };
 
@@ -724,7 +724,7 @@ describe("MarkdownEditor", () => {
   });
 
   it("does not preventDefault on touchstart so the mention menu can scroll on mobile", async () => {
-    const handleChange = vi.fn();
+    const handleChange = vi.fn<(value: string) => void>();
     const { option, root } = await openMentionMenuFor(handleChange);
 
     const touchstart = createTouchEvent("touchstart", [{ clientX: 100, clientY: 50 }]);
@@ -741,7 +741,7 @@ describe("MarkdownEditor", () => {
   });
 
   it("does not select when the touch moves like a scroll", async () => {
-    const handleChange = vi.fn();
+    const handleChange = vi.fn<(value: string) => void>();
     const { option, root } = await openMentionMenuFor(handleChange);
     const start = { clientX: 100, clientY: 50 };
     const moved = { clientX: 100, clientY: 90 };

@@ -436,6 +436,14 @@ test.describe("Pipelines tutorial UI flow", () => {
   });
 
   test("walks setup, intake, board moves, item detail, review queue, and learnings", async ({ page }) => {
+    // The Pipelines UI is not part of the deployment baseline UI any more:
+    // commit 43d81e50c "fix: restore exact production UI source" (merged
+    // through PR #10 "codex/restore-exact-production-ui") dropped the
+    // `/{prefix}/pipelines/*`, `/{prefix}/review-queue` and
+    // `/{prefix}/learnings` routes from `ui/src/App.tsx` along with the
+    // whole pipeline board/settings UI. The API-only test above still covers
+    // the pipeline engine. Tracked by LCH-534.
+    test.skip(true, "Pipelines UI removed from the deployment baseline UI by 43d81e50c (LCH-534)");
     const board = await pwRequest.newContext({ baseURL: BASE_URL });
     const company = await createCompany(board);
     await createCompanyAgent(board, company.id, {

@@ -126,6 +126,43 @@ describe("issue thread interaction helpers", () => {
     })).toBe("Answered 1 question");
   });
 
+  it("summarizes checkbox confirmation and item verdict interactions", () => {
+    expect(buildIssueThreadInteractionSummary({
+      id: "interaction-checkbox",
+      companyId: "company-1",
+      issueId: "issue-1",
+      kind: "request_checkbox_confirmation",
+      status: "pending",
+      continuationPolicy: "wake_assignee",
+      createdAt: "2026-04-06T12:00:00.000Z",
+      updatedAt: "2026-04-06T12:00:00.000Z",
+      payload: {
+        version: 1,
+        prompt: "Pick the options",
+        options: [
+          { id: "option-1", label: "Option 1" },
+          { id: "option-2", label: "Option 2" },
+        ],
+      },
+    })).toBe("Requested confirmation");
+
+    expect(buildIssueThreadInteractionSummary({
+      id: "interaction-item-verdicts",
+      companyId: "company-1",
+      issueId: "issue-1",
+      kind: "request_item_verdicts",
+      status: "answered",
+      continuationPolicy: "wake_assignee",
+      createdAt: "2026-04-06T12:00:00.000Z",
+      updatedAt: "2026-04-06T12:00:00.000Z",
+      payload: {
+        version: 1,
+        prompt: "Review the items",
+        items: [{ id: "item-1", label: "Item 1" }],
+      },
+    })).toBe("Reviewed 1 item");
+  });
+
   it("maps stored option ids back to labels for answered summaries", () => {
     const labels = getQuestionAnswerLabels({
       question: {

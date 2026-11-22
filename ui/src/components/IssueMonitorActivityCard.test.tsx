@@ -29,10 +29,12 @@ function createIssue(overrides: Partial<Issue> = {}): Issue {
     executionLockedAt: null,
     createdByAgentId: null,
     createdByUserId: "local-board",
+    responsibleUserId: null,
     issueNumber: 1,
     identifier: "PAP-1",
     requestDepth: 0,
     billingCode: null,
+    completionDestination: null,
     assigneeAdapterOverrides: null,
     executionPolicy: {
       mode: "normal",

@@ -3,17 +3,47 @@ import { test, expect } from "@playwright/test";
 /**
  * E2E: post-wizard onboarding launch.
  *
- * Completing the onboarding wizard now creates the first assigned task and
- * lands the user on the company dashboard. The chat intro still has unit
- * coverage in BoardChat tests; the wizard handoff no longer routes there.
+ * Completing the onboarding wizard creates the first assigned task and lands
+ * the user on the newly created issue (ui/src/components/OnboardingWizard.tsx
+ * → handleLaunch → navigate(`/${prefix}/issues/${issueRef}`)).
+ *
+ * The old Conference Room (BoardChat) intro surface this spec used to cover
+ * is not part of the deployment baseline UI any more (removed by 43d81e50c
+ * "fix: restore exact production UI source"), so the coverage now sits on the
+ * wizard handoff that replaced it.
  */
 
 const COMPANY_NAME = `E2E-TypingIntro-${Date.now()}`;
-const MISSION = "Verify the dashboard launch survives the wizard handoff.";
-const FIRST_TASK_TITLE = "Hire your first engineer and create a hiring plan";
+const FIRST_TASK_TITLE = `${COMPANY_NAME} Innovation Intelligence Report`;
 
-test.describe("Dashboard launch after onboarding wizard", () => {
-  test("creates the first task and opens the dashboard", async ({
+/**
+ * Open the wizard.
+ *
+ * The /onboarding route renders a launcher card, but the app layout also
+ * auto-opens the wizard when the instance has no companies yet — in that case
+ * the wizard is already on screen and the launcher button sits behind the
+ * full-screen wizard overlay, so it must not be clicked.
+ */
+async function openWizard(page: import("@playwright/test").Page) {
+  const step1Heading = page.getByRole("heading", { name: "Name your company" });
+  if ((await step1Heading.count()) === 0) {
+    const launcher = page.getByRole("button", {
+      name: /Start Onboarding|New Company|Add Agent/,
+    });
+    if (await launcher.count()) {
+      // A click that lands on the already-open wizard overlay is harmless.
+      await launcher.first().click({ timeout: 10_000 }).catch(() => undefined);
+    }
+  }
+  await expect(step1Heading).toBeVisible({ timeout: 15_000 });
+}
+
+test.describe("Issue launch after onboarding wizard", () => {
+  // The wizard creates a company, an agent, a project and the starter issue
+  // before it navigates — give the flow more than the 60s default.
+  test.setTimeout(180_000);
+
+  test("creates the first task and opens the issue", async ({
     page,
     baseURL,
   }) => {
@@ -53,41 +83,34 @@ test.describe("Dashboard launch after onboarding wizard", () => {
     });
 
     await page.goto("/onboarding");
-
-    // Launcher card path (existing companies) — enter the wizard if the
-    // route shows a launcher instead of opening the wizard directly.
-    const startBtn = page.getByRole("button", { name: /Start Onboarding/i });
-    if (await startBtn.count()) await startBtn.first().click();
-
-    // Step 0: front door (skipped when the wizard opens on the create path).
-    const frontDoor = page.getByText("Build a new company");
-    if (await frontDoor.count()) await frontDoor.first().click();
+    await openWizard(page);
 
     // Step 1: company name.
     await page.getByPlaceholder("Acme Corp").fill(COMPANY_NAME);
     await page.getByRole("button", { name: /^Next/ }).click();
 
-    // Step 2: mission (direct path default).
-    await page
-      .getByPlaceholder("What is your team trying to achieve?")
-      .fill(MISSION);
-    await page.getByRole("button", { name: /Confirm mission/ }).click();
-
-    // Step 3: lead name (prefilled) → Next.
-    await page.waitForSelector('input[placeholder="Chief of staff"]', {
-      timeout: 15_000,
-    });
+    // Step 2: agent (default name "CEO") → Next creates the agent.
+    await expect(
+      page.getByRole("heading", { name: "Create your first agent" }),
+    ).toBeVisible({ timeout: 30_000 });
     await page.getByRole("button", { name: /^Next/ }).click();
 
-    // Step 4: adapter (claude_local default); heartbeat is intercepted.
-    await page.getByRole("button", { name: /Give it a heartbeat/ }).click();
+    // Step 3: the task title is prefilled with the company's starter task.
+    await expect(
+      page.getByRole("heading", { name: "Give it something to do" }),
+    ).toBeVisible({ timeout: 30_000 });
+    await expect(
+      page.locator('input[placeholder="e.g. Research competitor pricing"]'),
+    ).toHaveValue(FIRST_TASK_TITLE);
+    await page.getByRole("button", { name: /^Next/ }).click();
 
-    // Step 5: review → Get started creates the first task and opens dashboard.
-    const getStarted = page.getByRole("button", { name: /Get started/ });
-    await getStarted.waitFor({ timeout: 20_000 });
-    await getStarted.click();
+    // Step 4: review → "Create & Open Issue" creates the task and opens it.
+    await expect(
+      page.getByRole("heading", { name: "Ready to launch" }),
+    ).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("button", { name: /Create & Open Issue/ }).click();
 
-    await expect(page).toHaveURL(/\/dashboard$/, { timeout: 30_000 });
+    await expect(page).toHaveURL(/\/issues\/[^/]+$/, { timeout: 60_000 });
 
     const companiesRes = await page.request.get("/api/companies");
     expect(companiesRes.ok()).toBe(true);

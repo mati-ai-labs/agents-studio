@@ -86,6 +86,11 @@ const explicitOpenApiCoverageExclusions = new Set([
   "slack-events.ts",
   "slack-interactions.ts",
   "slack-slash-commands.ts",
+  // The per-user AI subscription routes are mounted but not yet represented in
+  // the public OpenAPI document. Same situation as the files above: they need
+  // their own documentation pass, and excluding them keeps the coverage
+  // assertion meaningful for the routes the document does cover.
+  "user-ai-subscriptions.ts",
 ]);
 
 function createApp() {

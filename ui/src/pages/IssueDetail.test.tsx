@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { Agent, Issue, IssueTreeControlPreview, IssueTreeHold } from "@paperclipai/shared";
-import { act, type ButtonHTMLAttributes, type ReactNode } from "react";
+import type { Agent, Issue, IssueAttachment, IssueTreeControlPreview, IssueTreeHold } from "@paperclipai/shared";
+import { act, type ButtonHTMLAttributes, type ReactElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { canBoardResolveRecoveryAction, IssueDetail } from "./IssueDetail";
@@ -1189,7 +1189,15 @@ describe("IssueDetail", () => {
 
     expect(mockIssuesApi.update).toHaveBeenCalledWith(issue.identifier, { workMode: "planning" });
     expect(localStorage.getItem("paperclip:issue-comment-draft:issue-1")).toBe("Draft follow-up message");
-    expect(container.textContent).toContain("planning-notes.txt");
+
+    // Issue attachments are surfaced in the Output panel, which the page hands to
+    // the panel context instead of rendering inline, so assert on the element
+    // the page passed to the panel rather than on the rendered text.
+    const outputPanelCall = mockOpenPanel.mock.calls.filter((call) => call[0] === "Output").at(-1);
+    expect(outputPanelCall).toBeDefined();
+    const outputPanelProps = (outputPanelCall?.[1] as ReactElement<{ attachments: IssueAttachment[] }> | undefined)?.props;
+    expect(outputPanelProps?.attachments.map((attachment) => attachment.originalFilename)).toContain("planning-notes.txt");
+
     localStorage.removeItem("paperclip:issue-comment-draft:issue-1");
   });
 

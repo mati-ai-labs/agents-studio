@@ -5,6 +5,16 @@ type SmokeRunStepStatus = "pass" | "fail" | "skipped";
 
 const SCREENSHOT_DIR = "test-results/smoke-lab";
 
+// The Apps UI is not part of the deployment baseline UI any more: commit
+// 43d81e50c "fix: restore exact production UI source" (merged through PR #10
+// "codex/restore-exact-production-ui") dropped `ui/src/pages/apps/**` and the
+// `/apps` routes from `ui/src/App.tsx`. This harness records a screenshot
+// artifact per lifecycle step, and every step navigates to an Apps page
+// (app detail, review queue, activity feed, connections list), so there is no
+// evidence left to capture until the Apps UI is restored. Tracked by LCH-534.
+const APPS_UI_REMOVED =
+  "Apps UI removed from the deployment baseline UI by 43d81e50c (LCH-534)";
+
 type Json = Record<string, unknown>;
 type Seed = { companyId: string; prefix: string };
 type Scout = { id: string; name: string };
@@ -301,6 +311,7 @@ async function gatewayFetch(request: APIRequestContext, path: string, token: str
 }
 
 test.describe.serial("Smoke Lab scenario catalog mirror", () => {
+  test.skip(true, APPS_UI_REMOVED);
   test.setTimeout(240_000);
 
   test("records the P1-P7 CI-safe Smoke Lab lifecycle into the results API @smoke-lab", async ({ page, request }) => {

@@ -61,18 +61,18 @@ describe("BreadcrumbContext", () => {
 
   it("builds page titles with the selected company name before Paperclip", () => {
     expect(buildDocumentTitle([{ label: "Inbox" }], "Anachronist Wiki")).toBe(
-      "Inbox • Anachronist Wiki • Paperclip",
+      "Inbox • Anachronist Wiki • Agent Studio",
     );
     expect(
       buildDocumentTitle(
         [{ label: "Tasks", href: "/issues" }, { label: "PAP-3515" }],
         "Anachronist Wiki",
       ),
-    ).toBe("PAP-3515 • Tasks • Anachronist Wiki • Paperclip");
+    ).toBe("PAP-3515 • Tasks • Anachronist Wiki • Agent Studio");
   });
 
   it("omits blank company names from page titles", () => {
-    expect(buildDocumentTitle([{ label: "Inbox" }], "  ")).toBe("Inbox • Paperclip");
-    expect(buildDocumentTitle([], null)).toBe("Paperclip");
+    expect(buildDocumentTitle([{ label: "Inbox" }], "  ")).toBe("Inbox • Agent Studio");
+    expect(buildDocumentTitle([], null)).toBe("Agent Studio");
   });
 });

@@ -1,4 +1,4 @@
-import { test, expect, request as pwRequest, type APIRequestContext } from "@playwright/test";
+import { test, expect, request as pwRequest, type APIRequestContext, type Page } from "@playwright/test";
 
 /**
  * E2E: Signoff execution policy flow.
@@ -160,6 +160,27 @@ async function agentCheckoutAndPatch(
   return retryAgentPatchWithCurrentLockOnConflict(board, agent, issueId, res, patchData);
 }
 
+/**
+ * Switch the issue detail right-hand panel to "Properties".
+ *
+ * The signoff execution state ("Review pending" / "Approval pending") is
+ * rendered by ui/src/components/IssueProperties.tsx, which the detail page
+ * only mounts when the Properties panel is open — an issue that has left
+ * "todo" defaults to the Output panel instead
+ * (ui/src/pages/IssueDetail.tsx). The header's "Show properties" toggle is the
+ * only way to switch, and it is desktop-only.
+ */
+async function openPropertiesPanel(page: Page) {
+  // The toggle reads "Show properties" while the Output panel is showing and
+  // "Show output" once Properties is open, so wait for either before deciding.
+  const toggle = page.getByRole("button", { name: /Show (properties|output)/ });
+  await expect(toggle).toBeVisible({ timeout: 15_000 });
+  const showProperties = page.getByRole("button", { name: "Show properties" });
+  if (await showProperties.count()) {
+    await showProperties.click();
+  }
+}
+
 async function setupCompany(boardRequest: APIRequestContext): Promise<TestContext> {
   // Verify server is in local_trusted mode
   const healthRes = await boardRequest.get(`${BASE_URL}/api/health`);
@@ -318,7 +339,8 @@ test.describe("Signoff execution policy", () => {
 
     // Step 2: Navigate to issue in UI and verify execution label
     await page.goto(`/${ctx.companyPrefix}/issues/${issue.identifier}`);
-    await expect(page.locator("text=Review pending")).toBeVisible({ timeout: 10_000 });
+    await openPropertiesPanel(page);
+    await expect(page.locator("text=Review pending").first()).toBeVisible({ timeout: 10_000 });
 
     // Step 3: Reviewer approves → should route to approver
     const step3Res = await agentPatch(
@@ -336,7 +358,8 @@ test.describe("Signoff execution policy", () => {
 
     // Step 4: Verify UI shows approval pending
     await page.reload();
-    await expect(page.locator("text=Approval pending")).toBeVisible({ timeout: 10_000 });
+    await openPropertiesPanel(page);
+    await expect(page.locator("text=Approval pending").first()).toBeVisible({ timeout: 10_000 });
 
     // Step 5: Approver approves → should complete
     const step5Res = await agentPatch(

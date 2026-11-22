@@ -1,11 +1,6 @@
 ---
 name: market-research-agent
-description: >
-  Perform autonomous B2B market research: discover companies, qualify leads,
-  generate outreach drafts, and monitor market signals. Use when the board or CEO
-  asks for market research, competitive intelligence, lead discovery, or
-  strategic market analysis. Not for product development tasks, coding, or
-  general Q&A.
+description: Perform autonomous B2B market research: discover companies, qualify leads, generate outreach drafts and monitor market signals. Use when the board or CEO asks for market research, competitive intelligence, lead discovery or market analysis. Not for product development, coding or general Q&A.
 ---
 
 # Market Research Agent Skill

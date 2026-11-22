@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import type { Agent, Approval } from "@paperclipai/shared";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { type Mock, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CommentThread } from "./CommentThread";
 
 vi.mock("./MarkdownBody", () => ({
@@ -62,7 +62,7 @@ vi.mock("@/plugins/slots", () => ({
 describe("CommentThread", () => {
   let container: HTMLDivElement;
   let writeTextMock: ReturnType<typeof vi.fn>;
-  let execCommandMock: ReturnType<typeof vi.fn>;
+  let execCommandMock: Mock<(commandId: string, showUI?: boolean, value?: string) => boolean>;
 
   beforeEach(() => {
     container = document.createElement("div");
@@ -70,7 +70,7 @@ describe("CommentThread", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-11T12:00:00.000Z"));
     writeTextMock = vi.fn(async () => {});
-    execCommandMock = vi.fn(() => true);
+    execCommandMock = vi.fn<(commandId: string, showUI?: boolean, value?: string) => boolean>(() => true);
     Object.assign(navigator, {
       clipboard: {
         writeText: writeTextMock,

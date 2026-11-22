@@ -83,6 +83,9 @@ export function previewApiRoutes(db: Db) {
   router.get("/previews/:id", async (req, res) => {
     const lease = await previews.getById(req.params.id as string, requestPreviewBaseUrl(req));
     if (!lease) throw notFound("Preview not found");
+    // Same 404 for "no such preview" and "preview in another tenant", so this
+    // endpoint cannot be used to enumerate other tenants' preview ids.
+    if (!hasCompanyAccess(req, lease.companyId)) throw notFound("Preview not found");
     assertCompanyAccess(req, lease.companyId);
     res.json(lease);
   });
@@ -91,6 +94,9 @@ export function previewApiRoutes(db: Db) {
     const id = req.params.id as string;
     const existing = await previews.getById(id, requestPreviewBaseUrl(req));
     if (!existing) throw notFound("Preview not found");
+    // Same 404 for "no such preview" and "preview in another tenant", so this
+    // endpoint cannot be used to enumerate other tenants' preview ids.
+    if (!hasCompanyAccess(req, existing.companyId)) throw notFound("Preview not found");
     assertCompanyAccess(req, existing.companyId);
     const lease = await previews.revoke(id, existing.companyId, requestPreviewBaseUrl(req));
     if (!lease) {

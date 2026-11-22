@@ -4,6 +4,7 @@ import { act } from "react";
 import type { ComponentProps, ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NewIssueDialog } from "./NewIssueDialog";
 
@@ -276,9 +277,11 @@ function renderDialog(container: HTMLDivElement) {
   const root = createRoot(container);
   act(() => {
     root.render(
-      <QueryClientProvider client={queryClient}>
-        <NewIssueDialog />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={queryClient}>
+          <NewIssueDialog />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
   });
   return { root, queryClient };

@@ -9,13 +9,20 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * NUX Phase 4 — visual QA screenshot capture.
  *
  * Boots a throwaway local_trusted instance (see playwright.config.ts webServer)
- * and captures screenshots of every surface integrated by NUX Phases 1–3:
- *   - "Build a new company" step 1 (company name) + step 2 (mission)
- *   - Team-lead hire step (capsule wizard, PAP-125)
- *   - Onboarding front door (path picker)
- *   - "Add agents to your org" growth intake
- *   - Conference Room (BoardChat) shell + composer + activity feed
- *   - Artifacts page
+ * and captures screenshots of every onboarding surface that ships in the
+ * deployment baseline UI:
+ *   - "Name your company" (company name + mission/goal)
+ *   - "Create your first agent" (adapter picker)
+ *   - "Give it something to do" (task title + description)
+ *   - "Ready to launch" review + the issue the launch opens
+ *
+ * The remaining NUX surfaces this spec used to capture (the onboarding front
+ * door / "Build a new company" path picker, the "Add agents to your org"
+ * growth intake, the Conference Room / BoardChat shell and the Artifacts
+ * page) are not part of the deployment baseline UI any more — commit
+ * 43d81e50c "fix: restore exact production UI source" (merged through PR #10
+ * "codex/restore-exact-production-ui") replaced them with the four-step
+ * wizard in ui/src/components/OnboardingWizard.tsx. Tracked by LCH-534.
  *
  * These are structural/rendering checks — LLM-dependent streaming (CEO chat
  * responses, hiring-plan generation) is verified separately on an LLM-backed
@@ -31,23 +38,35 @@ function shot(name: string) {
   return path.join(SHOT_DIR, name);
 }
 
+/**
+ * Open the wizard.
+ *
+ * The /onboarding route renders a launcher card, but the app layout also
+ * auto-opens the wizard when the instance has no companies yet — in that case
+ * the wizard is already on screen and the launcher button sits behind the
+ * full-screen wizard overlay, so it must not be clicked.
+ */
 async function openWizard(page: import("@playwright/test").Page) {
   await page.goto("/onboarding");
-  const startBtn = page.getByRole("button", { name: /Start Onboarding|New Company|Add Agent/ });
-  if (await startBtn.count()) {
-    await startBtn.first().click();
+  const step1Heading = page.getByRole("heading", { name: "Name your company" });
+  if ((await step1Heading.count()) === 0) {
+    const launcher = page.getByRole("button", {
+      name: /Start Onboarding|New Company|Add Agent/,
+    });
+    if (await launcher.count()) {
+      // A click that lands on the already-open wizard overlay is harmless.
+      await launcher.first().click({ timeout: 10_000 }).catch(() => undefined);
+    }
   }
+  await expect(step1Heading).toBeVisible({ timeout: 15_000 });
 }
 
 test.describe("NUX Phase 4 visual QA", () => {
-  test("captures every integrated surface", async ({ page }) => {
-    // New-NUX surfaces are flag-gated default-OFF (PAP-136/137/138): turn the
-    // experimental flag on for this throwaway instance before driving them.
-    const flagRes = await page.request.patch("/api/instance/settings/experimental", {
-      data: { enableConferenceRoomChat: true },
-    });
-    expect(flagRes.ok()).toBe(true);
+  // The wizard creates a company, an agent, a project and the starter issue
+  // before it navigates — give the capture more than the 60s default.
+  test.setTimeout(180_000);
 
+  test("captures every integrated surface", async ({ page }) => {
     const consoleErrors: string[] = [];
     page.on("console", (msg) => {
       if (msg.type() === "error") consoleErrors.push(msg.text());
@@ -57,38 +76,75 @@ test.describe("NUX Phase 4 visual QA", () => {
     const baseUrl =
       "http://127.0.0.1:" + (process.env.PAPERCLIP_E2E_PORT ?? "3199");
 
-    // ── Section A: create-company path (name → mission → hire) ────────────
+    // The adapter probe would shell out to a real CLI — stub it out so the
+    // capture stays deterministic in CI.
+    await page.route("**/test-environment", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ status: "pass", checks: [] }),
+      }),
+    );
+    await page.route("**/agent-hires", async (route) => {
+      const req = route.request();
+      const body = JSON.parse(req.postData() || "{}");
+      const auth = req.headers().authorization;
+      const real = await fetch(new URL(req.url(), baseUrl).toString(), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(auth ? { Authorization: auth } : {}),
+        },
+        body: JSON.stringify({
+          name: body.name,
+          role: body.role,
+          adapterType: "http",
+          adapterConfig: { url: "http://127.0.0.1:1/dead" },
+          runtimeConfig: { heartbeat: { enabled: false } },
+        }),
+      });
+      await route.fulfill({
+        status: real.status,
+        contentType: "application/json",
+        body: await real.text(),
+      });
+    });
+
+    // ── Section A: the four onboarding steps ───────────────────────────────
     await openWizard(page);
-    // Front door shows when the wizard doesn't open directly on the create
-    // path (e.g. another spec already created a company on this instance).
-    const createCard = page.getByRole("button", { name: /Build a new company/ });
-    if (await createCard.count()) {
-      await createCard.first().click();
-    }
+
     await expect(
       page.getByRole("heading", { name: "Name your company" }),
     ).toBeVisible({ timeout: 15_000 });
     await page.getByPlaceholder("Acme Corp").fill("QA Robotics");
+    await page
+      .getByPlaceholder("What is this company trying to achieve?")
+      .fill("Build affordable home robots that handle household chores.");
     await page.screenshot({ path: shot("02-create-name.png") });
 
     await page.getByRole("button", { name: /^Next/ }).click();
     await expect(
-      page.getByRole("heading", { name: "Define your mission" }),
-    ).toBeVisible({ timeout: 10_000 });
-    await page
-      .getByPlaceholder("What is your team trying to achieve?")
-      .fill("Build affordable home robots that handle household chores.");
-    await page.screenshot({ path: shot("03-create-mission.png") });
+      page.getByRole("heading", { name: "Create your first agent" }),
+    ).toBeVisible({ timeout: 30_000 });
+    await page.screenshot({ path: shot("03-create-agent.png") });
 
-    // Step 2 advances via "Confirm mission" (creates the company + goal);
-    // step 3 is the team-lead naming step of the capsule wizard.
-    await page.getByRole("button", { name: /Confirm mission/ }).click();
-    await page.waitForSelector('input[placeholder="Chief of staff"]', {
-      timeout: 30_000,
-    });
-    await page.screenshot({ path: shot("04-hire-team-lead.png") });
+    await page.getByRole("button", { name: /^Next/ }).click();
+    await expect(
+      page.getByRole("heading", { name: "Give it something to do" }),
+    ).toBeVisible({ timeout: 30_000 });
+    await page.screenshot({ path: shot("04-create-task.png") });
 
-    // The company just created anchors the route-scoped sections below.
+    await page.getByRole("button", { name: /^Next/ }).click();
+    await expect(
+      page.getByRole("heading", { name: "Ready to launch" }),
+    ).toBeVisible({ timeout: 30_000 });
+    await page.screenshot({ path: shot("05-launch-review.png") });
+
+    await page.getByRole("button", { name: /Create & Open Issue/ }).click();
+    await expect(page).toHaveURL(/\/issues\/[^/]+$/, { timeout: 60_000 });
+    await page.waitForTimeout(1_000);
+    await page.screenshot({ path: shot("06-issue-detail.png") });
+
+    // The wizard should have created the company it named.
     const companiesRes = await page.request.get(`${baseUrl}/api/companies`);
     expect(companiesRes.ok()).toBe(true);
     const companies = await companiesRes.json();
@@ -96,70 +152,13 @@ test.describe("NUX Phase 4 visual QA", () => {
       (c: { name: string }) => c.name === "QA Robotics",
     );
     expect(qaCompany, "wizard should have created QA Robotics").toBeTruthy();
-    const prefix: string = qaCompany.issuePrefix;
-
-    // ── Section B: front door + growth intake ─────────────────────────────
-    await page.evaluate(() => window.localStorage.clear());
-    await openWizard(page);
-    // Reach the full-screen front door (step 0): either it shows directly or
-    // "← Back to start" returns to it from the create step.
-    if (!(await page.getByRole("heading", { name: "Welcome to Paperclip" }).count())) {
-      await page.getByRole("button", { name: /Back to start/ }).click();
-    }
-    await expect(
-      page.getByRole("heading", { name: "Welcome to Paperclip" }),
-    ).toBeVisible({ timeout: 10_000 });
-    await expect(
-      page.getByRole("heading", { name: "Build a new company" }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("heading", { name: "Add agents to your org" }),
-    ).toBeVisible();
-    await page.screenshot({ path: shot("01-front-door.png") });
-
-    await page.getByRole("button", { name: /Add agents to your org/ }).click();
-    // The grow path shares step 1 (company name) before its step-2 intake.
-    await expect(
-      page.getByRole("heading", { name: "Name your company" }),
-    ).toBeVisible({ timeout: 10_000 });
-    await page.getByPlaceholder("Acme Corp").fill("QA Robotics Grow");
-    await page.getByRole("button", { name: /^Next/ }).click();
-    await expect(
-      page.getByRole("heading", { name: /Tell us about your team/ }),
-    ).toBeVisible({ timeout: 10_000 });
-    await page.screenshot({ path: shot("05-growth-intake.png") });
-
-    // ── Section C: Conference Room (BoardChat) ────────────────────────────
-    // Visit the company dashboard first so CompanyContext selects the company
-    // from the route before we land on the board-chat surface.
-    await page.evaluate(() => window.localStorage.clear());
-    await page.goto(`/${prefix}/dashboard`);
-    await page.waitForLoadState("networkidle");
-    await page.goto(`/${prefix}/board-chat`);
-    await expect(page).toHaveURL(new RegExp(`/${prefix}/board-chat`));
-    // Composer renders once a company is selected. (Regression guard for the
-    // Rules-of-Hooks crash that previously blanked this page — see PAP-50.)
-    await expect(
-      page.getByPlaceholder("Ask anything about your company..."),
-    ).toBeVisible({ timeout: 20_000 });
-    await page.waitForTimeout(2_000); // let welcome bubble + suggestion chips stage in
-    await page.screenshot({ path: shot("06-board-chat.png") });
-
-    // ── Section D: Artifacts ──────────────────────────────────────────────
-    await page.goto(`/${prefix}/artifacts`);
-    await expect(page).toHaveURL(new RegExp(`/${prefix}/artifacts`));
-    await page.waitForLoadState("networkidle");
-    await page.waitForTimeout(1_000);
-    await page.screenshot({ path: shot("07-artifacts.png") });
 
     for (const f of [
-      "01-front-door.png",
       "02-create-name.png",
-      "03-create-mission.png",
-      "04-hire-team-lead.png",
-      "05-growth-intake.png",
-      "06-board-chat.png",
-      "07-artifacts.png",
+      "03-create-agent.png",
+      "04-create-task.png",
+      "05-launch-review.png",
+      "06-issue-detail.png",
     ]) {
       const p = shot(f);
       expect(fs.existsSync(p), `missing ${f}`).toBe(true);

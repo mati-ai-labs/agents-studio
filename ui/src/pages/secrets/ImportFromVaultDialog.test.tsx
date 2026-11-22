@@ -286,6 +286,9 @@ describe("ImportFromVaultDialog", () => {
       {
         id: "secret-existing",
         companyId: "company-1",
+        scope: "company",
+        ownerUserId: null,
+        userSecretDefinitionId: null,
         key: "openai_api_key",
         name: "OPENAI_API_KEY",
         provider: "aws_secrets_manager",
@@ -344,7 +347,7 @@ describe("ImportFromVaultDialog", () => {
     await flush();
 
     // Review step: error message visible, Import button disabled.
-    expect(document.body.textContent?.toLowerCase()).toContain("a paperclip secret already uses this");
+    expect(document.body.textContent?.toLowerCase()).toContain("an agent studio secret already uses this");
 
     const importBtn = Array.from(document.querySelectorAll("button")).find(
       (btn) => btn.textContent?.startsWith("Import "),

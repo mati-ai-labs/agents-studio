@@ -55,7 +55,6 @@ const mcpConfigIndex = argv.indexOf("--mcp-config");
 const mcpConfigFilePath = mcpConfigIndex >= 0 ? argv[mcpConfigIndex + 1] : null;
 const instructionsIndex = argv.indexOf("--append-system-prompt-file");
 const instructionsFilePath = instructionsIndex >= 0 ? argv[instructionsIndex + 1] : null;
-const mcpConfigIndex = argv.indexOf("--mcp-config");
 const mcpConfigPath = mcpConfigIndex >= 0 ? argv[mcpConfigIndex + 1] : null;
 const capturePath = process.env.PAPERCLIP_TEST_CAPTURE_PATH;
 const payload = {
@@ -485,12 +484,17 @@ describe("claude execute", () => {
     try {
       await execute({
         runId: "run-mcp-config",
-        agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: {} },
+        agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: { engine: "cli" } },
         runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
         config: {
           command: commandPath,
           cwd: workspace,
           env: { PAPERCLIP_TEST_CAPTURE_PATH: capturePath },
+          // These tests assert CLI-lane behaviour (the spawned command argv and
+          // the MCP config file the CLI receives), so pin the engine instead of
+          // letting it default to ACP, which spawns claude-agent-acp instead of
+          // the mock CLI.
+          engine: "cli",
           promptTemplate: "Do work.",
         },
         context: {},
@@ -523,12 +527,17 @@ describe("claude execute", () => {
     try {
       await execute({
         runId: "run-mcp-config-combined",
-        agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: {} },
+        agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: { engine: "cli" } },
         runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
         config: {
           command: commandPath,
           cwd: workspace,
           env: { PAPERCLIP_TEST_CAPTURE_PATH: capturePath },
+          // These tests assert CLI-lane behaviour (the spawned command argv and
+          // the MCP config file the CLI receives), so pin the engine instead of
+          // letting it default to ACP, which spawns claude-agent-acp instead of
+          // the mock CLI.
+          engine: "cli",
           promptTemplate: "Do work.",
         },
         context: {},
@@ -571,12 +580,17 @@ describe("claude execute", () => {
     try {
       await execute({
         runId: "run-mcp-config-github",
-        agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: {} },
+        agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: { engine: "cli" } },
         runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
         config: {
           command: commandPath,
           cwd: workspace,
           env: { PAPERCLIP_TEST_CAPTURE_PATH: capturePath },
+          // These tests assert CLI-lane behaviour (the spawned command argv and
+          // the MCP config file the CLI receives), so pin the engine instead of
+          // letting it default to ACP, which spawns claude-agent-acp instead of
+          // the mock CLI.
+          engine: "cli",
           promptTemplate: "Do work.",
         },
         context: {},
@@ -610,12 +624,17 @@ describe("claude execute", () => {
     try {
       await execute({
         runId: "run-mcp-config-meta-ads",
-        agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: {} },
+        agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: { engine: "cli" } },
         runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
         config: {
           command: commandPath,
           cwd: workspace,
           env: { PAPERCLIP_TEST_CAPTURE_PATH: capturePath },
+          // These tests assert CLI-lane behaviour (the spawned command argv and
+          // the MCP config file the CLI receives), so pin the engine instead of
+          // letting it default to ACP, which spawns claude-agent-acp instead of
+          // the mock CLI.
+          engine: "cli",
           promptTemplate: "Do work.",
         },
         context: {},
@@ -649,12 +668,17 @@ describe("claude execute", () => {
     try {
       await execute({
         runId: "run-mcp-config-meta-ads-combined",
-        agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: {} },
+        agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: { engine: "cli" } },
         runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
         config: {
           command: commandPath,
           cwd: workspace,
           env: { PAPERCLIP_TEST_CAPTURE_PATH: capturePath },
+          // These tests assert CLI-lane behaviour (the spawned command argv and
+          // the MCP config file the CLI receives), so pin the engine instead of
+          // letting it default to ACP, which spawns claude-agent-acp instead of
+          // the mock CLI.
+          engine: "cli",
           promptTemplate: "Do work.",
         },
         context: {},
@@ -707,12 +731,17 @@ describe("claude execute", () => {
     try {
       await execute({
         runId: "run-auto-jira-mcp",
-        agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: {} },
+        agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: { engine: "cli" } },
         runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
         config: {
           command: commandPath,
           cwd: workspace,
           env: { PAPERCLIP_TEST_CAPTURE_PATH: capturePath },
+          // These tests assert CLI-lane behaviour (the spawned command argv and
+          // the MCP config file the CLI receives), so pin the engine instead of
+          // letting it default to ACP, which spawns claude-agent-acp instead of
+          // the mock CLI.
+          engine: "cli",
           promptTemplate: "Do work.",
         },
         context: {},

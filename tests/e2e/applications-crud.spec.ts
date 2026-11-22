@@ -12,6 +12,14 @@ type SeedResult = {
 const SCREENSHOT_DIR = "test-results";
 const APP_PREFIX = `QA 10820 ${Date.now().toString(36)}`;
 
+// The Apps UI is not part of the deployment baseline UI any more: commit
+// 43d81e50c "fix: restore exact production UI source" (merged through PR #10
+// "codex/restore-exact-production-ui") dropped `ui/src/pages/apps/**` and the
+// `/apps` routes from `ui/src/App.tsx`. The "Connections" list and the app
+// setup/advanced pages this spec drives no longer exist. Tracked by LCH-534.
+const APPS_UI_REMOVED =
+  "Apps UI removed from the deployment baseline UI by 43d81e50c (LCH-534)";
+
 async function discoverCompany(request: APIRequestContext): Promise<SeedResult> {
   const res = await request.post("/api/companies", {
     data: { name: `applications lifecycle ${Date.now()}` },
@@ -62,6 +70,7 @@ async function gotoApps(page: Page, prefix: string) {
 }
 
 test.describe.serial("applications lifecycle", () => {
+  test.skip(true, APPS_UI_REMOVED);
   let seed: SeedResult;
 
   test.beforeAll(async ({ request }) => {
