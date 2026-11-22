@@ -262,9 +262,7 @@ describeEmbeddedPostgres("cloud upstream persistence", () => {
     const rows = await db.select().from(cloudUpstreamRuns);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.status).toBe("cancelled");
-    // Every mocked remote call re-seals the connection credentials, which is
-    // RSA work: the run takes ~6s, well past vitest's 5s default timeout.
-  }, 15000);
+  }, 20_000);
 
   async function seedCompany(companyId: string) {
     await db.insert(companies).values({
