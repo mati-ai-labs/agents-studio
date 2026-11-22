@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import type { Agent } from "@paperclipai/shared";
+import type {
+  Agent,
+  RequestCheckboxConfirmationInteraction,
+  RequestItemVerdictsInteraction,
+} from "@paperclipai/shared";
 import { AlertTriangle, CheckCircle2, ChevronRight, CircleDashed, GitBranch, ListChecks, Loader2, MessageSquareQuote, XCircle } from "lucide-react";
 import { Link } from "@/lib/router";
 import { formatAssigneeUserLabel } from "../lib/assignees";
@@ -1204,6 +1208,33 @@ function RequestConfirmationCard({
   );
 }
 
+/**
+ * `request_checkbox_confirmation` and `request_item_verdicts` need selection
+ * controls the board does not render yet, and the board's accept/decline
+ * handlers only speak `request_confirmation`. They render read-only so the
+ * request is still visible instead of being answered without the required
+ * selections.
+ */
+function UnsupportedRequestInteractionCard({
+  interaction,
+}: {
+  interaction: RequestCheckboxConfirmationInteraction | RequestItemVerdictsInteraction;
+}) {
+  return (
+    <div className="space-y-3 rounded-sm border border-border/70 bg-background/75 p-4">
+      <div className="text-sm leading-6 text-foreground">{interaction.payload.prompt}</div>
+      {interaction.payload.detailsMarkdown ? (
+        <div className="border-t border-border/60 pt-3 text-sm">
+          <MarkdownBody>{interaction.payload.detailsMarkdown}</MarkdownBody>
+        </div>
+      ) : null}
+      <p className="text-xs text-muted-foreground">
+        This request type cannot be answered from the board yet.
+      </p>
+    </div>
+  );
+}
+
 export function IssueThreadInteractionCard({
   interaction,
   agentMap,
@@ -1306,7 +1337,9 @@ export function IssueThreadInteractionCard({
             onAcceptInteraction={onAcceptInteraction}
             onRejectInteraction={onRejectInteraction}
           />
-        ) : null}
+        ) : (
+          <UnsupportedRequestInteractionCard interaction={interaction} />
+        )}
       </div>
 
       {resolvedByLabel ? (

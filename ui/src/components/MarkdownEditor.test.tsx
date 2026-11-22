@@ -2,7 +2,7 @@
 
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { type Mock, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildProjectMentionHref, buildSkillMentionHref } from "@paperclipai/shared";
 import {
   computeMentionMenuPosition,
@@ -228,7 +228,7 @@ describe("MarkdownEditor", () => {
 
   it("keeps the external value when the unfocused editor emits an empty mount reset", async () => {
     mdxEditorMockState.emitMountEmptyReset = true;
-    const handleChange = vi.fn<(value: string) => void>();
+    const handleChange = vi.fn();
     const root = createRoot(container);
 
     await act(async () => {
@@ -326,7 +326,7 @@ describe("MarkdownEditor", () => {
 
   it("falls back to a raw textarea when the rich parser rejects the markdown", async () => {
     mdxEditorMockState.emitMountParseError = true;
-    const handleChange = vi.fn<(value: string) => void>();
+    const handleChange = vi.fn();
     const root = createRoot(container);
 
     await act(async () => {
@@ -356,7 +356,7 @@ describe("MarkdownEditor", () => {
 
   it("falls back to a raw textarea when the rich editor mounts into the placeholder without callbacks", async () => {
     mdxEditorMockState.emitMountSilentEmptyState = true;
-    const handleChange = vi.fn<(value: string) => void>();
+    const handleChange = vi.fn();
     const root = createRoot(container);
 
     await act(async () => {
@@ -655,7 +655,7 @@ describe("MarkdownEditor", () => {
   }
 
   async function openMentionMenuFor(
-    handleChange: ReturnType<typeof vi.fn<(value: string) => void>>,
+    handleChange: Mock<(value: string) => void>,
   ): Promise<{ option: HTMLButtonElement; root: ReturnType<typeof createRoot> }> {
     const root = createRoot(container);
 

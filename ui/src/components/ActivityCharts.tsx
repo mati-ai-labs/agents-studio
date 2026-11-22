@@ -62,19 +62,61 @@ type RunChartProps =
   | { activity?: DashboardRunActivityDay[] | null; runs?: never }
   | { runs?: HeartbeatRun[] | null; activity?: never };
 
+/**
+ * Mirrors the server dashboard aggregation: a run counts as "recovered" when its
+ * retry chain later succeeded, so a restart-killed run whose retry succeeded is
+ * pulled out of the headline failed count. Every ancestor of a succeeded retry
+ * is recovered.
+ */
+function collectRecoveredRunIds(runs: readonly HeartbeatRun[]): Set<string> {
+  const runsById = new Map<string, HeartbeatRun>();
+  for (const run of runs) runsById.set(run.id, run);
+  const recovered = new Set<string>();
+  for (const run of runs) {
+    if (run.status !== "succeeded") continue;
+    let ancestorId = run.retryOfRunId;
+    const visited = new Set<string>();
+    while (ancestorId && !visited.has(ancestorId)) {
+      visited.add(ancestorId);
+      recovered.add(ancestorId);
+      ancestorId = runsById.get(ancestorId)?.retryOfRunId ?? null;
+    }
+  }
+  return recovered;
+}
+
 function aggregateRuns(runs: readonly HeartbeatRun[] = []): DashboardRunActivityDay[] {
   const days = getLast14Days();
   const grouped = new Map<string, DashboardRunActivityDay>();
   for (const day of days) {
-    grouped.set(day, { date: day, succeeded: 0, failed: 0, recovered: 0, other: 0, total: 0, failedByErrorCode: {} });
+    grouped.set(day, {
+      date: day,
+      succeeded: 0,
+      failed: 0,
+      recovered: 0,
+      other: 0,
+      total: 0,
+      failedByErrorCode: {},
+    });
   }
+  const recoveredRunIds = collectRecoveredRunIds(runs);
   for (const run of runs) {
     const day = new Date(run.createdAt).toISOString().slice(0, 10);
     const entry = grouped.get(day);
     if (!entry) continue;
-    if (run.status === "succeeded") entry.succeeded++;
-    else if (run.status === "failed" || run.status === "timed_out") entry.failed++;
-    else entry.other++;
+    if (run.status === "succeeded") {
+      entry.succeeded++;
+    } else if (run.status === "failed" || run.status === "timed_out") {
+      if (recoveredRunIds.has(run.id)) {
+        entry.recovered++;
+      } else {
+        entry.failed++;
+        const code = run.errorCode && run.errorCode.length > 0 ? run.errorCode : "unknown";
+        entry.failedByErrorCode[code] = (entry.failedByErrorCode[code] ?? 0) + 1;
+      }
+    } else {
+      entry.other++;
+    }
     entry.total++;
   }
   return Array.from(grouped.values());
@@ -100,7 +142,15 @@ export function RunActivityChart(props: RunChartProps) {
     <div>
       <div className="flex items-end gap-[3px] h-20">
         {days.map(day => {
-          const entry = grouped.get(day) ?? { date: day, succeeded: 0, failed: 0, other: 0, total: 0 };
+          const entry = grouped.get(day) ?? {
+            date: day,
+            succeeded: 0,
+            failed: 0,
+            recovered: 0,
+            other: 0,
+            total: 0,
+            failedByErrorCode: {},
+          };
           const total = entry.total;
           const heightPct = (total / maxValue) * 100;
           return (
@@ -255,7 +305,15 @@ export function SuccessRateChart(props: RunChartProps) {
     <div>
       <div className="flex items-end gap-[3px] h-20">
         {days.map(day => {
-          const entry = grouped.get(day) ?? { date: day, succeeded: 0, failed: 0, other: 0, total: 0 };
+          const entry = grouped.get(day) ?? {
+            date: day,
+            succeeded: 0,
+            failed: 0,
+            recovered: 0,
+            other: 0,
+            total: 0,
+            failedByErrorCode: {},
+          };
           const rate = entry.total > 0 ? entry.succeeded / entry.total : 0;
           const color = entry.total === 0 ? undefined : rate >= 0.8 ? "#10b981" : rate >= 0.5 ? "#eab308" : "#ef4444";
           return (

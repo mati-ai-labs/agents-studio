@@ -71,8 +71,6 @@ function createExecutionWorkspace(overrides: Partial<ExecutionWorkspace> = {}): 
 
 function createIssue(overrides: Partial<Issue> = {}): Issue {
   return {
-    responsibleUserId: null,
-    completionDestination: null,
     id: "issue-1",
     identifier: "PAPA-81",
     companyId: "company-1",
@@ -88,9 +86,11 @@ function createIssue(overrides: Partial<Issue> = {}): Issue {
     assigneeUserId: null,
     createdByAgentId: null,
     createdByUserId: null,
+    responsibleUserId: null,
     issueNumber: 81,
     requestDepth: 0,
     billingCode: null,
+    completionDestination: null,
     assigneeAdapterOverrides: null,
     executionWorkspaceId: "workspace-1",
     executionWorkspacePreference: "isolated_workspace",

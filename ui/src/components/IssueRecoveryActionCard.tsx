@@ -56,9 +56,9 @@ const KIND_HEADLINE: Record<IssueRecoveryActionKind, string> = {
   stranded_assigned_issue:
     "Agent Studio retried this issue's last run and it still has no live execution path.",
   workspace_validation:
-    "Agent Studio stopped this run because the issue's git workspace could not be validated.",
+    "This issue's run failed workspace validation before the adapter could execute.",
   configuration_validation:
-    "Agent Studio stopped before dispatching this run because required secret/env bindings are missing.",
+    "This issue's run failed because required agent, project, or routine configuration is missing.",
   active_run_watchdog:
     "The active run has been silent. Recovery is observing without interrupting it.",
   issue_graph_liveness:
@@ -128,8 +128,8 @@ const STATE_TONE: Record<RecoveryCardCardState, {
 
 const OUTCOME_LABEL: Record<IssueRecoveryActionOutcome, string> = {
   restored: "restored",
-  handed_back: "handed back to original owner",
-  owner_completed: "completed by recovery owner",
+  handed_back: "handed back",
+  owner_completed: "owner completed",
   delegated: "delegated to follow-up",
   false_positive: "false positive",
   blocked: "blocked",

@@ -239,7 +239,6 @@ vi.mock("../components/AgentIconPicker", () => ({
 
 function createRoutine(overrides: Partial<RoutineListItem>): RoutineListItem {
   return {
-    responsibleUserId: null,
     id: "routine-1",
     companyId: "company-1",
     projectId: "project-1",
@@ -257,6 +256,7 @@ function createRoutine(overrides: Partial<RoutineListItem>): RoutineListItem {
     latestRevisionNumber: 1,
     createdByAgentId: null,
     createdByUserId: null,
+    responsibleUserId: null,
     updatedByAgentId: null,
     updatedByUserId: null,
     lastTriggeredAt: null,
@@ -272,8 +272,6 @@ function createRoutine(overrides: Partial<RoutineListItem>): RoutineListItem {
 
 function createIssue(overrides: Partial<Issue> = {}): Issue {
   return {
-    responsibleUserId: null,
-    completionDestination: null,
     id: "issue-1",
     identifier: "PAP-1000",
     companyId: "company-1",
@@ -289,12 +287,14 @@ function createIssue(overrides: Partial<Issue> = {}): Issue {
     assigneeUserId: null,
     createdByAgentId: null,
     createdByUserId: null,
+    responsibleUserId: null,
     issueNumber: 1000,
     originKind: "routine_execution",
     originId: "routine-1",
     originRunId: null,
     requestDepth: 0,
     billingCode: null,
+    completionDestination: null,
     assigneeAdapterOverrides: null,
     executionWorkspaceId: null,
     executionWorkspacePreference: null,

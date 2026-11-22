@@ -31,6 +31,7 @@ import type {
   SuggestTasksInteraction,
   SuggestTasksResultCreatedTask,
 } from "@paperclipai/shared";
+import { ISSUE_THREAD_INTERACTION_KINDS } from "@paperclipai/shared";
 
 export interface SuggestedTaskTreeNode {
   task: SuggestedTaskDraft;
@@ -45,11 +46,8 @@ export function isIssueThreadInteraction(
   return typeof candidate.id === "string"
     && typeof candidate.companyId === "string"
     && typeof candidate.issueId === "string"
-    && (
-      candidate.kind === "suggest_tasks"
-      || candidate.kind === "ask_user_questions"
-      || candidate.kind === "request_confirmation"
-    );
+    && typeof candidate.kind === "string"
+    && ISSUE_THREAD_INTERACTION_KINDS.includes(candidate.kind);
 }
 
 export function buildIssueThreadInteractionSummary(
@@ -71,7 +69,7 @@ export function buildIssueThreadInteractionSummary(
     return count === 1 ? "Suggested 1 task" : `Suggested ${count} tasks`;
   }
 
-  if (interaction.kind === "request_confirmation") {
+  if (interaction.kind === "request_confirmation" || interaction.kind === "request_checkbox_confirmation") {
     if (interaction.status === "accepted") return "Confirmed request";
     if (interaction.status === "rejected") return "Declined request";
     if (interaction.status === "expired") {
@@ -83,22 +81,25 @@ export function buildIssueThreadInteractionSummary(
     return "Requested confirmation";
   }
 
-  if (interaction.kind === "ask_user_questions") {
-    const count = interaction.payload.questions.length;
+  if (interaction.kind === "request_item_verdicts") {
+    const itemCount = interaction.payload.items.length;
     if (interaction.status === "answered") {
-      return count === 1 ? "Answered 1 question" : `Answered ${count} questions`;
+      return itemCount === 1 ? "Reviewed 1 item" : `Reviewed ${itemCount} items`;
     }
     if (interaction.status === "cancelled") {
-      return count === 1 ? "Cancelled 1 question" : `Cancelled ${count} questions`;
+      return itemCount === 1 ? "Cancelled 1 item" : `Cancelled ${itemCount} items`;
     }
-    return count === 1 ? "Asked 1 question" : `Asked ${count} questions`;
+    return itemCount === 1 ? "Requested review of 1 item" : `Requested review of ${itemCount} items`;
   }
 
-  // The issue thread renders suggest-tasks, ask-user-questions and
-  // request-confirmation interactions only. The checkbox-confirmation and
-  // item-verdict kinds have no card here, so they get a neutral summary
-  // instead of reaching for a payload shape they do not have.
-  return "Requested interaction";
+  const count = interaction.payload.questions.length;
+  if (interaction.status === "answered") {
+    return count === 1 ? "Answered 1 question" : `Answered ${count} questions`;
+  }
+  if (interaction.status === "cancelled") {
+    return count === 1 ? "Cancelled 1 question" : `Cancelled ${count} questions`;
+  }
+  return count === 1 ? "Asked 1 question" : `Asked ${count} questions`;
 }
 
 export function buildSuggestedTaskTree(

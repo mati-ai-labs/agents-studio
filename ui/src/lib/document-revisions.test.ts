@@ -4,9 +4,6 @@ import { deriveDocumentRevisionState } from "./document-revisions";
 
 function createDocument(overrides: Partial<IssueDocument> = {}): IssueDocument {
   return {
-    lockedAt: null,
-    lockedByAgentId: null,
-    lockedByUserId: null,
     id: "document-1",
     companyId: "company-1",
     issueId: "issue-1",
@@ -16,6 +13,9 @@ function createDocument(overrides: Partial<IssueDocument> = {}): IssueDocument {
     body: "# Current plan",
     latestRevisionId: "revision-2",
     latestRevisionNumber: 2,
+    lockedAt: null,
+    lockedByAgentId: null,
+    lockedByUserId: null,
     createdByAgentId: "agent-1",
     createdByUserId: null,
     updatedByAgentId: "agent-1",

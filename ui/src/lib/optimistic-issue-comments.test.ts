@@ -437,8 +437,6 @@ describe("optimistic issue comments", () => {
   it("applies optimistic reopen and reassignment updates to the issue cache", () => {
     const next = applyOptimisticIssueCommentUpdate(
       {
-        responsibleUserId: null,
-        completionDestination: null,
         id: "issue-1",
         companyId: "company-1",
         projectId: null,
@@ -458,6 +456,7 @@ describe("optimistic issue comments", () => {
         executionLockedAt: null,
         createdByAgentId: null,
         createdByUserId: "board-1",
+        responsibleUserId: null,
         issueNumber: 1,
         identifier: "PAP-1",
         originKind: "manual",
@@ -465,6 +464,7 @@ describe("optimistic issue comments", () => {
         originRunId: null,
         requestDepth: 0,
         billingCode: null,
+        completionDestination: null,
         assigneeAdapterOverrides: null,
         executionWorkspaceId: null,
         executionWorkspacePreference: null,
@@ -493,8 +493,6 @@ describe("optimistic issue comments", () => {
   it("applies optimistic field updates for issue property edits", () => {
     const next = applyOptimisticIssueFieldUpdate(
       {
-        responsibleUserId: null,
-        completionDestination: null,
         id: "issue-1",
         companyId: "company-1",
         projectId: "project-1",
@@ -530,6 +528,7 @@ describe("optimistic issue comments", () => {
         executionLockedAt: null,
         createdByAgentId: null,
         createdByUserId: "board-1",
+        responsibleUserId: null,
         issueNumber: 1,
         identifier: "PAP-1",
         originKind: "manual",
@@ -537,6 +536,7 @@ describe("optimistic issue comments", () => {
         originRunId: null,
         requestDepth: 0,
         billingCode: null,
+        completionDestination: null,
         assigneeAdapterOverrides: null,
         executionWorkspaceId: "exec-1",
         executionWorkspacePreference: "shared_workspace",
@@ -586,7 +586,6 @@ describe("optimistic issue comments", () => {
         ],
         blocks: [],
         project: {
-          icon: null,
           id: "project-1",
           companyId: "company-1",
           urlKey: "project-one",
@@ -599,6 +598,7 @@ describe("optimistic issue comments", () => {
           leadAgentId: null,
           targetDate: null,
           color: null,
+          icon: null,
           env: null,
           pauseReason: null,
           pausedAt: null,
@@ -685,8 +685,6 @@ describe("optimistic issue comments", () => {
   it("applies optimistic field updates across cached issue collections", () => {
     const issues: Issue[] = [
       {
-        responsibleUserId: null,
-        completionDestination: null,
         id: "issue-1",
         companyId: "company-1",
         projectId: null,
@@ -706,6 +704,7 @@ describe("optimistic issue comments", () => {
         executionLockedAt: null,
         createdByAgentId: null,
         createdByUserId: "board-1",
+        responsibleUserId: null,
         issueNumber: 1,
         identifier: "PAP-1",
         originKind: "manual",
@@ -713,6 +712,7 @@ describe("optimistic issue comments", () => {
         originRunId: null,
         requestDepth: 0,
         billingCode: null,
+        completionDestination: null,
         assigneeAdapterOverrides: null,
         executionWorkspaceId: null,
         executionWorkspacePreference: null,
@@ -729,8 +729,6 @@ describe("optimistic issue comments", () => {
         updatedAt: new Date("2026-03-28T14:00:00.000Z"),
       },
       {
-        responsibleUserId: null,
-        completionDestination: null,
         id: "issue-2",
         companyId: "company-1",
         projectId: null,
@@ -750,6 +748,7 @@ describe("optimistic issue comments", () => {
         executionLockedAt: null,
         createdByAgentId: null,
         createdByUserId: "board-1",
+        responsibleUserId: null,
         issueNumber: 2,
         identifier: "PAP-2",
         originKind: "manual",
@@ -757,6 +756,7 @@ describe("optimistic issue comments", () => {
         originRunId: null,
         requestDepth: 0,
         billingCode: null,
+        completionDestination: null,
         assigneeAdapterOverrides: null,
         executionWorkspaceId: null,
         executionWorkspacePreference: null,

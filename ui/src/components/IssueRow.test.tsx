@@ -30,8 +30,6 @@ vi.mock("@/lib/router", () => ({
 
 function createIssue(overrides: Partial<Issue> = {}): Issue {
   return {
-    responsibleUserId: null,
-    completionDestination: null,
     id: "issue-1",
     identifier: "PAP-1",
     companyId: "company-1",
@@ -47,9 +45,11 @@ function createIssue(overrides: Partial<Issue> = {}): Issue {
     assigneeUserId: null,
     createdByAgentId: null,
     createdByUserId: null,
+    responsibleUserId: null,
     issueNumber: 1,
     requestDepth: 0,
     billingCode: null,
+    completionDestination: null,
     assigneeAdapterOverrides: null,
     executionWorkspaceId: null,
     executionWorkspacePreference: null,

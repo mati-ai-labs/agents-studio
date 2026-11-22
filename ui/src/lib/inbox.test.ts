@@ -129,13 +129,13 @@ function makeJoinRequest(id: string): JoinRequest {
 
 function makeRun(id: string, status: HeartbeatRun["status"], createdAt: string, agentId = "agent-1"): HeartbeatRun {
   return {
-    responsibleUserId: null,
     id,
     companyId: "company-1",
     agentId,
     invocationSource: "assignment",
     triggerDetail: null,
     status,
+    responsibleUserId: null,
     error: null,
     wakeupRequestId: null,
     exitCode: null,
@@ -177,8 +177,6 @@ function makeRun(id: string, status: HeartbeatRun["status"], createdAt: string, 
 
 function makeIssue(id: string, isUnreadForMe: boolean): Issue {
   return {
-    responsibleUserId: null,
-    completionDestination: null,
     id,
     companyId: "company-1",
     projectId: null,
@@ -194,10 +192,12 @@ function makeIssue(id: string, isUnreadForMe: boolean): Issue {
     assigneeUserId: null,
     createdByAgentId: null,
     createdByUserId: null,
+    responsibleUserId: null,
     issueNumber: 1,
     identifier: `PAP-${id}`,
     requestDepth: 0,
     billingCode: null,
+    completionDestination: null,
     assigneeAdapterOverrides: null,
     executionWorkspaceId: null,
     executionWorkspacePreference: null,
@@ -383,13 +383,13 @@ describe("inbox helpers", () => {
   it("resurfaces non-issue items when they change after dismissal", () => {
     const dismissedAtByKey = buildInboxDismissedAtByKey([
       {
-        kind: "dismiss",
-        snoozedUntil: null,
         id: "dismissal-1",
         companyId: "company-1",
         userId: "user-1",
         itemKey: "approval:approval-1",
+        kind: "dismiss",
         dismissedAt: new Date("2026-03-11T01:00:00.000Z"),
+        snoozedUntil: null,
         createdAt: new Date("2026-03-11T01:00:00.000Z"),
         updatedAt: new Date("2026-03-11T01:00:00.000Z"),
       },

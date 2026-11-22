@@ -1,12 +1,6 @@
 ---
 name: deploy-website-surge
-description: >
-  Deploy a static website to Surge.sh — direct CLI deploy, no GitHub needed.
-  Fetches a Surge auth token from the Paperclip API (per-tenant connector),
-  then runs `npx surge` to upload the local build to Surge CDN. Use when
-  a tenant needs to deploy a landing page, marketing site, or static build
-  and the AWS/S3 path is too painful (IAM credentials, CloudFront, bucket
-  policy JSON, etc.). Replaces deploy-website-s3 with zero GitHub coupling.
+description: Deploy a static website to Surge.sh — direct CLI deploy, no GitHub needed. Fetches a Surge auth token from the Paperclip API, then runs `npx surge` to upload the local build to the Surge CDN. Use when a tenant needs to deploy a landing page or static build and the AWS/S3 path is too painful.
 compatibility: >
   Claude Code running on agentstudio EC2. Surge connector must be configured
   in Paperclip for the tenant (token stored in DB). Node + npx must be

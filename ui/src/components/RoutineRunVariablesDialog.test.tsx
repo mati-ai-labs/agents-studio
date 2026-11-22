@@ -58,7 +58,6 @@ vi.mock("./IssueWorkspaceCard", async () => {
 
 function createProject(): Project {
   return {
-    icon: null,
     id: "project-1",
     companyId: "company-1",
     urlKey: "workspace-project",
@@ -71,6 +70,7 @@ function createProject(): Project {
     leadAgentId: null,
     targetDate: null,
     color: "#22c55e",
+    icon: null,
     env: null,
     pauseReason: null,
     pausedAt: null,

@@ -90,7 +90,6 @@ vi.mock("../components/IssuesList", () => ({
 function project(overrides: Partial<Project> = {}): Project {
   const now = new Date("2026-05-01T00:00:00Z");
   return {
-    icon: null,
     id: "project-1",
     companyId: "company-1",
     urlKey: "project-1",
@@ -103,6 +102,7 @@ function project(overrides: Partial<Project> = {}): Project {
     leadAgentId: null,
     targetDate: null,
     color: "#14b8a6",
+    icon: null,
     env: null,
     pauseReason: null,
     pausedAt: null,

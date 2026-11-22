@@ -34,8 +34,6 @@ Object.defineProperty(globalThis, "window", {
 describe("issueDetailBreadcrumb", () => {
   function createIssue(overrides: Partial<Issue> = {}): Issue {
     return {
-      responsibleUserId: null,
-      completionDestination: null,
       id: "11111111-1111-4111-8111-111111111111",
       companyId: "company-1",
       projectId: "project-1",
@@ -54,6 +52,7 @@ describe("issueDetailBreadcrumb", () => {
       executionLockedAt: null,
       createdByAgentId: null,
       createdByUserId: null,
+      responsibleUserId: null,
       issueNumber: 42,
       identifier: "PAP-42",
       originKind: "manual",
@@ -61,6 +60,7 @@ describe("issueDetailBreadcrumb", () => {
       originRunId: null,
       requestDepth: 0,
       billingCode: null,
+      completionDestination: null,
       assigneeAdapterOverrides: null,
       executionPolicy: null,
       executionState: null,
@@ -72,7 +72,6 @@ describe("issueDetailBreadcrumb", () => {
       cancelledAt: null,
       hiddenAt: null,
       project: {
-        icon: null,
         id: "project-1",
         companyId: "company-1",
         urlKey: "paperclip-app",
@@ -85,6 +84,7 @@ describe("issueDetailBreadcrumb", () => {
         leadAgentId: null,
         targetDate: null,
         color: null,
+        icon: null,
         env: null,
         pauseReason: null,
         pausedAt: null,

@@ -35,13 +35,13 @@ function render(ui: ReactNode) {
 
 function createRun(overrides: Partial<HeartbeatRun> = {}): HeartbeatRun {
   return {
-    responsibleUserId: null,
     id: "run-1",
     companyId: "company-1",
     agentId: "agent-1",
     invocationSource: "on_demand",
     triggerDetail: "manual",
     status: "succeeded",
+    responsibleUserId: null,
     startedAt: new Date("2026-04-20T11:58:00.000Z"),
     finishedAt: new Date("2026-04-20T11:59:00.000Z"),
     error: null,

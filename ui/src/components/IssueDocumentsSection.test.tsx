@@ -165,9 +165,6 @@ async function flush() {
 
 function createIssueDocument(overrides: Partial<IssueDocument> = {}): IssueDocument {
   return {
-    lockedAt: null,
-    lockedByAgentId: null,
-    lockedByUserId: null,
     id: "document-1",
     companyId: "company-1",
     issueId: "issue-1",
@@ -181,6 +178,9 @@ function createIssueDocument(overrides: Partial<IssueDocument> = {}): IssueDocum
     createdByUserId: "user-1",
     updatedByAgentId: null,
     updatedByUserId: "user-1",
+    lockedAt: null,
+    lockedByAgentId: null,
+    lockedByUserId: null,
     createdAt: new Date("2026-03-31T12:00:00.000Z"),
     updatedAt: new Date("2026-03-31T12:05:00.000Z"),
     ...overrides,
@@ -208,8 +208,6 @@ function createRevision(overrides: Partial<DocumentRevision> = {}): DocumentRevi
 
 function createIssue(): Issue {
   return {
-    responsibleUserId: null,
-    completionDestination: null,
     id: "issue-1",
     identifier: "PAP-807",
     companyId: "company-1",
@@ -226,9 +224,11 @@ function createIssue(): Issue {
     assigneeUserId: null,
     createdByAgentId: null,
     createdByUserId: "user-1",
+    responsibleUserId: null,
     issueNumber: 807,
     requestDepth: 0,
     billingCode: null,
+    completionDestination: null,
     assigneeAdapterOverrides: null,
     executionWorkspaceId: null,
     executionWorkspacePreference: null,

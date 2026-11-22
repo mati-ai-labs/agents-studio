@@ -123,8 +123,6 @@ async function flush() {
 
 function createIssue(overrides: Partial<Issue> = {}): Issue {
   return {
-    responsibleUserId: null,
-    completionDestination: null,
     id: "issue-1",
     companyId: "company-1",
     projectId: null,
@@ -143,10 +141,12 @@ function createIssue(overrides: Partial<Issue> = {}): Issue {
     executionLockedAt: null,
     createdByAgentId: null,
     createdByUserId: "user-1",
+    responsibleUserId: null,
     issueNumber: 1,
     identifier: "PAP-1",
     requestDepth: 0,
     billingCode: null,
+    completionDestination: null,
     assigneeAdapterOverrides: null,
     executionWorkspaceId: null,
     executionWorkspacePreference: null,
@@ -268,7 +268,6 @@ function createProject(overrides: Partial<Project> = {}): Project {
     updatedAt: new Date("2026-04-06T12:00:00.000Z"),
   };
   return {
-    icon: null,
     id: "project-1",
     companyId: "company-1",
     urlKey: "project-1",
@@ -281,6 +280,7 @@ function createProject(overrides: Partial<Project> = {}): Project {
     leadAgentId: null,
     targetDate: null,
     color: "#6366f1",
+    icon: null,
     env: null,
     pauseReason: null,
     pausedAt: null,

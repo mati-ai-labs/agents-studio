@@ -82,8 +82,6 @@ function snapshotV1(overrides?: Partial<RoutineRevisionSnapshotV1["routine"]>): 
   return {
     version: 1,
     routine: {
-      responsibleUserId: null,
-      env: null,
       id: "routine-1",
       companyId: "company-1",
       projectId: null,
@@ -97,6 +95,8 @@ function snapshotV1(overrides?: Partial<RoutineRevisionSnapshotV1["routine"]>): 
       concurrencyPolicy: "coalesce_if_active",
       catchUpPolicy: "skip_missed",
       variables: [],
+      env: null,
+      responsibleUserId: null,
       ...overrides,
     },
     triggers: [],
@@ -124,7 +124,6 @@ function createRevision(overrides: Partial<RoutineRevision> = {}): RoutineRevisi
 
 function createRoutine(overrides: Partial<Routine> = {}): Routine {
   return {
-    responsibleUserId: null,
     id: "routine-1",
     companyId: "company-1",
     projectId: null,
@@ -142,6 +141,7 @@ function createRoutine(overrides: Partial<Routine> = {}): Routine {
     latestRevisionNumber: 2,
     createdByAgentId: null,
     createdByUserId: "user-1",
+    responsibleUserId: null,
     updatedByAgentId: null,
     updatedByUserId: "user-1",
     lastTriggeredAt: null,

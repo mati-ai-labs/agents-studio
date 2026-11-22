@@ -1,14 +1,6 @@
 ---
 name: google-meet-notes
-description: >
-  Capture and query Google Meet "Take notes with Gemini" Smart Notes via the
-  gmeet-notes CLI (npm package, zero runtime dependencies). A routine runs
-  `gmeet-notes sync --json` periodically to capture NEW notes since the last
-  checkpoint, correlate each to its Google Calendar event, and emit a JSON batch
-  the agent acts on (summaries, action items, follow-ups). Also supports ad-hoc
-  search/list/get over a local cache. Use when the user asks about meeting
-  notes, what was discussed, decisions or action items from Google Meet
-  meetings, or wants notes captured automatically.
+description: Capture and query Google Meet "Take notes with Gemini" Smart Notes via the gmeet-notes CLI. A routine runs `gmeet-notes sync --json` to capture new notes, correlate each to its Calendar event and emit a JSON batch of summaries and action items. Also supports search/list/get over a local cache.
 metadata:
   openclaw:
     requires:

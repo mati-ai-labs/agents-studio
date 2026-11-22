@@ -1,11 +1,6 @@
 ---
 name: content-curation-skill
-description: >
-  Research, extract, and synthesize winning content ideas from 15+ sources
-  (Meta Ads Library, TikTok, Pinterest, Reddit, Amazon, YouTube, Google Trends,
-  Quora, competitor pages, newsletters, Instagram, Twitter, podcasts) to generate
-  creative briefs for carousel ad creation. Produces hook libraries, CTA patterns,
-  visual direction guides, and 10 full slide-by-slide carousel concepts.
+description: Research and synthesize winning content ideas from 15+ sources (Meta Ads Library, TikTok, Pinterest, Reddit, Amazon, YouTube, Google Trends, Quora, competitor pages, newsletters) into creative briefs for carousel ads. Produces hook libraries, CTA patterns and 10 carousel concepts.
 compatibility: >
   Claude Code with bash, web search, and file I/O. Meta Ads connector recommended
   for the Meta Ads Library source. SearchAPI key optional for Meta Ads Library.

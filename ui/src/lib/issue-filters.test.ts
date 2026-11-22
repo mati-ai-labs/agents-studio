@@ -12,8 +12,6 @@ import {
 
 function makeIssue(overrides: Partial<Issue> = {}): Issue {
   return {
-    responsibleUserId: null,
-    completionDestination: null,
     id: overrides.id ?? "issue-1",
     companyId: "company-1",
     projectId: null,
@@ -32,10 +30,12 @@ function makeIssue(overrides: Partial<Issue> = {}): Issue {
     executionLockedAt: null,
     createdByAgentId: null,
     createdByUserId: null,
+    responsibleUserId: null,
     issueNumber: 1,
     identifier: "PAP-1",
     requestDepth: 0,
     billingCode: null,
+    completionDestination: null,
     assigneeAdapterOverrides: null,
     executionWorkspaceId: null,
     executionWorkspacePreference: null,

@@ -7,7 +7,6 @@ import {
 
 function createRoutine(overrides: Partial<RoutineListItem> = {}): RoutineListItem {
   return {
-    responsibleUserId: null,
     id: "routine-1",
     companyId: "company-1",
     projectId: "project-1",
@@ -25,6 +24,7 @@ function createRoutine(overrides: Partial<RoutineListItem> = {}): RoutineListIte
     latestRevisionNumber: 1,
     createdByAgentId: null,
     createdByUserId: null,
+    responsibleUserId: null,
     updatedByAgentId: null,
     updatedByUserId: null,
     lastTriggeredAt: null,

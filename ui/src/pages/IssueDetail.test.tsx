@@ -1190,15 +1190,9 @@ describe("IssueDetail", () => {
     expect(mockIssuesApi.update).toHaveBeenCalledWith(issue.identifier, { workMode: "planning" });
     expect(localStorage.getItem("paperclip:issue-comment-draft:issue-1")).toBe("Draft follow-up message");
 
-    // Issue attachments are surfaced in the Output panel (the properties strip no longer lists them).
-    mockOpenPanel.mockClear();
-    const showOutputButton = container.querySelector('button[aria-label="Show output"]') as HTMLButtonElement | null;
-    expect(showOutputButton).not.toBeNull();
-    await act(async () => {
-      showOutputButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    await flushReact();
-
+    // Issue attachments are surfaced in the Output panel, which the page hands to
+    // the panel context instead of rendering inline, so assert on the element
+    // the page passed to the panel rather than on the rendered text.
     const outputPanelCall = mockOpenPanel.mock.calls.filter((call) => call[0] === "Output").at(-1);
     expect(outputPanelCall).toBeDefined();
     const outputPanelProps = (outputPanelCall?.[1] as ReactElement<{ attachments: IssueAttachment[] }> | undefined)?.props;

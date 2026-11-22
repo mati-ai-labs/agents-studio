@@ -21,8 +21,6 @@ vi.mock("@/api/issues", () => ({
 function makeIssue(overrides: Partial<Issue> = {}): Issue {
   const now = new Date("2026-04-13T20:00:00.000Z");
   return {
-    responsibleUserId: null,
-    completionDestination: null,
     id: "issue-1",
     companyId: "company-1",
     projectId: null,
@@ -41,10 +39,12 @@ function makeIssue(overrides: Partial<Issue> = {}): Issue {
     executionLockedAt: null,
     createdByAgentId: null,
     createdByUserId: null,
+    responsibleUserId: null,
     issueNumber: 1442,
     identifier: "PAP-1442",
     requestDepth: 0,
     billingCode: null,
+    completionDestination: null,
     assigneeAdapterOverrides: null,
     executionWorkspaceId: null,
     executionWorkspacePreference: null,

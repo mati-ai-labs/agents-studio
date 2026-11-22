@@ -284,11 +284,11 @@ describe("ImportFromVaultDialog", () => {
 
     const existing: CompanySecret[] = [
       {
+        id: "secret-existing",
+        companyId: "company-1",
         scope: "company",
         ownerUserId: null,
         userSecretDefinitionId: null,
-        id: "secret-existing",
-        companyId: "company-1",
         key: "openai_api_key",
         name: "OPENAI_API_KEY",
         provider: "aws_secrets_manager",

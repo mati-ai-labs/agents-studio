@@ -4,8 +4,6 @@ import { buildIssueTree, countDescendants, filterIssueDescendants } from "./issu
 
 function makeIssue(id: string, parentId: string | null = null): Issue {
   return {
-    responsibleUserId: null,
-    completionDestination: null,
     id,
     identifier: id.toUpperCase(),
     companyId: "company-1",
@@ -22,9 +20,11 @@ function makeIssue(id: string, parentId: string | null = null): Issue {
     assigneeUserId: null,
     createdByAgentId: null,
     createdByUserId: null,
+    responsibleUserId: null,
     issueNumber: 1,
     requestDepth: 0,
     billingCode: null,
+    completionDestination: null,
     assigneeAdapterOverrides: null,
     executionWorkspaceId: null,
     executionWorkspacePreference: null,
