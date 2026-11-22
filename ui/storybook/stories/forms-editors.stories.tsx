@@ -202,6 +202,9 @@ const storybookSecrets: CompanySecret[] = [
 	  {
 	    id: "secret-openai",
 	    companyId: "company-storybook",
+	    scope: "company",
+	    ownerUserId: null,
+	    userSecretDefinitionId: null,
 	    key: "openai-api-key",
 	    name: "OPENAI_API_KEY",
 	    provider: "local_encrypted",
@@ -223,6 +226,9 @@ const storybookSecrets: CompanySecret[] = [
 	  {
 	    id: "secret-github",
 	    companyId: "company-storybook",
+	    scope: "company",
+	    ownerUserId: null,
+	    userSecretDefinitionId: null,
 	    key: "github-token",
 	    name: "GITHUB_TOKEN",
 	    provider: "local_encrypted",
@@ -296,6 +302,7 @@ const storybookProject: Project = {
   leadAgentId: "agent-codex",
   targetDate: null,
   color: "#0f766e",
+  icon: null,
   env: null,
   pauseReason: null,
   pausedAt: null,
