@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, index, uniqueIndex, jsonb } from "drizzle-orm/pg-core";
 import { authUsers } from "./auth.js";
 
 export const boardApiKeys = pgTable(
@@ -11,6 +11,12 @@ export const boardApiKeys = pgTable(
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
+    /**
+     * When set, the key only reaches these companies (still intersected with
+     * the user's live memberships). Null means the user's full board access.
+     * OAuth-issued keys (e.g. Turia) are always company-scoped.
+     */
+    companyIds: jsonb("company_ids").$type<string[]>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({

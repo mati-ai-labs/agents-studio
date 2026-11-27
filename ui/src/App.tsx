@@ -60,6 +60,7 @@ import { AuthPage } from "./pages/Auth";
 import { LoginPage } from "./pages/Login";
 import { BoardClaimPage } from "./pages/BoardClaim";
 import { CliAuthPage } from "./pages/CliAuth";
+import { OAuthAuthorizePage } from "./pages/OAuthAuthorize";
 import { InviteLandingPage } from "./pages/InviteLanding";
 import { JoinRequestQueue } from "./pages/JoinRequestQueue";
 import { NotFoundPage } from "./pages/NotFound";
@@ -286,6 +287,7 @@ export function App() {
         <Route path="login" element={<LoginPage />} />
         <Route path="board-claim/:token" element={<BoardClaimPage />} />
         <Route path="cli-auth/:id" element={<CliAuthPage />} />
+        <Route path="oauth/authorize" element={<OAuthAuthorizePage />} />
         <Route path="invite/:token" element={<InviteLandingPage />} />
         <Route path="tests/perf/long-thread" element={<IssueChatLongThreadPerf />} />
 
