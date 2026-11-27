@@ -65,6 +65,7 @@ import { authRoutes } from "./routes/auth.js";
 import { assetRoutes } from "./routes/assets.js";
 import { searchfundRoutes } from "./routes/searchfund.js";
 import { accessRoutes } from "./routes/access.js";
+import { oauthRoutes } from "./routes/oauth.js";
 import { pluginRoutes } from "./routes/plugins.js";
 import { mcpGatewayProtocolRoutes, toolGatewayRoutes } from "./routes/tool-gateway.js";
 import { adapterRoutes } from "./routes/adapters.js";
@@ -452,6 +453,7 @@ export async function createApp(
       allowedHostnames: opts.allowedHostnames,
     }),
   );
+  api.use(oauthRoutes(db));
   app.use("/preview", previewProxyRoutes(db));
   app.use("/api", api);
   app.use("/api", (_req, res) => {

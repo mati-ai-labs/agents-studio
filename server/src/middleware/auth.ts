@@ -130,14 +130,17 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
       const access = await boardAuth.resolveBoardAccess(boardKey.userId);
       if (access.user) {
         await boardAuth.touchBoardApiKey(boardKey.id);
+        // Company-scoped keys (OAuth clients such as Turia) only reach the
+        // companies the user granted, and never get instance-admin reach.
+        const scope = Array.isArray(boardKey.companyIds) ? new Set(boardKey.companyIds) : null;
         req.actor = {
           type: "board",
           userId: boardKey.userId,
           userName: access.user?.name ?? null,
           userEmail: access.user?.email ?? null,
-          companyIds: access.companyIds,
-          memberships: access.memberships,
-          isInstanceAdmin: access.isInstanceAdmin,
+          companyIds: scope ? access.companyIds.filter((id) => scope.has(id)) : access.companyIds,
+          memberships: scope ? access.memberships.filter((row) => scope.has(row.companyId)) : access.memberships,
+          isInstanceAdmin: scope ? false : access.isInstanceAdmin,
           isRestricted: access.isRestricted,
           keyId: boardKey.id,
           runId: runIdHeader || undefined,
