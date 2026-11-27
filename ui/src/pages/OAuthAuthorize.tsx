@@ -53,14 +53,17 @@ export function OAuthAuthorizePage() {
     },
   });
 
+  // body is overflow:hidden app-wide, so this standalone page owns its scrolling.
   const shell = (children: React.ReactNode) => (
-    <div className="mx-auto max-w-xl px-4 py-10">
-      <div className="rounded-lg border border-border bg-card p-6">{children}</div>
+    <div className="h-dvh overflow-y-auto overscroll-contain">
+      <div className="mx-auto max-w-xl px-4 py-10">
+        <div className="rounded-lg border border-border bg-card p-6">{children}</div>
+      </div>
     </div>
   );
 
   if (describeQuery.isLoading) {
-    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading authorization request...</div>;
+    return shell(<p className="text-sm text-muted-foreground">Loading authorization request...</p>);
   }
 
   if (describeQuery.error || !describeQuery.data) {
