@@ -4,6 +4,7 @@ import { sql } from "drizzle-orm";
 import {
   agents,
   companies,
+  heartbeatRuns,
   companyConnectors,
   createDb,
   issueComments,
@@ -50,7 +51,7 @@ describeEmbeddedPostgres("agent Slack posts: thread replies come back to the iss
   afterEach(async () => {
     vi.clearAllMocks();
     await db.execute(sql.raw(`
-      TRUNCATE TABLE "slack_outbound_deliveries", "slack_event_deliveries", "slack_thread_bindings",
+      TRUNCATE TABLE "heartbeat_runs", "slack_outbound_deliveries", "slack_event_deliveries", "slack_thread_bindings",
         "issue_comments", "issues", "agents", "company_connectors", "companies", "activity_log"
       RESTART IDENTITY CASCADE
     `));
@@ -164,6 +165,39 @@ describeEmbeddedPostgres("agent Slack posts: thread replies come back to the iss
     const outbound = await db.select().from(slackOutboundDeliveries);
     expect(outbound).toHaveLength(1);
     expect(outbound[0]).toMatchObject({ threadTs: "1600000000.000100", kind: "progress" });
+  });
+
+  it("keeps housekeeping and other agents' comments out of the Slack thread", async () => {
+    const { companyId, connectorId, agentId, issueId } = await seed();
+    await db.insert(slackThreadBindings).values({
+      companyId, connectorId, issueId, workspaceId: "T1", channelId: "C1", channelName: "eng",
+      threadTs: "1600000000.000100", rootEventId: "Ev-root-2", source: "slack_mention",
+    });
+    const runFor = async (wakeReason: string) => {
+      const [created] = await db.insert(heartbeatRuns).values({
+        companyId, agentId, invocationSource: "automation", status: "running",
+        contextSnapshot: { issueId, wakeReason },
+      }).returning();
+      return created!.id;
+    };
+
+    // Disposition / recovery bookkeeping runs stay internal.
+    await issueService(db).addComment(issueId, "LCH-470 remains in progress with a live continuation.", { agentId, runId: await runFor("finish_successful_run_handoff") });
+    await issueService(db).addComment(issueId, "State recovered.", { agentId, runId: await runFor("source_scoped_recovery_action") });
+    // Another agent (e.g. a recovery owner) commenting on the issue stays internal.
+    const otherAgentId = randomUUID();
+    await db.insert(agents).values({
+      id: otherAgentId, companyId, name: "CEO", role: "ceo", status: "idle",
+      adapterType: "process", adapterConfig: {}, runtimeConfig: {}, permissions: {},
+    });
+    await issueService(db).addComment(issueId, "Recovery complete: handed back to CTO.", { agentId: otherAgentId });
+    expect(await db.select().from(slackOutboundDeliveries)).toHaveLength(0);
+
+    // The assignee's real work still reaches Slack.
+    await issueService(db).addComment(issueId, "Opened PR #700 with the fix.", { agentId, runId: await runFor("issue_commented") });
+    const outbound = await db.select().from(slackOutboundDeliveries);
+    expect(outbound).toHaveLength(1);
+    expect(JSON.stringify(outbound[0]!.payload)).toContain("Opened PR #700");
   });
 
   it("never throws when Slack is not connected", async () => {

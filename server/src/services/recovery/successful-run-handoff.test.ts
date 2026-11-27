@@ -63,6 +63,12 @@ function decide(overrides: Partial<Parameters<typeof decideSuccessfulRunHandoff>
 }
 
 describe("successful run handoff decision", () => {
+  it("treats a parent waiting on active child issues as a valid path (no disposition nag loop)", () => {
+    const decision = decide({ hasActiveChildIssues: true });
+    expect(decision).toEqual({ kind: "skip", reason: "active child issues own the next action" });
+    expect(isSuccessfulRunHandoffValidPathSkip(decision)).toBe(true);
+  });
+
   it("queues one status-only corrective wake to the original agent when a successful run has no disposition", () => {
     const decision = decide();
 

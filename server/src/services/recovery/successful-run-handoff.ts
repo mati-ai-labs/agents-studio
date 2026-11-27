@@ -96,6 +96,7 @@ const SUCCESSFUL_RUN_HANDOFF_VALID_PATH_SKIP_REASONS = new Set([
   "pending interaction or approval owns the next action",
   "persisted issue monitor owns the next action",
   "explicit blocker path owns the next action",
+  "active child issues own the next action",
   "open recovery issue owns the ambiguity",
   "issue is under an active pause hold",
   "corrective handoff wake already exists for this source run",
@@ -374,6 +375,8 @@ export function decideSuccessfulRunHandoff(input: {
   hasOpenRecoveryIssue: boolean;
   hasPauseHold: boolean;
   hasActiveRoutineContinuation: boolean;
+  /** Assigned, unfinished child issues; their completion wakes the parent. */
+  hasActiveChildIssues?: boolean;
   budgetBlocked: boolean;
   idempotentWakeExists: boolean;
 }): SuccessfulRunHandoffDecision {
@@ -413,6 +416,7 @@ export function decideSuccessfulRunHandoff(input: {
   }
   if (input.hasPersistedMonitor) return { kind: "skip", reason: "persisted issue monitor owns the next action" };
   if (input.hasExplicitBlockerPath) return { kind: "skip", reason: "explicit blocker path owns the next action" };
+  if (input.hasActiveChildIssues) return { kind: "skip", reason: "active child issues own the next action" };
   if (input.hasOpenRecoveryIssue) return { kind: "skip", reason: "open recovery issue owns the ambiguity" };
   if (input.hasPauseHold) return { kind: "skip", reason: "issue is under an active pause hold" };
   if (input.budgetBlocked) return { kind: "skip", reason: "budget hard stop blocks corrective wake" };

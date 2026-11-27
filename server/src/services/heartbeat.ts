@@ -8267,6 +8267,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       budgetBlock,
       pauseHold,
       activeRoutineContinuation,
+      activeChildIssue,
     ] = await Promise.all([
       issue
         ? db
@@ -8398,6 +8399,24 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           issueId: issue.id,
         })
         : Promise.resolve(false),
+      // A parent that delegated to child issues is waiting on them; their
+      // completion wakes it (issue_children_completed), so that is a valid path.
+      issue
+        ? db
+          .select({ id: issues.id })
+          .from(issues)
+          .where(
+            and(
+              eq(issues.companyId, issue.companyId),
+              eq(issues.parentId, issue.id),
+              visibleIssueCondition(),
+              notInArray(issues.status, ["done", "cancelled"]),
+              sql`(${issues.assigneeAgentId} is not null or ${issues.assigneeUserId} is not null)`,
+            ),
+          )
+          .limit(1)
+          .then((rows) => rows[0] ?? null)
+        : Promise.resolve(null),
     ]);
 
     const decision = decideSuccessfulRunHandoff({
@@ -8415,6 +8434,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       hasOpenRecoveryIssue: Boolean(openRecoveryIssue),
       hasPauseHold: Boolean(pauseHold),
       hasActiveRoutineContinuation: activeRoutineContinuation,
+      hasActiveChildIssues: Boolean(activeChildIssue),
       budgetBlocked: Boolean(budgetBlock),
       idempotentWakeExists: Boolean(existingWake),
     });

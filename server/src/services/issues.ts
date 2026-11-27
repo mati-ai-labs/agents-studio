@@ -3818,6 +3818,31 @@ async function countBlockedInboxIssues(dbOrTx: any, companyId: string, filters?:
   }, 0);
 }
 
+/**
+ * Wake reasons for runs that only repair an issue's state (missing
+ * disposition, stranded-issue recovery, liveness sweeps, productivity
+ * reviews). What they write is bookkeeping, not progress for humans.
+ */
+const SLACK_SILENT_WAKE_REASONS = new Set([
+  "finish_successful_run_handoff",
+  "successful_run_missing_state",
+  "source_scoped_recovery_action",
+  "issue_graph_liveness_backstop",
+  "issue_graph_liveness_reconciliation",
+  "productivity_review",
+]);
+
+async function isHousekeepingRun(db: Db, runId: string | null | undefined): Promise<boolean> {
+  if (!runId) return false;
+  const run = await db
+    .select({ contextSnapshot: heartbeatRuns.contextSnapshot })
+    .from(heartbeatRuns)
+    .where(eq(heartbeatRuns.id, runId))
+    .then((rows) => rows[0] ?? null);
+  const reason = (run?.contextSnapshot as Record<string, unknown> | null)?.wakeReason;
+  return typeof reason === "string" && SLACK_SILENT_WAKE_REASONS.has(reason);
+}
+
 export function issueService(db: Db) {
   const instanceSettings = instanceSettingsService(db);
   const treeControlSvc = issueTreeControlService(db);
@@ -7638,7 +7663,7 @@ export function issueService(db: Db) {
       dbOrTx: any = db,
     ) => {
       const issue = await dbOrTx
-        .select({ companyId: issues.companyId, id: issues.id, status: issues.status, title: issues.title, identifier: issues.identifier })
+        .select({ companyId: issues.companyId, id: issues.id, status: issues.status, title: issues.title, identifier: issues.identifier, assigneeAgentId: issues.assigneeAgentId })
         .from(issues)
         .where(eq(issues.id, issueId))
         .then((rows: Array<{ companyId: string; id: string; status: string; title: string; identifier: string | null }>) => rows[0] ?? null);
@@ -7725,7 +7750,16 @@ export function issueService(db: Db) {
         .where(eq(issues.id, issueId));
 
       // Mirror agent progress into the Slack thread an issue was created from.
-      if (actor.agentId && !options?.externalSource && !["done", "cancelled"].includes(issue.status)) {
+      // Only the assignee's own work reaches Slack: comments from recovery /
+      // disposition housekeeping runs, or from other agents (recovery owners,
+      // reviewers), are internal and would spam the team's thread.
+      if (
+        actor.agentId
+        && !options?.externalSource
+        && !["done", "cancelled"].includes(issue.status)
+        && actor.agentId === issue.assigneeAgentId
+        && !(await isHousekeepingRun(dbOrTx as Db, createdByRunId))
+      ) {
         const binding = await dbOrTx
           .select()
           .from(slackThreadBindings)
