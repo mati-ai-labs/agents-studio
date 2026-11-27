@@ -64,6 +64,7 @@ import { instancePreviewsRoutes } from "./routes/instance-previews.js";
 import { authRoutes } from "./routes/auth.js";
 import { assetRoutes } from "./routes/assets.js";
 import { searchfundRoutes } from "./routes/searchfund.js";
+import { companyDashboardRoutes } from "./routes/company-dashboards.js";
 import { accessRoutes } from "./routes/access.js";
 import { oauthRoutes } from "./routes/oauth.js";
 import { pluginRoutes } from "./routes/plugins.js";
@@ -210,6 +211,11 @@ export async function createApp(
     limit: PORTABLE_JSON_BODY_LIMIT,
     verify: captureRawBody,
   }));
+  // Dashboard publishes (HTML ≤5 MB), bulk records and base64 files need a larger body.
+  app.use(/^\/api\/companies\/[^/]+\/dashboards\/[^/]+\/(ingest|versions|records|files)$/, express.json({
+    limit: PORTABLE_JSON_BODY_LIMIT,
+    verify: captureRawBody,
+  }));
   app.use(/^\/api\/companies\/[^/]+\/searchfund\/ingest$/, express.json({
     limit: PORTABLE_JSON_BODY_LIMIT,
     verify: captureRawBody,
@@ -290,6 +296,7 @@ export async function createApp(
   api.use(agentRoutes(db, { pluginWorkerManager: workerManager }));
   api.use(assetRoutes(db, opts.storageService));
   api.use(searchfundRoutes(db, opts.storageService));
+  api.use(companyDashboardRoutes(db, opts.storageService));
   api.use(projectRoutes(db));
   api.use(caseRoutes(db, opts.storageService));
   api.use(issueTreeControlRoutes(db));

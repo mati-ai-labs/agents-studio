@@ -27,6 +27,8 @@ import { ApprovalDetail } from "./pages/ApprovalDetail";
 import { Costs } from "./pages/Costs";
 import { Activity } from "./pages/Activity";
 import { SearchFund } from "./pages/SearchFund";
+import { Dashboards } from "./pages/Dashboards";
+import { DashboardView } from "./pages/DashboardView";
 import { Inbox } from "./pages/Inbox";
 import { CompanySettings } from "./pages/CompanySettings";
 import { CompanyEnvironments } from "./pages/CompanyEnvironments";
@@ -140,6 +142,8 @@ function boardRoutes() {
       <Route path="approvals/all" element={<Approvals />} />
       <Route path="approvals/:approvalId" element={<ApprovalDetail />} />
       <Route path="costs" element={<Costs />} />
+      <Route path="dashboards" element={<Dashboards />} />
+      <Route path="dashboards/:dashboardId" element={<DashboardView />} />
       <Route path="searchfund" element={<SearchFund />} />
       <Route path="searchfund/:tab" element={<SearchFund />} />
       <Route path="activity" element={<Activity />} />
