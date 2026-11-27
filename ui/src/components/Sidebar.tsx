@@ -14,6 +14,8 @@ import {
   Settings,
   Bot,
   Telescope,
+  PanelsTopLeft,
+  ChartNoAxesCombined,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { NavLink } from "@/lib/router";
@@ -27,6 +29,7 @@ import { useCompany } from "../context/CompanyContext";
 import { heartbeatsApi } from "../api/heartbeats";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { searchfundApi } from "../api/searchfund";
+import { dashboardKeys, dashboardsApi } from "../api/dashboards";
 import { queryKeys } from "../lib/queryKeys";
 import { useInboxBadge } from "../hooks/useInboxBadge";
 import { Button } from "@/components/ui/button";
@@ -53,6 +56,12 @@ export function Sidebar() {
     queryFn: () => searchfundApi.access(selectedCompanyId!),
     enabled: !!selectedCompanyId,
     staleTime: 5 * 60_000,
+  });
+  const { data: companyDashboards } = useQuery({
+    queryKey: dashboardKeys.list(selectedCompanyId!),
+    queryFn: () => dashboardsApi.list(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+    staleTime: 60_000,
   });
   const showWorkspacesLink = experimentalSettings?.enableIsolatedWorkspaces === true;
   const isRestricted = useRestrictedOperator();
@@ -128,6 +137,16 @@ export function Sidebar() {
           {searchfundAccess?.allowed ? (
             <SidebarNavItem to="/searchfund" label="SearchFund" icon={Telescope} />
           ) : null}
+          <SidebarNavItem to="/dashboards" label="Dashboards" icon={PanelsTopLeft} end />
+          {(companyDashboards ?? []).map((dashboard) => (
+            <SidebarNavItem
+              key={dashboard.id}
+              to={`/dashboards/${dashboard.slug}`}
+              label={dashboard.name}
+              icon={ChartNoAxesCombined}
+              className="pl-6"
+            />
+          ))}
           {showWorkspacesLink ? (
             <SidebarNavItem to="/workspaces" label="Workspaces" icon={GitBranch} />
           ) : null}

@@ -167,3 +167,4 @@ export { searchfundNiches, searchfundScores, searchfundFiles, searchfundSheets, 
 export { guardrailPolicies } from "./guardrail_policies.js";
 export { guardrailViolations } from "./guardrail_violations.js";
 export { userAiSubscriptions } from "./user_ai_subscriptions.js";
+export { companyDashboards, companyDashboardVersions, companyDashboardRecords, companyDashboardRequests, companyDashboardFiles } from "./company_dashboards.js";
